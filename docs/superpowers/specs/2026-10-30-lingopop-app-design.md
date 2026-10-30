@@ -90,7 +90,7 @@ lingopop-app/
 - **Languages**: таблица из `Models/Languages.swift` (name, code, `deepLCode`, `microsoftCode`, quick list), коды из `Models/LanguageCodes.swift`.
 - **Language detection**: через Rust-крейт на выбор исполнителя (например `whatlang` или `lingua`). Результат маппится на имя из таблицы `Languages`.
 - **Target-language resolution**: аналог `SettingsStore.resolveTargetLanguage`: auto-detect только для `.translate`, поиск в `languagePairs`, иначе `targetLanguage`.
-- **Settings model + JSON persistence**: все поля из `SettingsStore.Persisted`, кроме iCloud-полей. Миграций нет, это первая версия формата.
+- **Settings model + JSON persistence**: все поля из `SettingsStore.Persisted`, кроме iCloud-полей. Миграций нет, это первая версия формата. Форма `settings.json` (решение ассистента): имена полей зеркалят `SettingsStore.Persisted`, словари по провайдерам (`fallbacks` и т.п.) хранятся в object-форме `ProviderKeyedDictionary` (объект с ключами `ProviderType.rawValue`), чтобы будущая миграция macOS могла переиспользовать формат. Исключение - хоткеи: то же имя поля, но кросс-платформенное представление `{ "key": "<имя в стиле W3C KeyboardEvent.code>", "modifiers": ["ctrl","alt","shift","win"] }`.
 - **History и usage stores**: порт envelope v2 и логики `merge` из `Core/CloudMerge.swift` (tombstones, `clearedBefore`, подрезка tombstones старше 90 дней). Merge сохраняется, хотя синхронизации нет, чтобы формат остался совместимым. Лимит истории `maxHistoryCount`, retention usage 31 день.
 - **Secrets**: payload (плоская `[String:String]`-карта) и trait `SecretProtector` (шифрование/расшифровка байтов). Реализация в platform-crate.
 - **Action-row metrics**: порт `Core/ActionRowMetrics.swift`.
@@ -121,24 +121,32 @@ Traits:
 ### app/ (Tauri)
 
 - Окна: popup, settings, history, capture overlay (по одному на монитор).
-- Меню трея повторяет status menu macOS-приложения: недавняя история, операции, подменю target language, History / Settings / About / Quit.
+- Меню трея повторяет состав status menu macOS-приложения: недавняя история, операции, подменю target language, History / Settings / About / Quit. Это нативное меню Tauri с обычными текстовыми пунктами: строки истории - усечённый однострочный текст. Кастомного webview-flyout в v1 нет (решение ассистента).
 - Оркестрация (hotkey → capture → resolve → run → popup) живёт в Rust, а не во frontend. Frontend только отображает состояние и шлёт действия.
 
 ## 6. Windows-специфика (заметки по реализации)
 
-- **Хоткеи**: крейт `global-hotkey` / `RegisterHotKey`. Формат хранения хоткея свой (код клавиши + модификаторы Windows). Формат macOS (`HotkeyConfig`: Carbon keyCode + `NSEvent.ModifierFlags`) не переносится, настройки между платформами несовместимы и не должны быть.
+- **Хоткеи**: крейт `global-hotkey` / `RegisterHotKey`. Формат хранения хоткея свой: `{ "key", "modifiers" }` из раздела 5 (settings.json). Формат macOS (`HotkeyConfig`: Carbon keyCode + `NSEvent.ModifierFlags`) не переносится, настройки между платформами несовместимы и не должны быть.
 - **Захват выделения**:
-  1. снимок всех форматов буфера;
+  1. снимок форматов буфера (см. ниже «Безопасность буфера»);
   2. дождаться отпускания модификаторов хоткея пользователя (или синтезировать key-up);
   3. `SendInput` Ctrl+C;
   4. опрос `GetClipboardSequenceNumber` до 300 мс;
   5. прочитать текст;
   6. восстановить снимок буфера.
 - **UIPI**: целевое приложение с повышенными правами не получит `SendInput`. Показывать понятную ошибку для пользователя, а не молча ничего не делать.
+- **Безопасность буфера** (решение ассистента): best-effort, per-app denylist в v1 нет.
+  - Снимок и восстановление форматов, которые можно прочитать сразу: `CF_UNICODETEXT`, `HTML Format`, RTF, `CF_DIB` / PNG, `CF_HDROP`. Форматы с delayed rendering и нечитаемые пропускаются: восстанавливается то, что удалось снять, пропуски пишутся в лог.
+  - Временные записи LingoPop в буфер (Replace и запись в буфер во время capture) выставляют форматы исключения из истории: `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory` = 0, `CanUploadToCloudClipboard` = 0. Так они не попадают в Win+V и в облачный буфер.
+  - Известные ограничения (идут в ручной чек-лист): консольные приложения, где Ctrl+C не копирует выделение; приложения с повышенными правами (UIPI).
 - **Popup**: `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST`. Позиция рядом с курсором, ограничение рабочей областью монитора. Закрытие по клику вне и по Esc, фокус не забирается.
 - **Replace**: восстановить foreground window, положить текст в буфер, `SendInput` Ctrl+V, восстановить буфер пользователя.
 - **Захват экрана**: корректен при смешанном DPI (Per-Monitor V2). Выбор API (`Windows.Graphics.Capture` или GDI `BitBlt`) за исполнителем.
-- **OCR**: `Windows.Media.Ocr` через крейт `windows`. Язык берётся из профиля пользователя. Нет языкового пакета OCR: ошибка с инструкцией, как его поставить. Пустой результат: предложить vision-retry.
+- **OCR**: `Windows.Media.Ocr` через крейт `windows`. Паритет с macOS: `Core/ScreenOCR.swift` ставит только `recognitionLevel = .accurate` и `usesLanguageCorrection = true`, без `recognitionLanguages` / `automaticallyDetectsLanguage`, то есть Vision использует набор языков по умолчанию (в основном латиница), а нелатинский текст на macOS тоже решается vision-retry. Поэтому отдельной настройки языка OCR нет (решение ассистента). На Windows:
+  - `OcrEngine` запускается для языков профиля пользователя с установленными OCR-пакетами (`TryCreateFromUserProfileLanguages`) и дополнительно для английского, если он установлен и отличается;
+  - выбирается результат с наибольшим числом распознанных символов (или с лучшим confidence, если он доступен);
+  - ни одного установленного OCR-пакета: ошибка с подсказкой, как поставить языковой пакет в Параметрах Windows, плюс предложение vision-retry;
+  - пустой или мусорный текст: как на macOS, Retry в OCR-popup отправляет изображение vision-провайдерам.
 - **Секреты**: DPAPI `CryptProtectData` (область CurrentUser) защищает тот же плоский JSON-payload. Файл `%APPDATA%\LingoPop\secrets.dat`.
 - **Файлы данных** в `%APPDATA%\LingoPop\`: `settings.json`, `history.json`, `usage.json`, `secrets.dat`.
 - **Автозапуск**: HKCU Run через `tauri-plugin-autostart`.
@@ -217,7 +225,8 @@ Traits:
 
 ## 8. Локализация
 
-- Строки импортируются скриптом из `App/Localizable.xcstrings` macOS-репозитория в JSON для frontend и отдельно для Rust (строки трея и нативных окон).
+- Строки один раз импортируются скриптом из `App/Localizable.xcstrings` macOS-репозитория в JSON для frontend и отдельно для Rust (строки трея и нативных окон). После импорта источником истины становится каталог `lingopop-app`: повторных импортов нет, CI macOS-репозиторий не требует (решение ассистента).
+- Переводы pl/uk/de для ключей, которых нет на macOS (Windows-only), пишет исполнитель (AI-агент) по тем же терминологическим правилам. Системные термины берутся такими, как в самой Windows для каждого языка, например «Параметры» / «Einstellungen» / «Ustawienia» (решение ассистента).
 - CI-проверка с теми же правилами, что `scripts/check-localizations.py`: все ключи без `shouldTranslate: false` переведены на pl/uk/de; мультимножество спецификаторов формата (`%@`, `%lld`, `%1$@`, `%%`), переводы строк и спецсимволы (`…`, `→`, `⌘`, `{{targetLanguage}}`) совпадают с ключом.
 - Нелокализуемое: `rawValue`, названия языков из таблицы `Languages` (это данные), тексты промптов, логи, HTTP/JSON-поля, бренды провайдеров.
 - Переключение языка применяется сразу, без перезапуска (решение ассистента; на macOS нужен перезапуск, на Windows это дешевле).
@@ -229,14 +238,15 @@ Traits:
 
 ### a) Core unit tests (CI: `windows-latest` и `macos-latest`)
 
-- Провайдеры против HTTP mock-сервера с записанными fixtures ответов, включая ошибки 429 и 5xx для проверки fallback.
+- Провайдеры против HTTP mock-сервера с fixtures ответов, включая ошибки 429 и 5xx для проверки fallback. Fixtures пишутся вручную по документации провайдеров и по обработке запросов и ответов в Swift-исходниках (решение ассистента).
+- Live smoke tests в core crate: `#[ignore]` плюс переменные окружения с ключами (например `LINGOPOP_LIVE_CLAUDE_KEY`). Core OS-agnostic, поэтому владелец запускает их на своём Mac. Это проверка соответствия каждого провайдера перед тестерской сборкой; в CI они не запускаются никогда (решение ассистента).
 - Merge истории и usage (union, tombstones, `clearedBefore`, подрезка 90 дней, legacy bare array).
-- Секреты (payload, `SecretProtector` через fake), загрузка settings (без миграций), разрешение target language, action-row metrics, кодирование дат в формате 2001-эпохи (тесты на фикстурах, сохранённых macOS-приложением).
+- Секреты (payload, `SecretProtector` через fake), загрузка settings (без миграций), разрешение target language, action-row metrics, кодирование дат в формате 2001-эпохи. Compatibility fixtures для `history.json`, `usage.json` и формы `secrets`-payload один раз генерируются на Mac небольшим Swift-скриптом на реальных моделях macOS и дефолтных encoder-ах и коммитятся в `tests/fixtures/mac/` (решение ассистента).
 - Оркестрация целиком на `fake` platform.
 
 ### b) Platform smoke tests (`windows-latest`)
 
-- Регистрация и снятие хоткея, снимок и восстановление буфера (roundtrip), `SendInput` копирование в тестовое окно, захват известного окна, OCR фикстурного PNG.
+- Регистрация и снятие хоткея, снимок и восстановление буфера (roundtrip, проверяются форматы text / HTML / image), `SendInput` копирование в тестовое окно, захват известного окна, OCR фикстурного PNG.
 - Исполнитель должен проверить, даёт ли GitHub Windows runner интерактивный рабочий стол, и пометить тесты, которым он нужен (`#[ignore]` / отдельная feature), чтобы не получить ложные падения.
 
 ### c) Frontend unit tests (Vitest)
@@ -245,7 +255,7 @@ Traits:
 
 ### d) Ручной чек-лист для тестеров
 
-- `docs/testing/manual-checklist.md`: сценарии для Notepad, Word, Chrome, Telegram, приложения с повышенными правами, мультимонитора и смешанного DPI, каждого провайдера.
+- `docs/testing/manual-checklist.md`: сценарии для Notepad, Word, Chrome, Telegram, приложения с повышенными правами, мультимонитора и смешанного DPI, каждого провайдера. Отдельным разделом документируются известные ограничения capture: консольные приложения, где Ctrl+C не копирует выделение, и приложения с повышенными правами (UIPI).
 - Установщик из CI-артефакта на каждый PR.
 
 E2E через `tauri-driver` по желанию, на усмотрение исполнителя.
