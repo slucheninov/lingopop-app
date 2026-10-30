@@ -22,6 +22,8 @@ Each task appends its own modules here in the same commit.
 - `crates/lingopop-core/src/time.rs` - `Timestamp(f64)`, Apple-reference seconds kept exactly as read (lossless round trip, whole seconds written as JSON integers like Swift, always finite)
 - `crates/lingopop-core/src/serde_uuid.rs` - `#[serde(with = ...)]` UUID codec (uppercase on write, any case on read)
 - `crates/lingopop-core/src/records.rs` - `HistoryEntry`, `UsageRecord` (provider/operation kept as raw strings so unknown values survive a rewrite; typed accessors)
+- `crates/lingopop-core/src/envelope.rs` - `MergeableEnvelope<T>` v2 file format (`version`/`items`/`deleted`/`clearedBefore`, legacy bare array and UTF-8 BOM read), `Tombstone`, `Mergeable`, pure `merged` / `pruned` / `mark_deleted` / `mark_cleared` (90-day tombstone retention; uuid case-insensitive, linear time)
+- `crates/lingopop-core/src/fsio.rs` - file helpers; `strip_bom` is the crate's single BOM rule (Task 6 adds the atomic read/write helpers)
 
 ## Build / test
 
