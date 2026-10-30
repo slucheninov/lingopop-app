@@ -105,8 +105,10 @@ pub fn sanitized_http_body_detail(body: &str) -> Option<UserMessage> {
     ))
 }
 
-/// Errors from a provider call, convertible to user text.
-#[derive(Debug, Clone, PartialEq)]
+/// Errors from a provider call, convertible to user text. `Debug` never prints the HTTP
+/// response body (a custom endpoint may echo the submitted API key back); it shows the
+/// body's character count only.
+#[derive(Clone, PartialEq)]
 pub enum TranslationError {
     MissingApiKey,
     InvalidUrl,
@@ -124,6 +126,38 @@ pub enum TranslationError {
     },
     InvalidConfiguration(String),
     ProviderNotFound(ProviderType),
+}
+
+impl fmt::Debug for TranslationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingApiKey => f.write_str("MissingApiKey"),
+            Self::InvalidUrl => f.write_str("InvalidUrl"),
+            Self::Http { status, body, url } => f
+                .debug_struct("Http")
+                .field("status", status)
+                .field("body", &format_args!("<{} chars>", body.chars().count()))
+                .field("url", url)
+                .finish(),
+            Self::Decoding(text) => f.debug_tuple("Decoding").field(text).finish(),
+            Self::EmptyResponse => f.write_str("EmptyResponse"),
+            Self::Network(text) => f.debug_tuple("Network").field(text).finish(),
+            Self::OperationNotSupported {
+                provider,
+                operation,
+            } => f
+                .debug_struct("OperationNotSupported")
+                .field("provider", provider)
+                .field("operation", operation)
+                .finish(),
+            Self::InvalidConfiguration(text) => {
+                f.debug_tuple("InvalidConfiguration").field(text).finish()
+            }
+            Self::ProviderNotFound(provider) => {
+                f.debug_tuple("ProviderNotFound").field(provider).finish()
+            }
+        }
+    }
 }
 
 impl TranslationError {
@@ -233,6 +267,25 @@ mod tests {
     use super::*;
     use crate::operation::AIOperation;
     use crate::provider::ProviderType;
+
+    #[test]
+    fn translation_error_debug_omits_http_body() {
+        let err = TranslationError::Http {
+            status: 401,
+            body: "key sk-ant-FIXTURE echoed".to_string(),
+            url: "https://api.x.com/v1".to_string(),
+        };
+        let debug = format!("{err:?}");
+        assert!(!debug.contains("sk-ant-FIXTURE"), "{debug}");
+        assert!(debug.contains("401"), "{debug}");
+        assert!(debug.contains("https://api.x.com/v1"), "{debug}");
+        assert!(debug.contains("<25 chars>"), "{debug}");
+        assert!(!format!("{err}").contains("sk-ant-FIXTURE"));
+        assert_eq!(
+            format!("{:?}", TranslationError::Decoding("x".to_string())),
+            "Decoding(\"x\")"
+        );
+    }
 
     fn http(status: u16) -> TranslationError {
         TranslationError::Http {

@@ -435,6 +435,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claude_http_error_debug_does_not_echo_body() {
+        let echoed = format!("invalid x-api-key: {KEY}");
+        let fake = FakeTransport::json(401, &echoed);
+        let err = run(&fake, "t").await.unwrap_err();
+        assert_eq!(
+            err,
+            TranslationError::Http {
+                status: 401,
+                body: echoed,
+                url: URL.into(),
+            }
+        );
+        let text = format!("{err} {err:?}");
+        assert!(!text.contains(KEY), "{text}");
+    }
+
+    #[tokio::test]
     async fn claude_rejects_http_base_url() {
         let fake = FakeTransport::json(200, &reply("ok"));
         let mut cfg = config();
