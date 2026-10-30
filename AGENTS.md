@@ -23,7 +23,12 @@ Each task appends its own modules here in the same commit.
 - `crates/lingopop-core/src/serde_uuid.rs` - `#[serde(with = ...)]` UUID codec (uppercase on write, any case on read)
 - `crates/lingopop-core/src/records.rs` - `HistoryEntry`, `UsageRecord` (provider/operation kept as raw strings so unknown values survive a rewrite; typed accessors)
 - `crates/lingopop-core/src/envelope.rs` - `MergeableEnvelope<T>` v2 file format (`version`/`items`/`deleted`/`clearedBefore`, legacy bare array and UTF-8 BOM read), `Tombstone`, `Mergeable`, pure `merged` / `pruned` / `mark_deleted` / `mark_cleared` (90-day tombstone retention; uuid case-insensitive, linear time)
-- `crates/lingopop-core/src/fsio.rs` - file helpers; `strip_bom` is the crate's single BOM rule (Task 6 adds the atomic read/write helpers)
+- `crates/lingopop-core/src/fsio.rs` - file helpers: `strip_bom` (the crate's single BOM rule), `is_blank`, `read_optional`, `atomic_write` (temp file + `sync_all` + rename, 0600 on Unix when private; `std::fs::rename` replaces an existing file on Windows too), `quarantine` (`<name>.bak-<unix seconds>[-n]`), `LoadOutcome`, `StoreError`
+- `crates/lingopop-core/src/paths.rs` - `DataPaths` (file names in the injected data dir: `settings.json`, `history.json`, `usage.json`, `secrets.dat`; the core never computes the dir)
+- `crates/lingopop-core/src/store_common.rs` - crate-private `EnvelopeFile<T>`: the one implementation of the store load rule (missing / blank / BOM / legacy / quarantine of corrupt files) and persist rule (prune tombstones, atomic write, then swap memory)
+- `crates/lingopop-core/src/history_store.rs` - `HistoryStore` (`history.json`, newest first, cap on `add` / `trim`, `remove` tombstones, `clear` watermark, cap overflow never tombstoned)
+- `crates/lingopop-core/src/usage_store.rs` - `UsageStore` (`usage.json`, oldest first, 31-day retention from UTC midnight, `reset` watermark)
+- `crates/lingopop-core/src/time.rs` also holds `Clock`, `SystemClock` and the test-driven `ManualClock`
 
 ## Build / test
 

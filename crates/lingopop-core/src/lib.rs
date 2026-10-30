@@ -2,21 +2,29 @@
 
 pub mod envelope;
 pub mod fsio;
+pub mod history_store;
 pub mod languages;
 pub mod operation;
+pub mod paths;
 pub mod provider;
 pub mod records;
 pub mod serde_uuid;
+mod store_common;
 pub mod time;
+pub mod usage_store;
 
+pub use fsio::{LoadOutcome, StoreError};
+pub use history_store::HistoryStore;
 pub use languages::LanguageInfo;
 pub use operation::AIOperation;
+pub use paths::DataPaths;
 pub use provider::{
     default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,
     ProviderType,
 };
 pub use records::{HistoryEntry, UsageRecord};
-pub use time::Timestamp;
+pub use time::{Clock, ManualClock, SystemClock, Timestamp};
+pub use usage_store::UsageStore;
 
 /// Crate version, taken from the workspace `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

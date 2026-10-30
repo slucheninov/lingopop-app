@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -115,6 +117,59 @@ impl<'de> Deserialize<'de> for Timestamp {
     }
 }
 
+/// Source of "now" for the stores, injected so tests control time.
+pub trait Clock: Send + Sync {
+    fn now(&self) -> Timestamp;
+}
+
+/// The wall clock (`std::time::SystemTime`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Timestamp {
+        let unix = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(after) => after.as_secs_f64(),
+            Err(before) => -before.duration().as_secs_f64(),
+        };
+        Timestamp::from_unix_seconds(unix)
+    }
+}
+
+/// A clock tests drive by hand; public so later phases reuse it.
+#[derive(Debug)]
+pub struct ManualClock {
+    now: Mutex<Timestamp>,
+}
+
+impl ManualClock {
+    pub fn new(start: Timestamp) -> Self {
+        Self {
+            now: Mutex::new(start),
+        }
+    }
+
+    pub fn set(&self, now: Timestamp) {
+        *self.lock() = now;
+    }
+
+    pub fn advance(&self, seconds: f64) {
+        let mut now = self.lock();
+        *now = now.plus_seconds(seconds);
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Timestamp> {
+        // A poisoned lock still holds a valid `Timestamp`.
+        self.now.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl Clock for ManualClock {
+    fn now(&self) -> Timestamp {
+        *self.lock()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +281,25 @@ mod tests {
         assert!(a < b);
         assert_eq!(a, Timestamp::from_apple_seconds(1.0));
         assert_eq!(a.plus_seconds(1.0), b);
+    }
+
+    #[test]
+    fn manual_clock_set_and_advance() {
+        let clock = ManualClock::new(Timestamp::from_apple_seconds(100.0));
+        assert_eq!(clock.now(), Timestamp::from_apple_seconds(100.0));
+        clock.advance(10.5);
+        assert_eq!(clock.now(), Timestamp::from_apple_seconds(110.5));
+        clock.set(Timestamp::from_apple_seconds(50.0));
+        assert_eq!(clock.now(), Timestamp::from_apple_seconds(50.0));
+    }
+
+    #[test]
+    fn system_clock_is_close_to_the_real_time() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let now = SystemClock.now().unix_seconds();
+        assert!((now - before).abs() < 60.0, "{now} vs {before}");
     }
 }
