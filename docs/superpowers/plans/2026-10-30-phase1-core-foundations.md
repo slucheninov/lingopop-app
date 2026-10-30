@@ -17,8 +17,8 @@ Only Phase 1 is planned in detail here. Each later phase gets its own plan.
 - **Phase 1 (this plan):** repo bootstrap + CI skeleton + `crates/lingopop-core` foundations (pure Rust, no OS APIs, no network).
 - **Phase 2:** HTTP client + 8 providers + operation runner with fallback (`Core/OperationRunner.swift`) + live smoke tests (`#[ignore]`).
 - **Phase 3:** `crates/lingopop-platform` traits, `fake`, `windows` impls, `macos` dev impl, Windows smoke tests.
-- **Phase 4:** Tauri app (orchestration, popup, settings, history, tray, overlay), localization import + check + core lookup (`%@` / `%lld` substitution), usage aggregation and `UsagePricing`, Vitest, dependabot `npm` entry.
-- **Phase 5:** NSIS installer artifact, `release.yml`, publish-release script, manual tester checklist, update checker, docs polish.
+- **Phase 4:** Tauri app (orchestration, popup, settings, history, tray, overlay), localization import + check + core lookup (`%@` / `%lld` substitution), usage aggregation and `UsagePricing`, Vitest, dependabot `npm` entry (deferred from Phase 1, see Task 12). The Screen Translate flow runs `detector::detect` and `resolve_target_language` on the OCR text itself, as `App/ScreenTranslateFlow.swift:90-91` does (the Task 11 gate covers only the hotkey `Translate` path). Phase 4 also adds the persisted in-app UI-language choice (`appLanguage`) to `Settings` as a deliberate extension of the Phase 1 12-field format and updates the key-set test in Task 8 (the mac app keeps `LingoPop.appLanguage` outside `Persisted`).
+- **Phase 5:** NSIS installer artifact, `release.yml`, publish-release script, `RELEASING.md` (spec section 10; deferred from Phase 1 because no release process exists yet), manual tester checklist, update checker, docs polish.
 
 Phase 1 is deliberately executed on `main` (bootstrap rule from the spec: the repo is empty, so the first commits go straight to `main`). Task 12 pushes `main` and then turns on the protections; every later phase goes through PRs.
 
@@ -30,14 +30,15 @@ Phase 1 is deliberately executed on `main` (bootstrap rule from the spec: the re
 - Error handling: `thiserror` enums per module (`StoreError`, `SettingsError`, `SecretsError`, ...). No `anyhow` in core. Errors that cross into user text are `TranslationError` (Task 11).
 - JSON via `serde` / `serde_json`. `serde_json` must be built with `float_roundtrip` (without it, dates can lose 1 ULP on a decode/encode round trip).
 - Persisted raw values are frozen, never renamed: `ProviderType` = `"Claude"`, `"OpenAI"`, `"Gemini"`, `"Grok"`, `"Google (Free)"`, `"Google Translate"`, `"DeepL"`, `"Microsoft Translator"`; `AIOperation` = `"translate"`, `"grammarFix"`, `"rewrite"`, `"explain"`, `"screenTranslate"`, `"magic"`. UI and error text use `display_name()`, never the raw value.
-- Date encoding: a JSON number, `f64` seconds since 2001-01-01T00:00:00Z (Apple reference date; add 978307200 for Unix epoch). Not ISO 8601, not Unix epoch.
+- Date encoding: a JSON number, `f64` seconds since 2001-01-01T00:00:00Z (Apple reference date; add 978307200 for Unix epoch). Not ISO 8601, not Unix epoch. A finite, fraction-free value with `abs < 2^53` is written as a JSON integer (as Swift's `JSONEncoder` does), anything else as a float; both forms are read.
 - UUID: written uppercase (`16990D16-7E15-47C3-A299-EF2AEC4400D1`), read case-insensitively.
 - `history.json` / `usage.json`: envelope v2 `{ "version": 2, "items": [...], "deleted": [{"id","at"}], "clearedBefore": <date> }`; `version` and `deleted` are always written (Swift's synthesized decoder requires them), `clearedBefore` and `sourceLanguage` are omitted when `None`; a legacy bare array is still read. Tombstone retention 90 days; usage retention 31 days; history newest first, usage oldest first.
 - Prompt texts are English and copied verbatim from `Core/PromptBuilder.swift`; the token is `{{targetLanguage}}`. Never localized.
 - Windows data lives in `%APPDATA%\LingoPop\` (`settings.json`, `history.json`, `usage.json`, `secrets.dat`); core never computes that path, callers inject it. Nothing is synced. API keys and provider settings only ever live in `secrets.dat`.
 - GitHub Actions are pinned by full commit SHA with a version comment; workflow `permissions: contents: read`.
 - Versions are independent of the mac app; start at `0.1.0`.
-- Conventional commit messages, no `Co-Authored-By` / "Generated with" footers. Each task adds its new modules to the Layout section of `AGENTS.md` in the same commit.
+- Conventional commit messages, no `Co-Authored-By` / "Generated with" footers. Each task adds its new modules to the Layout section of `AGENTS.md` in the same commit (every task lists `AGENTS.md` under Modify, except Task 1 which creates it).
+- Test commands: `cargo test` accepts one positional filter. Every task step uses either the whole crate (`cargo test -p lingopop-core`, which also runs the integration test binaries) or a single filter (`cargo test -p lingopop-core <filter>`); never several filters and never `--test` combined with a filter for a different binary.
 
 ## Review Focus
 
@@ -45,7 +46,7 @@ The five failure modes the spec implies but does not spell out, most likely firs
 
 1. **UUID case.** `history.json` written by another tool or an older build has lowercase / mixed-case ids; a tombstone written in one case must delete an item written in the other, and Rust must write uppercase. Tests: Task 4, Task 5.
 2. **Unknown raw values from a newer version** (provider or operation in a history/usage record, in `settings.json` maps or `activeProvider`, in `secrets.dat` payload entries). Expected: nothing crashes, unknown records and entries survive a rewrite, unknown map keys are skipped, an unknown `activeProvider` falls back to the default. Tests: Tasks 2, 4, 6, 8, 9.
-3. **Corrupt, truncated, empty or BOM-prefixed files** (Notepad adds a UTF-8 BOM when the user edits JSON; a power cut leaves half a file). Expected: BOM tolerated, empty = missing, anything unparsable is moved aside to `<name>.bak-<unix-seconds>` and the app starts with defaults/empty, never overwriting the bad file silently and never panicking. Tests: Tasks 6, 8, 9.
+3. **Corrupt, truncated, empty or BOM-prefixed files** (Notepad adds a UTF-8 BOM when the user edits JSON; a power cut leaves half a file). Expected: BOM tolerated, empty = missing, anything unparsable is moved aside to `<name>.bak-<unix-seconds>` and the app starts with defaults/empty, never overwriting the bad file silently and never panicking. Tests: Tasks 5, 6, 8, 9.
 4. **Clock skew and absurd timestamps** (another machine's clock ahead, system clock set backwards, `1e300` in a hand-edited file). Expected: future-dated items and tombstones are kept and sorted correctly, `clearedBefore` never moves backwards, no panic in any `Timestamp` conversion. Tests: Tasks 4, 5, 6.
 5. **Very large files** (50k history entries or tombstones from a long-lived install or a raised `maxHistoryCount`). Expected: load, merge and trim stay linear (a quadratic merge would hang the test), first `add` trims to the cap. Tests: Tasks 5, 6.
 
@@ -71,15 +72,16 @@ crates/lingopop-core/
   src/serde_uuid.rs     uppercase-write / case-insensitive-read UUID (Task 4)
   src/records.rs        HistoryEntry, UsageRecord                    (Task 4)
   src/envelope.rs       Tombstone, Mergeable, MergeableEnvelope      (Task 5)
-  src/fsio.rs           atomic write, BOM strip, quarantine          (Task 6)
+  src/fsio.rs           strip_bom (Task 5); atomic write, blank check, quarantine, LoadOutcome, StoreError (Task 6)
   src/paths.rs          DataPaths                                    (Task 6)
+  src/store_common.rs   crate-private EnvelopeFile<T>, shared by both stores   (Task 6)
   src/history_store.rs  HistoryStore                                 (Task 6)
   src/usage_store.rs    UsageStore                                   (Task 6)
   src/keyed_map.rs      ProviderKeyedMap<V>                          (Task 8)
   src/hotkey.rs         Hotkey, Modifier                             (Task 8)
   src/settings.rs       Settings                                     (Task 8)
   src/secrets.rs        payload, SecretProtector, SecretStore        (Task 9)
-  src/prompts.rs        prompt builder                               (Task 10)
+  src/prompts.rs        DEFAULT_MAGIC_PROMPT (Task 8); prompt builder (Task 10)
   src/target_language.rs, src/detector.rs, src/action_row.rs, src/errors.rs   (Task 11)
   tests/mac_fixtures.rs, tests/fixtures/mac/*                        (Tasks 7, 9, 10)
 ```
@@ -103,7 +105,7 @@ Expected at planning time: Homebrew cargo/rustc 1.99.1 with clippy and rustfmt, 
 
 - [ ] **Step 2: Write the failing smoke test on a minimal workspace**
 
-Create only the root `Cargo.toml`, `crates/lingopop-core/Cargo.toml` and a `lib.rs` containing `#![forbid(unsafe_code)]` and a test module with `#[test] fn version_starts_at_0_1_0() { assert_eq!(crate::VERSION, "0.1.0"); }` (pins spec section 4).
+Create only the root `Cargo.toml`, `crates/lingopop-core/Cargo.toml` and a `lib.rs` containing `#![forbid(unsafe_code)]` and a test module with `#[test] fn version_is_semver_shaped()` asserting that `crate::VERSION` is three dot-separated numeric components (spec section 4 starts at `0.1.0`, which lives in the workspace `Cargo.toml`; a literal comparison would break on the first release bump).
 Run: `cargo test -p lingopop-core`
 Expected: FAIL to compile, `cannot find value VERSION in the crate root`.
 
@@ -114,13 +116,13 @@ Expected: FAIL to compile, `cannot find value VERSION in the crate root`.
 - `.gitattributes`: `* text=auto eol=lf` (Windows runners check out with CRLF by default, which breaks byte-exact fixtures and goldens).
 - `.gitignore`: copy the mac repo's `.gitignore` sections that still apply (macOS junk, `dist/`, `.superpowers/`, secret patterns `*.pem *.p12 *.key *.env .env.* *.cer`, editors) and add Rust (`target/`), Node (`node_modules/`, `app/dist/`, `*.tsbuildinfo`) and Tauri (`app/src-tauri/gen/`); there is a single workspace-level `target/`.
 - `LICENSE`: copy the mac repo's `LICENSE` verbatim (MIT, "Copyright (c) 2026 Slava Lucheninov"). `CLAUDE.md`: copy the mac repo's `CLAUDE.md` verbatim (short, points to and `@`-imports `AGENTS.md`).
-- `AGENTS.md` (single source of agent instructions), sections: What this is (Windows tray AI translator, Tauri v2 + Rust core, sibling of the macOS app `slucheninov/lingopop`; link to the spec); Layout (the tree from this plan, kept current); Build / test (`cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --locked`, `bash scripts/check-core-deps.sh`; Windows is verified only by CI, the dev machine is a Mac); Rules (core stays OS-agnostic; persisted raw values and the date/UUID encoding are frozen, with the list from Global Constraints; prompts verbatim; no network in unit tests; no secrets or API keys in logs, fixtures or issues); Mac compatibility (fixtures are generated by `scripts/mac-fixtures/run.sh`, never hand-edited); Branching (until Phase 1 Task 12 is done commits go to `main`; afterwards `main` is PR-only with required check `build-and-test` and CodeRabbit approval).
+- `AGENTS.md` (single source of agent instructions), sections: What this is (Windows tray AI translator, Tauri v2 + Rust core, sibling of the macOS app `slucheninov/lingopop`; link to the spec); Layout (only the files that exist after this task: root files, `scripts/check-core-deps.sh`, `.github/workflows/ci.yml`, `crates/lingopop-core/{Cargo.toml, src/lib.rs}`; every later task appends its modules in its own commit); Build / test (`cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace --locked`, `bash scripts/check-core-deps.sh`; Windows is verified only by CI, the dev machine is a Mac); Rules (core stays OS-agnostic; persisted raw values and the date/UUID encoding are frozen, with the list from Global Constraints; prompts verbatim; no network in unit tests; no secrets or API keys in logs, fixtures or issues); Mac compatibility (fixtures are generated by `scripts/mac-fixtures/run.sh`, never hand-edited); Branching (until Phase 1 Task 12 is done commits go to `main`; afterwards `main` is PR-only with required check `build-and-test` and CodeRabbit approval).
 - `README.md`: stub with a one-paragraph description, status "pre-alpha, Phase 1 (core foundations)", links to the spec and `AGENTS.md`. The real README is written in Phase 5.
-- `scripts/check-core-deps.sh` (bash, `set -euo pipefail`, runs from the repo root): (a) `cargo tree -p lingopop-core -e normal,build --depth 1 --prefix none` must not list a direct dependency named `windows`, `windows-sys`, `windows-core`, `winapi`, `tauri`, `tauri-*`, `objc`, `objc2`, `cocoa`, `core-foundation`, `core-graphics`; (b) `cargo tree -p lingopop-core -e normal,build --prefix none` must not contain a line starting with `tauri `, `windows `, `winapi `, `objc `, `objc2 ` or `cocoa ` (exact crate name followed by a space, so a transitive `windows-sys` pulled in by `getrandom` / `tempfile` on Windows stays legitimate). Print the offending lines and exit 1.
+- `scripts/check-core-deps.sh` (bash, `set -euo pipefail`, runs from the repo root): (a) `cargo tree -p lingopop-core -e normal,build --depth 1 --prefix none` must not list a direct dependency whose name starts with `windows`, `winapi`, `tauri`, `objc`, `cocoa` or `core-foundation`, or equals `core-graphics` (prefix matching, so it covers the Global Constraint wildcards `tauri*`, `objc*`, `core-foundation*` and `windows-sys` as a direct dependency); (b) `cargo tree -p lingopop-core -e normal,build --prefix none` must not contain a line whose crate name starts with `tauri`, `objc` or `core-foundation`, or equals `windows`, `winapi` or `cocoa` (the crate name is the first word of the line, so a transitive `windows-sys` pulled in by `getrandom` / `tempfile` on Windows stays legitimate). Print the offending lines and exit 1.
 
 - [ ] **Step 4: Write `.github/workflows/ci.yml`**
 
-Shape (triggers, `permissions: contents: read`, `concurrency` group `ci-${{ github.ref }}` with `cancel-in-progress`, `env: CARGO_TERM_COLOR: always`):
+Shape (triggers `on: push: branches: [main]` and `on: pull_request` (Task 12 step 6 needs the push run, the ruleset needs the PR run), `permissions: contents: read`, `concurrency` group `ci-${{ github.ref }}` with `cancel-in-progress`, `env: CARGO_TERM_COLOR: always`):
 - job `core`: `strategy.fail-fast: false`, `matrix.os: [windows-latest, macos-latest]`, `runs-on: ${{ matrix.os }}`, `timeout-minutes: 30`; steps: checkout (`persist-credentials: false`), toolchain action with `toolchain: stable` and `components: rustfmt, clippy`, rust-cache, then `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked`, `bash scripts/check-core-deps.sh` (`shell: bash` on every step that uses bash).
 - job `build-and-test` (name exactly `build-and-test`): `needs: [core]`, `if: ${{ always() }}`, `runs-on: ubuntu-latest`; one step fails unless every `needs.*.result` is `success`. The `always()` plus explicit check is required: a job skipped because `core` failed counts as passing for a required check.
 - Pin by SHA with trailing version comments. Look the SHAs up at execution time, do not copy blindly: `gh api repos/actions/checkout/commits/v7.0.1 --jq .sha` (planning-time value `3d3c42e5aac5ba805825da76410c181273ba90b1`, same as the mac repo), `gh api repos/dtolnay/rust-toolchain/commits/stable --jq .sha` (this action is versioned by branch; comment `# stable`; planning-time value `b725eda525362e7cf34af9a7243cac1e3f01a7ec`), `gh api repos/Swatinem/rust-cache/commits/v2.9.3 --jq .sha` (planning-time `d1527c8f67ef9af357290475d4af4b0fab8f12e0`). If a newer release exists, use the latest tag and update the comment.
@@ -129,7 +131,7 @@ Shape (triggers, `permissions: contents: read`, `concurrency` group `ci-${{ gith
 
 Run: `cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked && bash scripts/check-core-deps.sh`
 Expected: all pass (1 test passed, guard exits 0).
-Then temporarily run `cargo add -p lingopop-core windows` and `bash scripts/check-core-deps.sh`; expected: exit 1 naming `windows`. Revert with `git checkout -- crates/lingopop-core/Cargo.toml Cargo.lock`, re-run the guard, expected exit 0.
+Then temporarily run `cargo add -p lingopop-core windows` and `bash scripts/check-core-deps.sh`; expected: exit 1 naming `windows`. Nothing is committed yet (Step 6), so do not revert with `git checkout`; undo with `cargo remove -p lingopop-core windows`, then run `cargo test --workspace` once without `--locked` so `Cargo.lock` drops the `windows` entries, re-run the guard (expected exit 0) and the `--locked` test command above.
 If `actionlint` is installed (`brew install actionlint`), run `actionlint`; expected no findings.
 
 - [ ] **Step 6: Commit**
@@ -144,15 +146,15 @@ git add -A && git commit -m "chore: bootstrap workspace, lingopop-core crate and
 
 **Files:**
 - Create: `crates/lingopop-core/src/operation.rs`, `crates/lingopop-core/src/provider.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `serde` with `derive`, `serde_json` with feature `float_roundtrip`)
+- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `serde` with `derive`, `serde_json` with feature `float_roundtrip`), `AGENTS.md` (Layout)
 
 **Interfaces:**
 - Produces:
   - `pub enum AIOperation { Translate, GrammarFix, Rewrite, Explain, ScreenTranslate, Magic }` (derive `Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize`; serde `rename_all = "camelCase"`); `AIOperation::ALL: [AIOperation; 6]`, `raw_value(self) -> &'static str`, `from_raw_value(&str) -> Option<Self>`, `english_name(self) -> &'static str` (`"Translate"`, `"Fix grammar"`, `"Rewrite"`, `"Explain"`, `"Screen Translate"`, `"Magic"`; ported from `AIOperation.displayName` English keys, localized later).
   - `pub enum ProviderType { Claude, OpenAI, Gemini, Grok, GoogleFree, GoogleCloud, DeepL, MicrosoftTranslator }` (derive as above plus serde `rename` per variant to the frozen raw values); `ProviderType::ALL: [ProviderType; 8]` in that order, `raw_value`, `from_raw_value`, `display_name() -> &'static str` (equal to the raw value today), `capabilities() -> &'static ProviderCapabilities`, `supports(self, AIOperation) -> bool`.
-  - `pub enum ProviderField { ApiKey, BaseUrl, Model, Referer, Region }` (derive `Serialize` with `camelCase`).
-  - `pub struct ProviderCapabilities { default_base_url: &'static str, available_models: &'static [&'static str], requires_api_key: bool, supported_operations: &'static [AIOperation], supports_vision: bool, auto_base_url: bool, settings_fields: &'static [ProviderField], preferred_default_model: Option<&'static str> }`.
-  - `pub struct ProviderConnectionSettings { base_url: String, model: String, referer: Option<String>, region: Option<String> }` (serde names `baseURL`, `model`, `referer`, `region`; `None` omitted; `PartialEq, Eq, Clone, Debug`).
+  - `pub enum ProviderField { ApiKey, BaseUrl, Model, Referer, Region }` (derive `Debug, Clone, Copy, PartialEq, Eq, Serialize` with `camelCase`).
+  - `pub struct ProviderCapabilities { pub default_base_url: &'static str, pub available_models: &'static [&'static str], pub requires_api_key: bool, pub supported_operations: &'static [AIOperation], pub supports_vision: bool, pub auto_base_url: bool, pub settings_fields: &'static [ProviderField], pub preferred_default_model: Option<&'static str> }` (derive `Debug, Clone, PartialEq`; all fields `pub` because Phase 2 providers read them and the tests compare whole structs).
+  - `pub struct ProviderConnectionSettings { pub base_url: String, pub model: String, pub referer: Option<String>, pub region: Option<String> }` (derive `Debug, Clone, PartialEq, Eq, Serialize, Deserialize`; `Deserialize` is needed by Task 9; serde names `baseURL`, `model`, `referer`, `region`; `None` omitted).
   - `pub fn default_providers() -> std::collections::BTreeMap<ProviderType, ProviderConnectionSettings>` (`ProviderType` is `Ord` in declaration order).
 
 - [ ] **Step 1: Write the failing tests**
@@ -202,7 +204,7 @@ Preferred default models: Claude `claude-haiku-5-5`, OpenAI `gpt-6-luna`, Gemini
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p lingopop-core provider:: operation::`
+Run: `cargo test -p lingopop-core`
 Expected: FAIL, unresolved imports / items not found.
 
 - [ ] **Step 3: Implement the types in `operation.rs` and `provider.rs`**
@@ -211,7 +213,7 @@ Static `const` data for the table above; `capabilities()` is a `match` returning
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `cargo test -p lingopop-core provider:: operation::` and `cargo clippy --workspace --all-targets --locked -- -D warnings`
+Run: `cargo test -p lingopop-core` and `cargo clippy --workspace --all-targets --locked -- -D warnings`
 Expected: PASS, no warnings (`AIOperation` is not an all-caps name, so `clippy::upper_case_acronyms` stays quiet).
 
 - [ ] **Step 5: Commit**
@@ -226,7 +228,7 @@ git add -A && git commit -m "feat(core): add ProviderType, AIOperation and stati
 
 **Files:**
 - Create: `crates/lingopop-core/src/languages.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`
+- Modify: `crates/lingopop-core/src/lib.rs`, `AGENTS.md` (Layout)
 
 **Interfaces:**
 - Produces:
@@ -252,7 +254,7 @@ Expected: FAIL (module missing).
 
 - [ ] **Step 3: Implement**
 
-Port the 28 rows of `Languages.all` exactly from `Models/Languages.swift:44-71` (names, ISO-639-1 codes, `deepL: "NB"` and `microsoft: "nb"` for Norwegian, `microsoft: "zh-Hans"` for Chinese, `quick: true` rows and their order) and the helpers from `Models/LanguageCodes.swift`. Add `detect_codes` from the list above. Task 7 later adds a golden test that compares this table to the real Swift output, so do not "fix" anything.
+Port the 28 rows of `Languages.all` exactly from `Models/Languages.swift:42-69` (the rows of `Languages.all`; names, ISO-639-1 codes, `deepL: "NB"` and `microsoft: "nb"` for Norwegian, `microsoft: "zh-Hans"` for Chinese, `quick: true` rows and their order) and the helpers from `Models/LanguageCodes.swift`. Add `detect_codes` from the list above. Task 7 later adds a golden test that compares name, code, DeepL code, Microsoft code and quick-list flag to the real Swift output, so do not "fix" anything. Swift's `nlLanguages` have no one-to-one Rust equivalent (Chinese has two `NLLanguage` values but one `cmn`, Norwegian has one but two ISO 639-3 codes), so they are not part of the golden.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -271,28 +273,31 @@ git add -A && git commit -m "feat(core): port language table and provider langua
 
 **Files:**
 - Create: `crates/lingopop-core/src/time.rs`, `crates/lingopop-core/src/serde_uuid.rs`, `crates/lingopop-core/src/records.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `uuid` with features `serde`, `v4`)
+- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `uuid` with features `serde`, `v4`), `AGENTS.md` (Layout)
 
 Decision: no `chrono` / `time`. A `Timestamp(f64)` newtype stores the Apple-reference seconds exactly as read, so decode/encode is lossless (converting through nanosecond datetimes is not). Display formatting is the frontend's job (it receives Unix milliseconds via `unix_seconds()`).
 
 **Interfaces:**
 - Produces:
-  - `pub struct Timestamp(f64)` (`Clone, Copy, Debug`; `PartialEq/Eq/PartialOrd/Ord` via `f64::total_cmp`; serde as a plain JSON number, deserializing integers and floats, rejecting non-numbers): `Timestamp::APPLE_TO_UNIX_OFFSET: f64 = 978_307_200.0`, `from_apple_seconds(f64) -> Self` (non-finite input becomes `0.0`), `apple_seconds(self) -> f64`, `from_unix_seconds(f64) -> Self`, `unix_seconds(self) -> f64`, `plus_seconds(self, f64) -> Self`.
+  - `pub struct Timestamp(f64)` (`Clone, Copy, Debug`; `PartialEq/Eq/PartialOrd/Ord` via `f64::total_cmp`; serde as a plain JSON number, deserializing integers and floats, rejecting non-numbers; serializing a finite, fraction-free value with `abs < 2^53` as a JSON integer and everything else as a float, so whole-second dates are byte-identical to Swift's `JSONEncoder` output): `Timestamp::APPLE_TO_UNIX_OFFSET: f64 = 978_307_200.0`, `from_apple_seconds(f64) -> Self`, `apple_seconds(self) -> f64`, `from_unix_seconds(f64) -> Self`, `unix_seconds(self) -> f64`, `plus_seconds(self, f64) -> Self`. A `Timestamp` is always finite: every constructor and `plus_seconds` maps a NaN result to `0.0` and saturates an infinite result to `f64::MAX` / `f64::MIN` (so `1e308 + 1e308` is `f64::MAX`, never `inf`), and `unix_seconds()` of any value is finite.
   - `pub mod serde_uuid` with `serialize` / `deserialize` for `#[serde(with = "serde_uuid")] uuid::Uuid` (writes `hyphenated().encode_upper`, reads any case).
-  - `pub struct HistoryEntry { id: Uuid, original: String, translated: String, source_language: Option<String>, target_language: String, provider: String, operation: String, timestamp: Timestamp }`, camelCase field names, `sourceLanguage` omitted when `None`. `provider` and `operation` are stored as the raw strings so values from a newer version survive a rewrite (RF 2); typed access via `provider_type(&self) -> Option<ProviderType>` and `operation_type(&self) -> Option<AIOperation>`; `HistoryEntry::new(original, translated, source_language: Option<String>, target_language, provider: ProviderType, operation: AIOperation, timestamp: Timestamp) -> Self` generates a v4 id.
-  - `pub struct UsageRecord { id: Uuid, timestamp: Timestamp, provider: String, model: String, operation: String, input_tokens: i64, output_tokens: i64 }` (camelCase: `inputTokens`, `outputTokens`), same raw-string rule, `UsageRecord::new(provider: ProviderType, model: String, operation: AIOperation, input_tokens: i64, output_tokens: i64, timestamp: Timestamp)`, same accessors.
+  - `pub struct HistoryEntry { pub id: Uuid, pub original: String, pub translated: String, pub source_language: Option<String>, pub target_language: String, pub provider: String, pub operation: String, pub timestamp: Timestamp }` (derive `Debug, Clone, PartialEq, Serialize, Deserialize`; fields `pub` because `Mergeable` is implemented in Task 5 and the stores and integration tests read them), camelCase field names, `sourceLanguage` omitted when `None`. `provider` and `operation` are stored as the raw strings so values from a newer version survive a rewrite (RF 2); typed access via `provider_type(&self) -> Option<ProviderType>` and `operation_type(&self) -> Option<AIOperation>`; `HistoryEntry::new(original, translated, source_language: Option<String>, target_language, provider: ProviderType, operation: AIOperation, timestamp: Timestamp) -> Self` generates a v4 id.
+  - `pub struct UsageRecord { pub id: Uuid, pub timestamp: Timestamp, pub provider: String, pub model: String, pub operation: String, pub input_tokens: i64, pub output_tokens: i64 }` (same derives and `pub` rule; camelCase: `inputTokens`, `outputTokens`), same raw-string rule, `UsageRecord::new(provider: ProviderType, model: String, operation: AIOperation, input_tokens: i64, output_tokens: i64, timestamp: Timestamp)`, same accessors.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```rust
 // time.rs
 // apple_epoch_offset: Timestamp::from_apple_seconds(0.0).unix_seconds() == 978_307_200.0; from_unix_seconds round-trips
-// date_round_trips_bit_exact: for s in [815059756.035193, 0.0, -1.5, 1_000_000_000.123456, 1e12]
+// date_round_trips_bit_exact: for s in [815059756.035193, 0.0, 815059756.0, -1.5, 1_000_000_000.123456, 1e12]
 //     serde_json::from_str::<Timestamp>(&serde_json::to_string(&Timestamp::from_apple_seconds(s))?)?.apple_seconds().to_bits() == s.to_bits()
 // accepts_integer_json_number: from_str::<Timestamp>("815059756") ok (Swift writes whole seconds without a fraction)
 // rejects_iso_string_and_null: from_str::<Timestamp>("\"2026-10-30T00:00:00Z\"") is Err
-// absurd_values_do_not_panic (RF 4): from_str("1e300") ok, unix_seconds()/plus_seconds()/cmp all finite-safe, no panic;
-//     from_str("1e999") is Err; from_apple_seconds(f64::NAN).apple_seconds() == 0.0
+// whole_second_timestamp_serializes_without_fraction: to_string(from_apple_seconds(815059756.0)) == "815059756" (as Swift writes it); 0.0 -> "0"; -1.5 -> "-1.5";
+//     9007199254740992.0 (2^53) and 1e300 stay floats; every one of them still round-trips bit-exact through from_str
+// absurd_values_do_not_panic (RF 4): from_str("1e300") ok, unix_seconds()/plus_seconds()/cmp never panic;
+//     from_str("1e999") is Err; from_apple_seconds(f64::NAN).apple_seconds() == 0.0; from_unix_seconds(f64::INFINITY) is finite
+// plus_seconds_never_yields_non_finite: from_apple_seconds(1e308).plus_seconds(1e308).apple_seconds() == f64::MAX; (-1e308).plus_seconds(-1e308) == f64::MIN; plus_seconds(f64::NAN) leaves a finite value
 // serde_uuid.rs
 // uuid_written_uppercase: "16990D16-7E15-47C3-A299-EF2AEC4400D1"
 // uuid_read_case_insensitive (RF 1): lowercase and mixed-case strings give equal Uuids; invalid string is Err
@@ -311,12 +316,12 @@ Decision: no `chrono` / `time`. A `Timestamp(f64)` newtype stores the Apple-refe
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p lingopop-core time:: serde_uuid:: records::`
+Run: `cargo test -p lingopop-core`
 Expected: FAIL (modules missing).
 
 - [ ] **Step 3: Implement**
 
-`Timestamp` custom `Serialize` (`serialize_f64`) and `Deserialize` (visitor accepting `visit_f64`, `visit_i64`, `visit_u64`, rejecting non-finite). `serde_uuid` as a standard `with` module. Records are plain derive structs with `#[serde(rename_all = "camelCase")]` and `skip_serializing_if = "Option::is_none"`.
+`Timestamp` custom `Serialize` (`serialize_i64` when the value is finite, fraction-free and `abs < 2^53`, else `serialize_f64`) and `Deserialize` (visitor accepting `visit_f64`, `visit_i64`, `visit_u64`, rejecting non-finite). `serde_uuid` as a standard `with` module. Records are plain derive structs with `#[serde(rename_all = "camelCase")]` and `skip_serializing_if = "Option::is_none"`.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -334,19 +339,20 @@ git add -A && git commit -m "feat(core): add Apple-epoch Timestamp, uppercase UU
 ### Task 5: Mergeable envelope v2 and merge logic
 
 **Files:**
-- Create: `crates/lingopop-core/src/envelope.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`
+- Create: `crates/lingopop-core/src/envelope.rs`, `crates/lingopop-core/src/fsio.rs` (only `strip_bom` here; Task 6 extends the file)
+- Modify: `crates/lingopop-core/src/lib.rs`, `AGENTS.md` (Layout)
 
-Port of `Core/CloudMerge.swift` lines 1-120 (`CloudMergeable`, `CloudTombstone`, `MergeableEnvelope`). `CloudMergeSync` (UserDefaults, iCloud, mtime) is not ported.
+Port of `Core/CloudMerge.swift` lines 1-120 (`CloudMergeable`, `CloudTombstone`, `MergeableEnvelope`). `CloudMergeSync` (UserDefaults, iCloud, mtime) is not ported, and neither are `hasSyncMetadata` / `carriesContent`, which only `CloudMergeSync` calls (nothing is synced; spec section 5).
 
 **Interfaces:**
-- Consumes: `Timestamp`, `serde_uuid` (Task 4).
+- Consumes: `Timestamp`, `serde_uuid`, `HistoryEntry`, `UsageRecord` (Task 4; their fields are `pub`).
 - Produces:
+  - `fsio::strip_bom(bytes: &[u8]) -> &[u8]` (removes a leading UTF-8 BOM; the single BOM rule of the crate, reused by Tasks 6 and 8).
   - `pub trait Mergeable { fn id(&self) -> Uuid; fn merge_timestamp(&self) -> Timestamp; }`, implemented for `HistoryEntry` and `UsageRecord` (timestamp = `timestamp`).
-  - `pub struct Tombstone { #[serde(with = "serde_uuid")] pub id: Uuid, pub at: Timestamp }` (`PartialEq, Clone, Debug`).
-  - `pub struct MergeableEnvelope<T> { pub version: u32, pub items: Vec<T>, pub deleted: Vec<Tombstone>, pub cleared_before: Option<Timestamp> }` (serde `clearedBefore`, omitted when `None`); `pub const TOMBSTONE_RETENTION_SECONDS: f64 = 7_776_000.0` (90 days).
-  - `pub struct DecodedEnvelope<T> { pub envelope: MergeableEnvelope<T>, pub is_legacy: bool }`.
-  - Methods (bound `T: Mergeable + Serialize + DeserializeOwned + Clone`): `new() -> Self`, `with_items(Vec<T>) -> Self`, `decode(bytes: &[u8]) -> Option<DecodedEnvelope<T>>` (strips a UTF-8 BOM; envelope first, then bare array; `None` otherwise), `encode(&self) -> Result<Vec<u8>, serde_json::Error>` (always `version: 2`, always writes `deleted`), `has_sync_metadata(&self) -> bool`, `mark_deleted(&mut self, ids: &[Uuid], at: Timestamp)`, `mark_cleared(&mut self, at: Timestamp)`, `merged(&self, other: &Self, now: Timestamp) -> Self`, `carries_content(&self, missing_from: &Self) -> bool`, `pruned(&self, now: Timestamp) -> Self` (drops tombstones older than 90 days, nothing else; used by the stores because there is no sync step).
+  - `pub struct Tombstone { #[serde(with = "serde_uuid")] pub id: Uuid, pub at: Timestamp }` (derive `Debug, Clone, PartialEq, Serialize, Deserialize`).
+  - `pub struct MergeableEnvelope<T> { pub version: u32, pub items: Vec<T>, pub deleted: Vec<Tombstone>, pub cleared_before: Option<Timestamp> }` (derive `Debug, Clone, PartialEq, Serialize, Deserialize`; serde `clearedBefore`, omitted when `None`); `pub const TOMBSTONE_RETENTION_SECONDS: f64 = 7_776_000.0` (90 days).
+  - `pub struct DecodedEnvelope<T> { pub envelope: MergeableEnvelope<T>, pub is_legacy: bool }` (derive `Debug, Clone, PartialEq`).
+  - Methods (bound `T: Mergeable + Serialize + DeserializeOwned + Clone`): `new() -> Self`, `with_items(Vec<T>) -> Self`, `decode(bytes: &[u8]) -> Option<DecodedEnvelope<T>>` (strips a UTF-8 BOM through `fsio::strip_bom`; envelope first, then bare array; `None` otherwise), `encode(&self) -> Result<Vec<u8>, serde_json::Error>` (always `version: 2`, always writes `deleted`), `mark_deleted(&mut self, ids: &[Uuid], at: Timestamp)`, `mark_cleared(&mut self, at: Timestamp)`, `merged(&self, other: &Self, now: Timestamp) -> Self` (spec-mandated, kept although no store calls it yet), `pruned(&self, now: Timestamp) -> Self` (drops tombstones older than 90 days, nothing else; used by the stores because there is no sync step; `pruned` and the tombstone retention inside `merged` share one private helper).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -357,7 +363,8 @@ Test item `struct T { id: Uuid, ts: Timestamp }`. Port every test of `Tests/Ling
 //   (items at -20s, -10s, 0s with watermark -10s -> only the 0s item, watermark kept)
 // merged_tombstone_latest_at_wins; merged_prunes_tombstones_older_than_retention (-91d dropped, -89d kept; exactly -90d is kept: comparison is >=)
 // decode_legacy_bare_array (is_legacy == true); decode_envelope_round_trip; decode_garbage_returns_none ("nope")
-// mark_cleared_only_moves_forward; mark_deleted_replaces_existing_tombstone; carries_content (the four asserts)
+// mark_cleared_only_moves_forward; mark_deleted_replaces_existing_tombstone
+//   (the `CloudMergeTests` cases for `hasSyncMetadata` / `carriesContent` are not ported)
 ```
 New tests:
 ```rust
@@ -365,7 +372,7 @@ New tests:
 //   serde_json::Value has "version"==2, "deleted"==[], no "clearedBefore"; with Some -> number  (Swift's synthesized decoder requires version and deleted)
 // decode_tolerates_missing_deleted_and_version: {"items":[]} decodes (Rust is a superset of Swift's strictness)
 // decode_accepts_future_version_number: {"version":3,"items":[],"deleted":[]} decodes; encode writes 2
-// decode_strips_utf8_bom (RF 3)
+// decode_strips_utf8_bom (RF 3); fsio::strip_bom removes only a leading EF BB BF (a BOM in the middle of the bytes is kept)
 // merged_keeps_self_order_then_remote_only_items; merged_deleted_sorted_by_at_then_uppercase_uuid_string
 // uuid_case_does_not_matter_between_item_and_tombstone (RF 1): items JSON has lowercase id, tombstone JSON has the same id uppercase -> merged item is dropped; reverse case too; legacy array with two entries differing only in id case counts as one id
 // future_dated_data_is_kept (RF 4): item with ts = now+10y survives merge with a watermark of now; tombstone at now+10y is retained (>= horizon);
@@ -382,7 +389,7 @@ Expected: FAIL (module missing).
 
 - [ ] **Step 3: Implement**
 
-Port `merged` exactly: watermark = max of both, tombstone map keeps the latest `at` per id, items = `self.items` then `other.items`, first occurrence of an id wins, skip tombstoned ids, skip `timestamp <= watermark`; tombstones with `at >= now - 90d` kept, sorted by `(at, uppercase uuid string)`. Use `HashMap`/`HashSet` keyed by `Uuid`. `decode`: `serde_json::from_slice::<MergeableEnvelope<T>>` with `#[serde(default)]` on `version` (default 2) and `deleted`, then `Vec<T>` fallback.
+Port `merged` exactly (tombstone retention through the helper shared with `pruned`): watermark = max of both, tombstone map keeps the latest `at` per id, items = `self.items` then `other.items`, first occurrence of an id wins, skip tombstoned ids, skip `timestamp <= watermark`; tombstones with `at >= now - 90d` kept, sorted by `(at, uppercase uuid string)`. Use `HashMap`/`HashSet` keyed by `Uuid`. `decode`: `fsio::strip_bom` first (create `fsio.rs` with this one function), then `serde_json::from_slice::<MergeableEnvelope<T>>` with `#[serde(default)]` on `version` (default 2) and `deleted`, then `Vec<T>` fallback.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -400,8 +407,8 @@ git add -A && git commit -m "feat(core): port mergeable envelope v2 and merge lo
 ### Task 6: Local history and usage stores, file I/O helpers
 
 **Files:**
-- Create: `crates/lingopop-core/src/fsio.rs`, `crates/lingopop-core/src/paths.rs`, `crates/lingopop-core/src/history_store.rs`, `crates/lingopop-core/src/usage_store.rs`
-- Modify: `crates/lingopop-core/src/time.rs` (add `Clock`), `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `thiserror`; dev-dependency `tempfile`)
+- Create: `crates/lingopop-core/src/store_common.rs`, `crates/lingopop-core/src/paths.rs`, `crates/lingopop-core/src/history_store.rs`, `crates/lingopop-core/src/usage_store.rs`
+- Modify: `crates/lingopop-core/src/fsio.rs` (created in Task 5; add the helpers below), `crates/lingopop-core/src/time.rs` (add `Clock`), `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `thiserror`; dev-dependency `tempfile`), `AGENTS.md` (Layout)
 
 Port of `Core/TranslationHistoryStore.swift` and `Core/UsageStore.swift` minus iCloud, minus aggregation (chart buckets, totals, `UsagePricing` are Phase 4), minus polling.
 
@@ -409,13 +416,14 @@ Port of `Core/TranslationHistoryStore.swift` and `Core/UsageStore.swift` minus i
 - Consumes: `MergeableEnvelope`, `HistoryEntry`, `UsageRecord`, `Timestamp`.
 - Produces:
   - `pub trait Clock: Send + Sync { fn now(&self) -> Timestamp; }`, `pub struct SystemClock;` (via `std::time::SystemTime`), `pub struct ManualClock` (`new(Timestamp)`, `set(Timestamp)`, `advance(f64)`, interior `Mutex`, public so Phase 2-4 tests reuse it).
-  - `fsio`: `pub fn atomic_write(path: &Path, bytes: &[u8], private: bool) -> io::Result<()>` (create parent dirs, temp file `<name>.tmp-<pid>-<n>` in the same directory, `sync_all`, `rename` over the target; on Unix `private` sets mode 0600; on error the temp file is removed), `pub fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>>` (`NotFound` becomes `None`), `pub fn strip_bom(bytes: &[u8]) -> &[u8]`, `pub fn is_blank(bytes: &[u8]) -> bool` (empty or ASCII whitespace only, after BOM strip), `pub fn quarantine(path: &Path, now: Timestamp) -> io::Result<PathBuf>` (rename to `<file name>.bak-<unix seconds as integer>`, appending `-1`, `-2`... if that name exists).
+  - `fsio`: `pub fn atomic_write(path: &Path, bytes: &[u8], private: bool) -> io::Result<()>` (create parent dirs, temp file `<name>.tmp-<pid>-<n>` in the same directory, `sync_all`, `rename` over the target; on Unix `private` sets mode 0600; on error the temp file is removed), `pub fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>>` (`NotFound` becomes `None`), `pub fn is_blank(bytes: &[u8]) -> bool` (empty or ASCII whitespace only, after `strip_bom` from Task 5), `pub fn quarantine(path: &Path, now: Timestamp) -> io::Result<PathBuf>` (rename to `<file name>.bak-<unix seconds as integer>`, appending `-1`, `-2`... if that name exists).
+  - `store_common` (crate-private): `EnvelopeFile<T>` with `T: Mergeable + Serialize + DeserializeOwned + Clone`, holding the path, the `Arc<dyn Clock>` and the in-memory `MergeableEnvelope<T>`: `load(path: PathBuf, clock: Arc<dyn Clock>) -> Result<(Self, LoadOutcome), StoreError>` (the whole load rule below), `envelope(&self) -> &MergeableEnvelope<T>`, `persist(&mut self, next: MergeableEnvelope<T>) -> Result<(), StoreError>` (prune tombstones, atomic write, then swap the in-memory envelope). Both stores wrap one `EnvelopeFile` and contain only their own semantics; the persistence and load rules below are implemented once, there.
   - `pub struct DataPaths { dir: PathBuf }`: `new(dir: impl Into<PathBuf>)`, `settings_json()`, `history_json()`, `usage_json()`, `secrets_dat()`.
   - In `fsio.rs`, re-exported at the crate root: `pub enum LoadOutcome { Missing, Loaded, Legacy, CorruptBackedUp(PathBuf) }` (`Legacy` = a bare array was read and will be upgraded on the next write).
   - In `fsio.rs`, re-exported at the crate root: `pub enum StoreError { Io(io::Error), Encode(serde_json::Error) }` (`thiserror`).
   - `HistoryStore`: `open(path: PathBuf, clock: Arc<dyn Clock>) -> Result<(HistoryStore, LoadOutcome), StoreError>`, `entries(&self) -> &[HistoryEntry]` (newest first), `add(&mut self, entry: HistoryEntry, max_count: u32) -> Result<(), StoreError>`, `trim(&mut self, max_count: u32) -> Result<(), StoreError>`, `remove(&mut self, id: Uuid) -> Result<(), StoreError>`, `clear(&mut self) -> Result<(), StoreError>`.
   - `UsageStore`: `open(path, clock) -> Result<(UsageStore, LoadOutcome), StoreError>`, `records(&self) -> &[UsageRecord]` (oldest first), `append(&mut self, UsageRecord) -> Result<(), StoreError>`, `reset(&mut self) -> Result<(), StoreError>`.
-  - Persistence rules (both stores): every mutation builds the new envelope, prunes tombstones older than 90 days, writes it atomically, and only then swaps the in-memory state (a failed write leaves memory unchanged). The file is the envelope v2 with `deleted` / `clearedBefore` preserved. `open` never writes. Empty or whitespace-only file = `Missing`; BOM stripped; legacy bare array = `Legacy`; undecodable file = renamed with `quarantine`, store empty, `CorruptBackedUp(path)`.
+  - Persistence rules (implemented once in `EnvelopeFile`): every mutation builds the new envelope, prunes tombstones older than 90 days, writes it atomically, and only then swaps the in-memory state (a failed write leaves memory unchanged). The file is the envelope v2 with `deleted` / `clearedBefore` preserved. `open` never writes. Empty or whitespace-only file = `Missing`; BOM stripped; legacy bare array = `Legacy`; undecodable file = renamed with `quarantine`, store empty, `CorruptBackedUp(path)`.
   - History semantics: `add` inserts, sorts newest first (stable), caps at `max_count`; `max_count == 0` empties the list without tombstone or watermark (history disabled, as in Swift); `remove` records a tombstone at `clock.now()`; `clear` calls `mark_cleared(now)` and empties; cap overflow is never tombstoned. `open` sorts newest first without capping (the cap is applied on the next `add` / `trim`, as in Swift).
   - Usage semantics: `append` then sort oldest first and drop records with `timestamp < cutoff`, where `cutoff = floor_to_UTC_midnight(now) - 31 days` (deliberate simplification of Swift's local-calendar `startOfDay`; the core has no time zone); the same normalization runs on `open` (in memory only); `reset` = `mark_cleared(now)` and empty.
 
@@ -424,8 +432,9 @@ Port of `Core/TranslationHistoryStore.swift` and `Core/UsageStore.swift` minus i
 `fsio` and `DataPaths`:
 ```rust
 // atomic_write_creates_parent_dirs_and_replaces_existing; leaves no *.tmp-* sibling; (cfg(unix)) private => mode 0o600
-// atomic_write_failure_leaves_original: target dir replaced by a file -> Err, original bytes untouched
-// strip_bom / is_blank: EF BB BF prefix removed; "", "  \n" blank; "{}" not blank
+// atomic_write_failure_parent_is_a_file: parent path is a regular file -> Err, no temp file left behind
+// atomic_write_failure_target_is_a_directory: target path is an existing directory -> Err, the directory and its contents intact, temp file removed
+// is_blank: "", "  \n", and a BOM-only file are blank; "{}" is not (`strip_bom` itself is tested in Task 5)
 // quarantine_names_file_bak_unix_seconds_and_never_overwrites: first -> history.json.bak-1793366956, second same-second call -> ...bak-1793366956-1
 // data_paths_file_names: settings.json, history.json, usage.json, secrets.dat
 ```
@@ -461,12 +470,12 @@ Port of `Core/TranslationHistoryStore.swift` and `Core/UsageStore.swift` minus i
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p lingopop-core fsio:: paths:: history_store:: usage_store::`
+Run: `cargo test -p lingopop-core`
 Expected: FAIL (modules missing).
 
 - [ ] **Step 3: Implement the helpers, `Clock`, then both stores**
 
-Share the load logic between the two stores through one private generic function in `fsio.rs` or a small `store_common` section: `load_envelope<T>(path, now) -> Result<(MergeableEnvelope<T>, LoadOutcome), StoreError>`.
+Implement `EnvelopeFile<T>` in `store_common.rs` first (it uses `fsio` and the Task 5 envelope, so `fsio` does not depend on `envelope`), then both stores on top of it; neither store repeats the load, prune, write or swap logic.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -493,18 +502,18 @@ git add -A && git commit -m "feat(core): add atomic file helpers and local histo
 - Consumes: Tasks 2-6 public API.
 - Produces: the fixture files above (consumed by Tasks 9 and 10), `scripts/mac-fixtures/run.sh generate | check <dir>`.
 
-The script compiles the real mac model files with `swiftc` the same way the mac repo's host-less test target does. This compile set was verified at planning time to build and produce correct output: `Models/TranslationHistory.swift Models/ProviderConfig.swift Models/AIOperation.swift Models/ProviderKeyedDictionary.swift Models/ProviderSettingsStorage.swift Models/Languages.swift Models/LanguageCodes.swift Core/CloudMerge.swift Core/CloudStorage.swift Core/UsageStore.swift Core/UsagePricing.swift Core/PromptBuilder.swift` plus the script's `main.swift` (it must be named `main.swift` for top-level code; do not pass `-parse-as-library`).
+The script compiles the real mac model files with `swiftc`. The compile set is close to, but not the same as, the mac repo's host-less test target (`project.yml:74-88`, which has no `TranslationHistory.swift` and no `UsageStore.swift`; the fixtures need `HistoryEntry` and `UsageStore.Record`, so the script adds them). It was verified at planning time to build and produce correct output; re-verify it in Step 1 and adjust the list if a file's dependencies changed: `Models/TranslationHistory.swift Models/ProviderConfig.swift Models/AIOperation.swift Models/ProviderKeyedDictionary.swift Models/ProviderSettingsStorage.swift Models/Languages.swift Models/LanguageCodes.swift Core/CloudMerge.swift Core/CloudStorage.swift Core/UsageStore.swift Core/UsagePricing.swift Core/PromptBuilder.swift` plus the script's `main.swift` (it must be named `main.swift` for top-level code; do not pass `-parse-as-library`).
 
 - [ ] **Step 1: Write `scripts/mac-fixtures/run.sh` and `main.swift`, run them (this is the "failing test" for the Rust side: the fixtures do not exist yet)**
 
-`run.sh` (bash, strict mode): `MAC_REPO="${LINGOPOP_MAC_REPO:-$HOME/Works/slava/lingo-pop}"`, compile the file list above into `/tmp/lingopop-mac-fixtures/gen`, run `gen "$@"`; `generate` writes into `crates/lingopop-core/tests/fixtures/mac/` and writes `SOURCE.txt` with `git -C "$MAC_REPO" rev-parse HEAD` (expected `049acf3...`). `main.swift` modes:
+`run.sh` (bash, strict mode): `MAC_REPO="${LINGOPOP_MAC_REPO:-$HOME/Works/slava/lingo-pop}"`, compile the file list above into `/tmp/lingopop-mac-fixtures/gen`, run `gen "$@"`; `generate` writes into `crates/lingopop-core/tests/fixtures/mac/` (the Rust tests read fixtures through `env!("CARGO_MANIFEST_DIR")`, never a relative path) and writes `SOURCE.txt` with `git -C "$MAC_REPO" rev-parse HEAD` (expected `049acf3...`). `main.swift` modes:
 - `generate <outdir>`: deterministic content (fixed UUIDs, `Date(timeIntervalSinceReferenceDate:)`, default `JSONEncoder`, the real `MergeableEnvelope.encoded()`):
   - `history.json`: envelope with 4 entries covering: provider `Claude`, op `translate`, with `sourceLanguage` and a fractional timestamp `815059756.035193`; Cyrillic + emoji + newline + quotes + `<b>&` + `/` text, provider `Google (Free)`, op `screenTranslate`, no `sourceLanguage`; provider `Microsoft Translator`, op `magic`, whole-second timestamp; provider `DeepL`, op `grammarFix`; 2 tombstones with fractional `at`; `clearedBefore` set. `history.legacy.json`: the same entries as a bare `JSONEncoder().encode([entries])` array.
-  - `usage.json`: envelope with 3 `UsageStore.Record`s (one with 0 tokens, all four-ish providers/operations), 1 tombstone, `clearedBefore` set.
+  - `usage.json`: envelope with exactly 3 `UsageStore.Record`s: (1) Claude / `claude-haiku-5-5` / translate, 120 input and 45 output tokens, fractional timestamp; (2) Google Translate / `nmt` / screenTranslate, 0 and 0 tokens, fractional timestamp; (3) OpenAI / `gpt-6-luna` / magic, 1500 and 800 tokens, whole-second timestamp; plus 1 tombstone and `clearedBefore` set.
   - `secrets.payload.json`: `SecretsPayload.encode` of `apiKey.Claude = "sk-ant-FIXTURE"`, `apiKey.Google Translate = "AIza-FIXTURE"`, a `providerSettings.v1` entry produced by `SecretsPayload.setProviderSettings` for Claude (no referer), Google Translate (with referer), Microsoft Translator (with region), and an unknown entry `futureEntry.v9` = `{"x":1}`.
-  - `languages.golden.json`: array over `Languages.all` of `{name, code, deepLCode, microsoftCode, inQuickList, nl: [rawValue...]}` plus the helper results `LanguageCodes.code/deepLCode/microsoftCode` for each name and for `"Klingon"`.
+  - `languages.golden.json`: array over `Languages.all` of `{name, code, deepLCode, microsoftCode, inQuickList}` (no `nl`: it has no Rust equivalent) plus the helper results `LanguageCodes.code/deepLCode/microsoftCode` for each name and for `"Klingon"`.
   - `prompts.golden.json`: `systemPrompt` for each of the 6 operations with target `"German"` and default magic prompt, plus `.magic` with `magicPrompt: "Answer in {{targetLanguage}}"` target `"Polish"`, `.magic` with empty magic prompt; `userContent` for `"a<b>&c"` and `"line1\nline2 &amp; <x>"`; `sanitizeOutput` for the inputs `"  <TEXT>hi</text>\n"`, `"<text><text>x</text></text>"`, `"x &lt; y &amp;&amp; y &gt; z"`, `"<text>unclosed"`, `"plain"`; `visionPrompt("German")`. Each as `{input..., output}` objects.
-- `check <dir>`: decode `<dir>/history.json` and `<dir>/usage.json` with `MergeableEnvelope<...>.decode` and `<dir>/secrets.payload.json` with `SecretsPayload.decode` + `providerSettings(in:)` (must be `.loaded`); print item counts; exit 1 with the reason on any failure.
+- `check <dir>`: decode `<dir>/history.json` and `<dir>/usage.json` with `MergeableEnvelope<...>.decode` and `<dir>/secrets.payload.json` with `SecretsPayload.decode` + `providerSettings(in:)` (must be `.loaded`); a file absent from `<dir>` is skipped with a `skipped <name>` line (until Task 9 Rust writes no secrets file), but the run exits 1 if all three are absent; print item counts; exit 1 with the reason on any decode failure.
 
 Run: `./scripts/mac-fixtures/run.sh generate`
 Expected: files appear under `crates/lingopop-core/tests/fixtures/mac/`; `SOURCE.txt` shows the mac commit. Regenerate only when the mac models change; never hand-edit.
@@ -513,13 +522,13 @@ Expected: files appear under `crates/lingopop-core/tests/fixtures/mac/`; `SOURCE
 
 ```rust
 // history_fixture_decodes_with_expected_values: 4 items, ids/providers/operations/timestamps as generated, 2 tombstones, cleared_before Some, !is_legacy
-// history_fixture_rust_encoding_equals_swift_json: serde_json::to_value(decoded) == serde_json::from_slice::<Value>(fixture bytes)   (schema-level equality, key order irrelevant)
+// history_fixture_rust_encoding_equals_swift_json: serde_json::to_value(decoded) == serde_json::from_slice::<Value>(fixture bytes)   (schema-level equality, key order irrelevant; relies on the Task 4 rule that whole-second timestamps serialize as integers, because `Value` equality distinguishes `815059756` from `815059756.0`; the whole-second entry in the fixture pins it)
 // history_fixture_round_trip_equality: decode -> encode -> decode gives an equal envelope
 // history_legacy_fixture_is_detected_as_legacy: is_legacy, same 4 items as history.json
 // usage_fixture_decodes_encodes_and_round_trips (same three checks)
-// languages_match_swift_golden: for each golden row the Rust table has the same name, code, deepl_code, microsoft_code, in_quick_list in the same order; helper outputs equal (incl. "Klingon")
+// languages_match_swift_golden: for each golden row the Rust table has the same name, code, deepl_code, microsoft_code, in_quick_list in the same order (the golden has no `nl`); helper outputs equal (incl. "Klingon")
 // store_opens_swift_written_file: copy history.json to a tempdir, HistoryStore::open -> Loaded, entries sorted newest first, 4 entries
-// #[ignore] write_rust_outputs_for_swift_check: writes Rust-encoded history.json, usage.json and (after Task 9) secrets.payload.json to target/mac-roundtrip/
+// #[ignore] write_rust_outputs_for_swift_check: writes Rust-encoded history.json, usage.json and (after Task 9) secrets.payload.json to the directory in env LINGOPOP_ROUNDTRIP_DIR, default concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/mac-roundtrip") (the workspace-level `target/`; integration tests run with the crate directory as cwd, so a relative path would land elsewhere)
 ```
 
 - [ ] **Step 3: Run to verify failure, then fix**
@@ -530,7 +539,7 @@ Expected first run: FAIL only if the Rust types disagree with Swift output; any 
 - [ ] **Step 4: Run the reverse check (Rust-written files decode in Swift)**
 
 Run: `cargo test -p lingopop-core --test mac_fixtures -- --ignored write_rust_outputs_for_swift_check && ./scripts/mac-fixtures/run.sh check target/mac-roundtrip`
-Expected: Swift prints the item counts and exits 0. This is local-macOS-only and is documented in `AGENTS.md` as the manual gate before any change to the history/usage/secrets formats.
+Expected: Swift prints the item counts for `history.json` and `usage.json`, prints `skipped secrets.payload.json` (Rust writes it from Task 9; Task 9 Step 4 re-runs this check for all three files) and exits 0. This is local-macOS-only and is documented in `AGENTS.md` as the manual gate before any change to the history/usage/secrets formats.
 
 - [ ] **Step 5: Commit**
 
@@ -543,17 +552,19 @@ git add -A && git commit -m "test(core): add Swift-generated mac compatibility f
 ### Task 8: Settings model, provider-keyed maps, hotkeys
 
 **Files:**
-- Create: `crates/lingopop-core/src/keyed_map.rs`, `crates/lingopop-core/src/hotkey.rs`, `crates/lingopop-core/src/settings.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`
+- Create: `crates/lingopop-core/src/keyed_map.rs`, `crates/lingopop-core/src/hotkey.rs`, `crates/lingopop-core/src/settings.rs`, `crates/lingopop-core/src/prompts.rs` (only `DEFAULT_MAGIC_PROMPT` here; Task 10 extends the file)
+- Modify: `crates/lingopop-core/src/lib.rs`, `AGENTS.md` (Layout)
 
 **Interfaces:**
-- Consumes: `ProviderType`, `AIOperation`, `fsio`, `Clock`, `LoadOutcome`, `languages`.
+- Consumes: `ProviderType`, `AIOperation`, `fsio` (including `strip_bom`), `Clock`, `LoadOutcome`, `languages`.
 - Produces:
-  - `pub struct ProviderKeyedMap<V>(pub BTreeMap<ProviderType, V>)`: serializes as a JSON object keyed by raw value; deserializes (via `serde_json::Value`, `V: DeserializeOwned`) the object form and the legacy flat array `[k1, v1, k2, v2]`, skips unknown provider keys and values that fail to decode, errors on a top-level scalar (port of `Models/ProviderKeyedDictionary.swift`).
-  - `pub enum Modifier { Ctrl, Alt, Shift, Win }` (serde lowercase `"ctrl" "alt" "shift" "win"`); `pub struct Hotkey { pub key: String, pub modifiers: Vec<Modifier> }` (`key` is a W3C `KeyboardEvent.code`, e.g. `"KeyT"`, `"Digit1"`, `"F5"`, `"Space"`); `Hotkey::new(key, modifiers)` normalizes modifiers (deduplicated, order ctrl, alt, shift, win); `is_valid(&self) -> bool` (key in `SUPPORTED_KEYS`: `KeyA`-`KeyZ`, `Digit0`-`Digit9`, `F1`-`F24`, `Space`, `Enter`, `Tab`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `ArrowUp/Down/Left/Right`, `Backquote`, `Minus`, `Equal`, `BracketLeft/Right`, `Backslash`, `Semicolon`, `Quote`, `Comma`, `Period`, `Slash`; and at least one modifier); `display_string(&self) -> String` (`"Ctrl+Alt+T"`; `KeyX` shows `X`, `DigitN` shows `N`, others as is); `Hotkey::default_translate() -> Hotkey` (Ctrl+Alt+T).
-  - `pub struct Settings { pub active_provider: ProviderType, pub fallbacks: ProviderKeyedMap<ProviderType>, pub target_language: String, pub hotkeys: BTreeMap<AIOperation, Hotkey>, pub launch_at_login: bool, pub max_input_chars: u32, pub max_history_count: u32, pub menu_history_count: u32, pub use_auto_detect: bool, pub language_pairs: BTreeMap<String, String>, pub auto_copy_ocr: bool, pub magic_prompt: String }` with wire names `activeProvider, fallbacks, targetLanguage, hotkeys, launchAtLogin, maxInputChars, maxHistoryCount, menuHistoryCount, useAutoDetect, languagePairs, autoCopyOCR, magicPrompt` (exact `SettingsStore.Persisted` names; iCloud fields, `providers`, `providerOverrideFields` and the legacy singular `hotkey` are not part of the Windows format). `hotkeys` is a JSON object keyed by operation raw value.
-  - `Default`: `activeProvider` Claude, `targetLanguage` `"Ukrainian"`, `launchAtLogin` false, `maxInputChars` 5000, `maxHistoryCount` 10, `menuHistoryCount` 10, `useAutoDetect` false, `languagePairs` `{"Russian":"Ukrainian","Ukrainian":"Russian","English":"Ukrainian"}`, `autoCopyOCR` true, `magicPrompt` = `DEFAULT_MAGIC_PROMPT` (Task 10 defines it; until then declare a private placeholder const in `settings.rs` and switch to `prompts::DEFAULT_MAGIC_PROMPT` in Task 10), `fallbacks` empty, `hotkeys` = `{translate: Ctrl+Alt+T}` only (parity with the mac app, which ships only Translate; Ctrl+Alt+letter is AltGr+letter on Polish, German and other layouts, so no default uses a letter that AltGr maps to a character there: A C E L N O S X Z).
-  - `Settings::from_json_bytes(&[u8]) -> Result<Settings, SettingsError>` (lenient, below), `to_json_bytes(&self) -> Result<Vec<u8>, SettingsError>` (pretty-printed, `magicPrompt` sanitized), `load(path: &Path, clock: &dyn Clock) -> Result<(Settings, LoadOutcome), SettingsError>`, `save(&self, path: &Path) -> Result<(), SettingsError>` (atomic), `normalized(self) -> Settings` (`max_input_chars == 0` becomes 5000), `fallback(&self, ProviderType) -> Option<ProviderType>`, `set_fallback(&mut self, Option<ProviderType>, ProviderType)` (a value equal to the provider removes the entry, as in Swift), `hotkey(&self, AIOperation) -> Option<&Hotkey>`, `set_hotkey(&mut self, AIOperation, Option<Hotkey>)`, `pub fn sanitize_magic_prompt(&str) -> String`.
+  - `prompts::DEFAULT_MAGIC_PROMPT: &str`, copied verbatim from `Core/PromptBuilder.swift:4` (`defaultMagicPrompt`), so `Settings::default()` uses the real value from the start.
+  - `pub struct ProviderKeyedMap<V>(pub BTreeMap<ProviderType, V>)` (derive `Debug, Clone, PartialEq, Default`): serializes as a JSON object keyed by raw value; deserializes (via `serde_json::Value`, `V: DeserializeOwned`) the object form and the legacy flat array `[k1, v1, k2, v2]`, skips unknown provider keys and values that fail to decode, errors on a top-level scalar (port of `Models/ProviderKeyedDictionary.swift`).
+  - `pub enum Modifier { Ctrl, Alt, Shift, Win }` (serde lowercase `"ctrl" "alt" "shift" "win"`); `pub struct Hotkey { pub key: String, pub modifiers: Vec<Modifier> }` (`Modifier` derives `Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize`; `Hotkey` derives `Debug, Clone, PartialEq, Eq, Serialize, Deserialize`; `key` is a W3C `KeyboardEvent.code`, e.g. `"KeyT"`, `"Digit1"`, `"F5"`, `"Space"`); `Hotkey::new(key, modifiers)` normalizes modifiers (deduplicated, order ctrl, alt, shift, win); `is_valid(&self) -> bool` (key in `SUPPORTED_KEYS`: `KeyA`-`KeyZ`, `Digit0`-`Digit9`, `F1`-`F24`, `Space`, `Enter`, `Tab`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `ArrowUp/Down/Left/Right`, `Backquote`, `Minus`, `Equal`, `BracketLeft/Right`, `Backslash`, `Semicolon`, `Quote`, `Comma`, `Period`, `Slash`; and at least one modifier); `display_string(&self) -> String` (`"Ctrl+Alt+T"`; `KeyX` shows `X`, `DigitN` shows `N`, others as is); `Hotkey::default_translate() -> Hotkey` (Ctrl+Alt+T).
+  - `pub struct Settings { pub active_provider: ProviderType, pub fallbacks: ProviderKeyedMap<ProviderType>, pub target_language: String, pub hotkeys: BTreeMap<AIOperation, Hotkey>, pub launch_at_login: bool, pub max_input_chars: u32, pub max_history_count: u32, pub menu_history_count: u32, pub use_auto_detect: bool, pub language_pairs: BTreeMap<String, String>, pub auto_copy_ocr: bool, pub magic_prompt: String }` (derive `Debug, Clone, PartialEq`; `max_input_chars == 0` means no limit, as in the mac app: `AppDelegate.swift:206-207` only checks `limit > 0`, so nothing rewrites 0) with wire names `activeProvider, fallbacks, targetLanguage, hotkeys, launchAtLogin, maxInputChars, maxHistoryCount, menuHistoryCount, useAutoDetect, languagePairs, autoCopyOCR, magicPrompt` (exact `SettingsStore.Persisted` names; iCloud fields, `providers`, `providerOverrideFields` and the legacy singular `hotkey` are not part of the Windows format). `hotkeys` is a JSON object keyed by operation raw value.
+  - `Default`: `activeProvider` Claude, `targetLanguage` `"Ukrainian"`, `launchAtLogin` false, `maxInputChars` 5000, `maxHistoryCount` 10, `menuHistoryCount` 10, `useAutoDetect` false, `languagePairs` `{"Russian":"Ukrainian","Ukrainian":"Russian","English":"Ukrainian"}`, `autoCopyOCR` true, `magicPrompt` = `prompts::DEFAULT_MAGIC_PROMPT`, `fallbacks` empty, `hotkeys` = `{translate: Ctrl+Alt+T}` only (parity with the mac app, which ships only Translate; Ctrl+Alt+letter is AltGr+letter on Polish, German and other layouts, so no default uses a letter that AltGr maps to a character there: A C E L N O S X Z).
+  - `Settings::from_json_bytes(&[u8]) -> Result<Settings, SettingsError>` (lenient, below), `to_json_bytes(&self) -> Result<Vec<u8>, SettingsError>` (pretty-printed, `magicPrompt` sanitized), `load(path: &Path, clock: &dyn Clock) -> Result<(Settings, LoadOutcome), SettingsError>`, `save(&self, path: &Path) -> Result<(), SettingsError>` (atomic), `fallback(&self, ProviderType) -> Option<ProviderType>`, `set_fallback(&mut self, Option<ProviderType>, ProviderType)` (a value equal to the provider removes the entry, as in Swift), `hotkey(&self, AIOperation) -> Option<&Hotkey>`, `set_hotkey(&mut self, AIOperation, Option<Hotkey>)`, `pub fn sanitize_magic_prompt(&str) -> String` (exact Swift rule, see the tests).
+  - Scope note: the in-app UI-language choice is not part of this 12-field format; Phase 4 adds `appLanguage` deliberately and updates the key-set test (see Roadmap).
   - `pub enum SettingsError { Io(io::Error), Json(serde_json::Error), NotAnObject }` (`thiserror`).
   - Lenient decode rules: the root must be a JSON object (else `NotAnObject`, which `load` treats as corrupt); each field is decoded independently and a field that is missing, of the wrong type, or has an unknown enum value gets its default while all other fields are kept; unknown fields are ignored; in `hotkeys` an unknown operation key or an invalid `Hotkey` is skipped; in `fallbacks` the `ProviderKeyedMap` rules apply.
   - `load` policy: missing or blank file = defaults + `Missing`; BOM stripped; unparsable or non-object file = `fsio::quarantine` then defaults + `CorruptBackedUp(path)`; never writes on load.
@@ -575,11 +586,12 @@ git add -A && git commit -m "test(core): add Swift-generated mac compatibility f
 // new_normalizes_modifiers: [Win, Ctrl, Ctrl] -> [Ctrl, Win]
 // is_valid: KeyT+ctrl valid; "t" invalid; "" invalid; KeyT with no modifiers invalid; F5 with shift valid
 // display_string: Ctrl+Alt+T; Digit1+shift -> "Shift+1"; Space+ctrl+alt -> "Ctrl+Alt+Space"
-// default_translate_is_ctrl_alt_t_and_avoids_altgr_letters: no default hotkey uses (Ctrl+Alt) with key in KeyA KeyC KeyE KeyL KeyN KeyO KeyS KeyX KeyZ
+// default_translate_is_ctrl_alt_t: Hotkey::default_translate() == Hotkey{ key "KeyT", modifiers [Ctrl, Alt] }
+// default_hotkeys_avoid_altgr_letters: Settings::default().hotkeys is non-empty and equals {translate: default_translate()}; for every default hotkey (and default_translate()) with Ctrl+Alt the key is not in the literal set KeyA KeyC KeyE KeyL KeyN KeyO KeyS KeyX KeyZ
 ```
 `settings.rs`:
 ```rust
-// defaults_match_the_values_above (every field)
+// defaults_match_the_values_above (every field, including magic_prompt == prompts::DEFAULT_MAGIC_PROMPT)
 // serialized_keys_are_exactly_the_persisted_swift_names: key set == the 12 names; no "iCloudSync", "providers", "hotkey"
 // round_trip_equality: Settings with fallbacks, hotkeys for two operations, custom pairs -> bytes -> equal Settings
 // unknown_fields_are_ignored_and_missing_fields_default: {"iCloudSync":true,"providers":[],"futureField":1} == Settings::default()
@@ -588,10 +600,12 @@ git add -A && git commit -m "test(core): add Swift-generated mac compatibility f
 // fallbacks_object_legacy_array_and_unknown_key: object form; ["Claude","DeepL"] legacy form; {"Bogus":"Claude"} skipped
 // hotkeys_skip_unknown_operation_and_invalid_hotkey: {"translate":{valid}, "bogusOp":{valid}, "rewrite":{"key":"t","modifiers":[]}} -> only translate
 // set_fallback_ignores_self_and_none_removes; hotkey/set_hotkey round trip
-// sanitize_magic_prompt: trims; keeps "\n" and "\t"; drops other control characters; "a\r\nb" -> "a\nb" (Swift drops the whole CRLF grapheme, which is accidental; LF is the intent);
+// sanitize_magic_prompt (the exact rule of `SettingsStore.sanitizeMagicPrompt`, `Core/SettingsStore.swift:72-81`): trims Unicode whitespace and newlines at both ends; keeps "\n" and "\t"; drops every other ASCII character below 0x20 (including "\r"); keeps U+007F and every non-ASCII character, including the C1 range (a `char::is_control` port would wrongly drop them);
+//     "a\r\nb" -> "a\nb" (Swift drops the whole CRLF grapheme, which is accidental; LF is the intent); "a\u{7f}b" and "a\u{85}b" unchanged;
 //     2500 x "😀" -> 2000 scalars; text over 2000 scalars cut by scalar count, not bytes
 // to_json_sanitizes_magic_prompt
-// normalized_replaces_zero_max_input_chars
+// prompts.rs: default_magic_prompt_literal_anchor (hand-copied from Core/PromptBuilder.swift:4): starts with "You are a professional writing assistant. Fix all grammar, spelling, and punctuation errors,", ends with "Return only the result - no explanations, no notes.", contains "{{targetLanguage}}" exactly twice
+// zero_max_input_chars_round_trips_unchanged (0 = no limit, nothing normalizes it)
 // load_missing_file_gives_defaults_and_writes_nothing; load_blank_file_is_missing (RF 3)
 // load_bom_prefixed_file (RF 3): BOM + {"targetLanguage":"German"} -> German
 // load_truncated_file_is_quarantined (RF 3): `{"activeProvider":` -> defaults, CorruptBackedUp(p), p has the original bytes, settings.json absent
@@ -602,12 +616,12 @@ git add -A && git commit -m "test(core): add Swift-generated mac compatibility f
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p lingopop-core keyed_map:: hotkey:: settings::`
+Run: `cargo test -p lingopop-core`
 Expected: FAIL (modules missing).
 
 - [ ] **Step 3: Implement**
 
-`Settings::from_json_bytes`: parse to `serde_json::Value`, require an object, then per field `map.get("x").and_then(|v| serde_json::from_value(v.clone()).ok())` with the default as fallback. Serialization can derive `Serialize` on a private mirror struct with the wire names. `sanitize_magic_prompt` is a port of `SettingsStore.sanitizeMagicPrompt` (settings/`Core/SettingsStore.swift`, `sanitizeMagicPrompt`).
+`Settings::from_json_bytes`: parse to `serde_json::Value`, require an object, then per field `map.get("x").and_then(|v| serde_json::from_value(v.clone()).ok())` with the default as fallback. Serialization can derive `Serialize` on a private mirror struct with the wire names. `sanitize_magic_prompt` is a port of `SettingsStore.sanitizeMagicPrompt` (`Core/SettingsStore.swift:72-81`). `prompts.rs` holds only `DEFAULT_MAGIC_PROMPT` and its literal-anchor test.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -626,7 +640,7 @@ git add -A && git commit -m "feat(core): add Settings model, provider-keyed maps
 
 **Files:**
 - Create: `crates/lingopop-core/src/secrets.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/tests/mac_fixtures.rs` (add the secrets fixture test)
+- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/tests/mac_fixtures.rs` (add the secrets fixture test), `AGENTS.md` (Layout)
 
 Port of `SecretsPayload` only (`Models/ProviderSettingsStorage.swift`, lines 40-110). The quarantine marker, migration and override machinery of the mac app are macOS-specific and are not ported; the simple rule below replaces them.
 
@@ -634,8 +648,8 @@ Port of `SecretsPayload` only (`Models/ProviderSettingsStorage.swift`, lines 40-
 - Consumes: `ProviderType`, `ProviderConnectionSettings`, `ProviderKeyedMap`, `fsio`, `Clock`, `LoadOutcome`.
 - Produces:
   - `pub const PROVIDER_SETTINGS_ENTRY: &str = "providerSettings.v1"`; `pub fn api_key_entry(ProviderType) -> String` (`"apiKey.<raw value>"`).
-  - `pub enum ProviderSettingsState { Absent, Corrupt, Loaded(BTreeMap<ProviderType, ProviderConnectionSettings>) }`.
-  - `pub fn decode_payload(&[u8]) -> Option<BTreeMap<String, String>>` (flat string map only; BOM tolerant), `pub fn encode_payload(&BTreeMap<String, String>) -> Result<Vec<u8>, serde_json::Error>` (sorted keys, compact), `pub fn provider_settings_in(&BTreeMap<String, String>) -> ProviderSettingsState` (missing entry = `Absent`; entry that is not `{"version":N,"providers":{...}}` = `Corrupt`; unknown providers / bad values inside are skipped), `pub fn set_provider_settings_in(&BTreeMap<ProviderType, ProviderConnectionSettings>, &mut BTreeMap<String, String>) -> Result<(), serde_json::Error>` (writes `{"version":1,"providers":{...}}` as a string, leaves every other entry untouched).
+  - `pub enum ProviderSettingsState { Absent, Corrupt, Loaded(BTreeMap<ProviderType, ProviderConnectionSettings>) }` (derive `Debug, Clone, PartialEq`).
+  - `pub fn decode_payload(&[u8]) -> Option<BTreeMap<String, String>>` (flat string map only; no BOM handling: the plaintext always comes from our own `protect`, never from a user-edited file), `pub fn encode_payload(&BTreeMap<String, String>) -> Result<Vec<u8>, serde_json::Error>` (sorted keys, compact), `pub fn provider_settings_in(&BTreeMap<String, String>) -> ProviderSettingsState` (missing entry = `Absent`; entry that is not `{"version":N,"providers":{...}}` = `Corrupt`; unknown providers / bad values inside are skipped), `pub fn set_provider_settings_in(&BTreeMap<ProviderType, ProviderConnectionSettings>, &mut BTreeMap<String, String>) -> Result<(), serde_json::Error>` (writes `{"version":1,"providers":{...}}` as a string, leaves every other entry untouched).
   - `pub enum ProtectError { Failed(String) }` (`thiserror`); `pub trait SecretProtector: Send + Sync { fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, ProtectError>; fn unprotect(&self, data: &[u8]) -> Result<Vec<u8>, ProtectError>; }` (the DPAPI implementation lands in Phase 3).
   - `pub enum SecretsError { Io(io::Error), Protect(ProtectError), Encode(serde_json::Error) }`.
   - `pub struct SecretStore`: `open(path: PathBuf, protector: Arc<dyn SecretProtector>, clock: Arc<dyn Clock>) -> Result<(SecretStore, LoadOutcome), SecretsError>`, `api_key(&self, ProviderType) -> Option<&str>`, `has_api_key(&self, ProviderType) -> bool`, `set_api_key(&mut self, ProviderType, &str) -> Result<(), SecretsError>` (trims; empty after trim deletes the entry), `provider_settings(&self) -> ProviderSettingsState`, `set_provider_settings(&mut self, &BTreeMap<ProviderType, ProviderConnectionSettings>) -> Result<(), SecretsError>`.
@@ -670,8 +684,8 @@ Test doubles (in the test module): `XorProtector` (prefix `b"FAKE:"` + XOR 0x5A,
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p lingopop-core secrets:: --test mac_fixtures`
-Expected: FAIL (module missing).
+Run: `cargo test -p lingopop-core`
+Expected: FAIL (module missing; this one command runs the `secrets::` unit tests and the `mac_fixtures` integration binary).
 
 - [ ] **Step 3: Implement**
 
@@ -679,8 +693,8 @@ Expected: FAIL (module missing).
 
 - [ ] **Step 4: Run to verify pass, then re-run the Swift reverse check**
 
-Run: `cargo test -p lingopop-core` and `cargo test -p lingopop-core --test mac_fixtures -- --ignored && ./scripts/mac-fixtures/run.sh check target/mac-roundtrip`
-Expected: PASS; Swift exits 0 for all three files.
+Run: `cargo test -p lingopop-core`, then `cargo test -p lingopop-core --test mac_fixtures -- --ignored` and `./scripts/mac-fixtures/run.sh check target/mac-roundtrip` (the writer test writes to the workspace-level `target/mac-roundtrip`, see Task 7)
+Expected: PASS; Swift exits 0 and reports all three files (`history.json`, `usage.json`, `secrets.payload.json`), none skipped.
 
 - [ ] **Step 5: Commit**
 
@@ -693,12 +707,11 @@ git add -A && git commit -m "feat(core): add secrets payload, SecretProtector tr
 ### Task 10: Prompts
 
 **Files:**
-- Create: `crates/lingopop-core/src/prompts.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/src/settings.rs` (default `magic_prompt` now uses `prompts::DEFAULT_MAGIC_PROMPT`), `crates/lingopop-core/tests/mac_fixtures.rs` (golden test)
+- Modify: `crates/lingopop-core/src/prompts.rs` (created in Task 8 with `DEFAULT_MAGIC_PROMPT`; extend it), `crates/lingopop-core/src/lib.rs` (re-exports), `crates/lingopop-core/tests/mac_fixtures.rs` (golden test), `AGENTS.md` (Layout)
 
 **Interfaces:**
 - Consumes: `AIOperation`, `prompts.golden.json` (Task 7).
-- Produces: `pub const DEFAULT_MAGIC_PROMPT: &str`; `pub fn system_prompt(operation: AIOperation, target_language: &str, magic_prompt: &str) -> String`; `pub fn user_content(text: &str) -> String`; `pub fn sanitize_output(text: &str) -> String`; `pub fn vision_prompt(target_language: &str) -> String`. All ported verbatim from `Core/PromptBuilder.swift`.
+- Produces (next to the existing `pub const DEFAULT_MAGIC_PROMPT: &str` from Task 8, which `Settings::default()` already uses): `pub fn system_prompt(operation: AIOperation, target_language: &str, magic_prompt: &str) -> String`; `pub fn user_content(text: &str) -> String`; `pub fn sanitize_output(text: &str) -> String`; `pub fn vision_prompt(target_language: &str) -> String`. All ported verbatim from `Core/PromptBuilder.swift`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -715,18 +728,18 @@ git add -A && git commit -m "feat(core): add secrets payload, SecretProtector tr
 //   "You are a professional translator. Your only job is to translate text.\nThe text to process is enclosed in <text> tags." and ends with
 //   "Do not use em dashes (—); use a regular hyphen-minus (-) if a dash is needed."   (U+2014 in both the fence and this line)
 // sanitize_output_peels_nested_fences: "<text><text>x</text></text>" -> "x"
-// sanitize_output_does_not_strip_unclosed_or_inner_tags: "<text>unclosed" -> "unclosed"; "a <text> b" unchanged
+// sanitize_output_strips_leading_unclosed_tag_but_not_inner_tags: "<text>unclosed" -> "unclosed" (the leading tag is stripped even without a closing one, as in Swift); "a <text> b" unchanged
 // sanitize_output_unescapes_in_one_ordered_pass: "&amp;lt;" -> "&lt;" (not "<"): &lt; and &gt; are replaced before &amp;
 ```
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p lingopop-core prompts:: --test mac_fixtures prompts`
-Expected: FAIL (module missing).
+Run: `cargo test -p lingopop-core`
+Expected: FAIL (new functions missing; the Task 8 anchor test for `DEFAULT_MAGIC_PROMPT` still passes).
 
 - [ ] **Step 3: Implement**
 
-Port from `Core/PromptBuilder.swift` (whole file, 105 lines). Build multi-line prompts with explicit `\n` escapes or string continuation, never with literal newlines inside the source literal (CRLF checkouts on Windows). `sanitize_output`: trim Unicode whitespace; loop `strip_fence` until stable (remove a leading `<text>` matched ASCII case-insensitively, remove a trailing `</text>` only when it ends the string, trim again); then replace `&lt;` -> `<`, `&gt;` -> `>`, `&amp;` -> `&` in that order. Replace the Task 8 placeholder default with `DEFAULT_MAGIC_PROMPT`.
+Port from `Core/PromptBuilder.swift` (whole file, 84 lines; `defaultMagicPrompt` already lives in `prompts.rs` from Task 8). Build multi-line prompts with explicit `\n` escapes or string continuation, never with literal newlines inside the source literal (CRLF checkouts on Windows). `sanitize_output`: trim Unicode whitespace; loop `strip_fence` until stable (remove a leading `<text>` matched ASCII case-insensitively, remove a trailing `</text>` only when it ends the string, trim again); then replace `&lt;` -> `<`, `&gt;` -> `>`, `&amp;` -> `&` in that order.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -745,16 +758,16 @@ git add -A && git commit -m "feat(core): port prompt builder verbatim with Swift
 
 **Files:**
 - Create: `crates/lingopop-core/src/target_language.rs`, `crates/lingopop-core/src/detector.rs`, `crates/lingopop-core/src/action_row.rs`, `crates/lingopop-core/src/errors.rs`
-- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `whatlang`, `url`)
+- Modify: `crates/lingopop-core/src/lib.rs`, `crates/lingopop-core/Cargo.toml` (add `whatlang`, `url`), `AGENTS.md` (Layout)
 
 **Interfaces:**
 - Consumes: `Settings`, `AIOperation`, `ProviderType`, `languages`.
 - Produces:
   - `pub fn resolve_target_language(settings: &Settings, detected_source: Option<&str>) -> String` (port of `SettingsStore+TargetLanguage.swift`: only when `use_auto_detect` and a source is given, look it up in `language_pairs`, else `target_language`).
-  - `pub fn operation_uses_auto_detect(AIOperation) -> bool` (true for `Translate` and `ScreenTranslate`) and `pub fn target_language_for(settings: &Settings, operation: AIOperation, text: &str) -> String` (if the operation uses auto-detect: `detector::detect(text)` then `resolve_target_language`; otherwise `settings.target_language`).
+  - `pub fn operation_uses_auto_detect(AIOperation) -> bool` (true only for `Translate`: spec section 5 and `AppDelegate.swift:214`, which gates detection on `.translate`) and `pub fn target_language_for(settings: &Settings, operation: AIOperation, text: &str) -> String` (if the operation uses auto-detect: `detector::detect(text)` then `resolve_target_language`; otherwise `settings.target_language`). Screen Translate is deliberately not gated here: its flow (Phase 4) calls `detector::detect(ocr_text)` and `resolve_target_language(..)` directly on the recognized text, as `App/ScreenTranslateFlow.swift:90-91` does.
   - `pub fn detect(text: &str) -> Option<&'static str>` in `detector.rs` (returns a name from the `languages` table).
-  - `action_row`: `pub enum ActionRowMode { Full, Mixed, Compact }` with `LABELLED_PREFIX: usize = 2`, `is_icon_only(self, index: usize) -> bool`, `preferred(character_count: usize, threshold: usize, button_count: usize) -> ActionRowMode`, `candidates(self) -> &'static [ActionRowMode]`; `pub const LONG_TEXT_CHARACTER_THRESHOLD: usize = 120`; `pub fn row_width(titles: &[&str], menu_title: Option<&str>, chevron_menus: usize, mode: ActionRowMode, text_width: &dyn Fn(&str) -> f64) -> f64` (the text measurer is injected because Swift measures with `NSFont`; constants: chrome 38, menu indicator 14, icon button 30, spacing 8, chevron menu 14+16, attached spacing 4, row inset 28).
-  - `errors`: `pub struct UserMessage { pub key: &'static str, pub args: Vec<String> }` with `english(&self) -> String` (substitutes `%@` and `%lld` placeholders in order); `pub enum TranslationError { MissingApiKey, InvalidUrl, Http { status: u16, body: String, url: String }, Decoding(String), EmptyResponse, Network(String), OperationNotSupported { provider: ProviderType, operation: AIOperation }, InvalidConfiguration(String), ProviderNotFound(ProviderType) }` (`thiserror`, `Debug, Clone, PartialEq`; `Display` = summary plus detail, as `errorDescription`); `user_summary(&self) -> UserMessage`, `user_detail(&self) -> Option<UserMessage>`; `pub struct FallbackInfo { pub primary_provider: ProviderType, pub message: UserMessage, pub details: Option<UserMessage> }` with `FallbackInfo::new(ProviderType, &TranslationError)`; `pub fn redacted_url(&str) -> String`; `pub fn sanitized_http_body_detail(body: &str) -> Option<UserMessage>`.
+  - `action_row`: `pub enum ActionRowMode { Full, Mixed, Compact }` (derive `Debug, Clone, Copy, PartialEq, Eq`; Swift's default argument `mode: .full` has no Rust counterpart, callers pass the mode explicitly) with `LABELLED_PREFIX: usize = 2`, `is_icon_only(self, index: usize) -> bool`, `preferred(character_count: usize, threshold: usize, button_count: usize) -> ActionRowMode`, `candidates(self) -> &'static [ActionRowMode]`; `pub const LONG_TEXT_CHARACTER_THRESHOLD: usize = 120`; `pub fn row_width(titles: &[&str], menu_title: Option<&str>, chevron_menus: usize, mode: ActionRowMode, text_width: &dyn Fn(&str) -> f64) -> f64` (the text measurer is injected because Swift measures with `NSFont`; constants: chrome 38, menu indicator 14, icon button 30, spacing 8, chevron menu 14+16, attached spacing 4, row inset 28).
+  - `errors`: `pub struct UserMessage { pub key: &'static str, pub args: Vec<String> }` (derive `Debug, Clone, PartialEq, Eq`) with `english(&self) -> String` (substitutes `%@` and `%lld` placeholders in order); `pub enum TranslationError { MissingApiKey, InvalidUrl, Http { status: u16, body: String, url: String }, Decoding(String), EmptyResponse, Network(String), OperationNotSupported { provider: ProviderType, operation: AIOperation }, InvalidConfiguration(String), ProviderNotFound(ProviderType) }` (`thiserror`, `Debug, Clone, PartialEq`; `Display` = summary plus detail, as `errorDescription`); `user_summary(&self) -> UserMessage`, `user_detail(&self) -> Option<UserMessage>`; `pub struct FallbackInfo { pub primary_provider: ProviderType, pub message: UserMessage, pub details: Option<UserMessage> }` (derive `Debug, Clone, PartialEq`) with `FallbackInfo::new(ProviderType, &TranslationError)`; `pub fn redacted_url(&str) -> String`; `pub fn sanitized_http_body_detail(body: &str) -> Option<UserMessage>`.
 
 Detector choice: `whatlang` (pure Rust, no model files, ~70 languages, deterministic, tiny binary and no start-up cost; `lingua` is more accurate on short text but adds tens of MB and slow initialization, which is wrong for a hotkey-triggered popup). Accept a result only when `info.is_reliable()`; short or ambiguous text returns `None` and the caller falls back to `target_language` (documented, and tested).
 
@@ -764,14 +777,14 @@ Detector choice: `whatlang` (pure Rust, no model files, ~70 languages, determini
 // target_language.rs (the four Swift behaviours + operation gate)
 // auto_detect_off_returns_target_language; auto_detect_on_without_source_returns_target; known_source_uses_pair ("Russian" -> "Ukrainian"); unmapped_source_falls_back_to_target
 // language_pair_pointing_at_a_language_outside_the_table_is_returned_as_is ("Klingon")
-// operation_uses_auto_detect: Translate and ScreenTranslate true; GrammarFix, Rewrite, Explain, Magic false
-// target_language_for_uses_detector_only_for_translate_like_operations
+// operation_uses_auto_detect_only_for_translate: Translate true; ScreenTranslate, GrammarFix, Rewrite, Explain, Magic false (spec section 5; the Screen Translate flow detects on the OCR text itself in Phase 4)
+// target_language_for_uses_detector_only_for_translate: Translate with Russian prose and a pair Russian -> Ukrainian uses the pair; ScreenTranslate and the other operations return settings.target_language
 // detector.rs: each text is >= 40 characters of natural prose
 // detects_ukrainian, russian, english, german, polish, japanese (kana), korean (hangul), chinese (han) -> "Ukrainian" ... "Chinese"
-// digits_and_empty_string_return_none; very_short_text_returns_none_or_a_table_name_never_panics (assert only that the result is None or a name present in languages::ALL)
-// every_returned_name_is_in_the_language_table
+// digits_and_empty_string_return_none: "", "12345", "   " -> None
+// short_ambiguous_text_results_are_pinned: for the exact inputs "ok", "a", "?!" assert the deterministic result observed from `whatlang` at implementation time (record the actual value in the test; expected None for each, because `is_reliable()` is false), so a detector change is noticed
 // action_row.rs: ported from ActionRowMetricsTests with a fake measurer |s| s.chars().count() as f64 * 6.0 (the font-dependent "fits in 700 pt" tests are not portable and are left to Phase 4)
-// longer_titles_need_more_width; width_shrinks_from_full_to_mixed_to_compact; default (Full) equals explicit Full
+// longer_titles_need_more_width; width_shrinks_from_full_to_mixed_to_compact
 // mixed_width_uses_labels_only_for_first_two_buttons; compact_width_ignores_titles; chevron_menu_widens_row; empty_row_is_zero
 // mixed_equals_full_when_only_the_labelled_prefix_exists; mixed_ocr_row_keeps_chevron_and_icon_retry
 // icon_only_index_rules; preferred_mode_follows_threshold (0 -> Mixed, 119 -> Mixed, 120 -> Full, 5000 with 3 buttons -> Full); preferred_is_full_when_no_button_beyond_prefix (counts 2 and 1)
@@ -793,7 +806,7 @@ Detector choice: `whatlang` (pure Rust, no model files, ~70 languages, determini
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cargo test -p lingopop-core target_language:: detector:: action_row:: errors::`
+Run: `cargo test -p lingopop-core`
 Expected: FAIL (modules missing).
 
 - [ ] **Step 3: Implement**
@@ -830,7 +843,7 @@ git add -A && git commit -m "feat(core): add target-language resolution, detecti
 - `CONTRIBUTING.md`: dev setup (Rust stable, no Windows machine needed for core: `cargo fmt/clippy/test`; Phase 4 adds Node), the PR rules, CodeRabbit rules, and the "never paste secrets" paragraph, all copied from the mac file with the Swift/Xcode/localization-catalog parts replaced.
 - `CHANGELOG.md`: header sentence as in the mac file, then `## Unreleased` with one bullet "Repository bootstrap and core foundations (not user-visible)".
 - `.github/CODEOWNERS`: `* @slucheninov`. `pull_request_template.md`: mac template with the checklist replaced by `cargo fmt --all --check`, `cargo clippy ... -D warnings`, `cargo test --workspace`, `AGENTS.md updated if the architecture or conventions changed`, `Screenshots for UI changes`. `ISSUE_TEMPLATE/*`: copy the three mac files, change "macOS version" fields to Windows version / architecture and the contact links to `slucheninov/lingopop-app`.
-- `.github/dependabot.yml`: ecosystems `cargo` (directory `/`) and `github-actions` (directory `/`), both weekly, `groups` with `patterns: ["*"]` as in the mac file. The `npm` ecosystem (directory `/app`) is intentionally omitted now: Dependabot reports a configuration error when the manifest directory does not exist. Phase 4 adds it together with `app/package.json`.
+- `.github/dependabot.yml`: ecosystems `cargo` (directory `/`) and `github-actions` (directory `/`), both weekly, `groups` with `patterns: ["*"]` as in the mac file. The `npm` ecosystem (directory `/app`) is intentionally omitted now: Dependabot reports a configuration error when the manifest directory does not exist. Phase 4 adds it together with `app/package.json`. Accepted deviations from spec section 10: this `npm` entry (Phase 4) and `RELEASING.md` (Phase 5, written together with the release process) are deferred.
 - `.coderabbit.yaml`: copy the mac file; `path_filters` exclude `docs/screenshots/**`, `**/*.png`, `Cargo.lock`, `crates/**/tests/fixtures/**`; replace the Swift and xcstrings `path_instructions` by: `**/*.rs` (no OS APIs or `unsafe` in `lingopop-core`; persisted raw values and date/UUID encoding are frozen; never log API keys; errors via `thiserror`, no `unwrap` outside tests), `**/*.{ts,svelte}` (Svelte 5 runes; no secrets in the frontend; all user-visible strings through the localization lookup), keep the `.github/workflows/**` and `scripts/**` instructions, drop the `project.yml` one; `tools`: keep shellcheck, actionlint, gitleaks, markdownlint, yamllint, drop swiftlint.
 - `docs/api-keys.md`: copy and adapt: replace "menu-bar icon / Mac / encrypted file" wording with "tray icon / Windows / DPAPI-protected file", keep the section order and the exact headings `Claude`, `OpenAI`, `Gemini`, `Grok`, `Google Free`, `Google Translate`, `DeepL`, `Microsoft Translator` (anchors `claude openai gemini grok google-free google-translate deepl microsoft-translator`); `docs/icon.png` is a plain copy (`cp`) of the mac repo's `docs/icon.png`.
 
@@ -842,7 +855,7 @@ Expected: first command prints `8`; second prints nothing except deliberate "unl
 - [ ] **Step 3: Run the complete local gate**
 
 Run: `cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings && cargo test --workspace --locked && bash scripts/check-core-deps.sh && git status --short`
-Expected: everything passes, `git status` shows only the new meta files. If `gitleaks` is installed run `gitleaks detect --no-banner` (expected no leaks; fixtures only contain the fake key `sk-ant-FIXTURE`).
+Expected: everything passes, `git status` shows only the new meta files. If `gitleaks` is installed run `gitleaks detect --no-banner` (expected no leaks; fixtures only contain the fake keys `sk-ant-FIXTURE` and `AIza-FIXTURE`).
 
 - [ ] **Step 4: Commit the meta files**
 
@@ -907,4 +920,4 @@ gh api -X PUT repos/slucheninov/lingopop-app/private-vulnerability-reporting
 - [ ] **Step 8: Verify the protections**
 
 Run: `gh api repos/slucheninov/lingopop-app/rulesets --jq '.[].name'`, `gh api repos/slucheninov/lingopop-app --jq '.security_and_analysis'`, and `git push --dry-run origin main`
-Expected: ruleset `main` listed; secret scanning, push protection and Dependabot security updates `enabled`; the dry-run push is rejected or shows the PR requirement. From now on every change goes through a PR; record this in `AGENTS.md` (Branching section: bootstrap is over) and in the first Phase 2 PR.
+Expected: ruleset `main` listed; secret scanning, push protection and Dependabot security updates `enabled`; the dry-run push is rejected or shows the PR requirement. From now on every change goes through a PR. `AGENTS.md` (Branching, written in Task 1) already states this, so it is not edited after the ruleset is active (that edit would itself need a PR); mention it in the first Phase 2 PR.
