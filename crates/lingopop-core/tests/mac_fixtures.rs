@@ -7,7 +7,11 @@ use std::sync::Arc;
 use lingopop_core::envelope::MergeableEnvelope;
 use lingopop_core::languages;
 use lingopop_core::records::{HistoryEntry, UsageRecord};
-use lingopop_core::{HistoryStore, LoadOutcome, ManualClock, Timestamp};
+use lingopop_core::secrets::{
+    decode_payload, encode_payload, provider_settings_in, set_provider_settings_in,
+    ProviderSettingsState, SecretProtector, SecretStore,
+};
+use lingopop_core::{HistoryStore, LoadOutcome, ManualClock, ProviderType, Timestamp};
 use serde_json::Value;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mac");
@@ -262,8 +266,91 @@ fn store_opens_swift_written_file() {
     assert_eq!(stamps, sorted, "newest first");
 }
 
+/// Reversible fake: the real protector is Windows-only.
+struct NoopProtector;
+
+impl SecretProtector for NoopProtector {
+    fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, lingopop_core::secrets::ProtectError> {
+        Ok(plain.to_vec())
+    }
+
+    fn unprotect(&self, data: &[u8]) -> Result<Vec<u8>, lingopop_core::secrets::ProtectError> {
+        Ok(data.to_vec())
+    }
+}
+
+fn fixture_settings(
+    name: &str,
+) -> std::collections::BTreeMap<ProviderType, lingopop_core::ProviderConnectionSettings> {
+    let entries = decode_payload(&fixture_bytes(name)).expect("flat string map");
+    match provider_settings_in(&entries) {
+        ProviderSettingsState::Loaded(settings) => settings,
+        other => panic!("{name}: expected Loaded, got {other:?}"),
+    }
+}
+
+#[test]
+fn secrets_payload_fixture_decodes_and_rust_rewrite_keeps_values() {
+    let entries = decode_payload(&fixture_bytes("secrets.payload.json")).expect("flat string map");
+    assert_eq!(entries["apiKey.Claude"], "sk-ant-FIXTURE");
+    assert_eq!(entries["apiKey.Google Translate"], "AIza-FIXTURE");
+    assert_eq!(entries["futureEntry.v9"], r#"{"x":1}"#);
+
+    let settings = fixture_settings("secrets.payload.json");
+    assert_eq!(
+        settings.keys().copied().collect::<Vec<_>>(),
+        [
+            ProviderType::Claude,
+            ProviderType::GoogleCloud,
+            ProviderType::MicrosoftTranslator
+        ]
+    );
+    let claude = &settings[&ProviderType::Claude];
+    assert_eq!(
+        (claude.base_url.as_str(), claude.model.as_str()),
+        ("https://api.anthropic.com", "claude-haiku-5-5")
+    );
+    assert_eq!(
+        settings[&ProviderType::GoogleCloud].referer.as_deref(),
+        Some("https://example.com/app")
+    );
+    assert_eq!(
+        settings[&ProviderType::MicrosoftTranslator]
+            .region
+            .as_deref(),
+        Some("westeurope")
+    );
+
+    // Swift writes "\/" for "/" inside the nested string, so compare parsed values, not text.
+    let mut rewritten = entries.clone();
+    set_provider_settings_in(&settings, &mut rewritten).unwrap();
+    assert_eq!(
+        provider_settings_in(&rewritten),
+        provider_settings_in(&entries)
+    );
+    let reread = decode_payload(&encode_payload(&rewritten).unwrap()).unwrap();
+    assert_eq!(reread, rewritten);
+    assert_eq!(reread["futureEntry.v9"], entries["futureEntry.v9"]);
+}
+
+#[test]
+fn secret_store_opens_a_file_holding_the_swift_payload() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secrets.dat");
+    std::fs::copy(fixture_path("secrets.payload.json"), &path).unwrap();
+
+    let clock = Arc::new(ManualClock::new(ts(815060000.0)));
+    let (store, outcome) = SecretStore::open(path, Arc::new(NoopProtector), clock).unwrap();
+    assert_eq!(outcome, LoadOutcome::Loaded);
+    assert_eq!(store.api_key(ProviderType::Claude), Some("sk-ant-FIXTURE"));
+    assert_eq!(
+        store.provider_settings(),
+        ProviderSettingsState::Loaded(fixture_settings("secrets.payload.json"))
+    );
+}
+
 /// Manual gate (`scripts/mac-fixtures/run.sh check <dir>`): writes the Rust-encoded files so Swift
-/// can decode them. `secrets.payload.json` is added with the secrets module.
+/// can decode them.
 #[test]
 #[ignore = "writes files for the Swift reverse check; run explicitly"]
 fn write_rust_outputs_for_swift_check() {
@@ -281,4 +368,14 @@ fn write_rust_outputs_for_swift_check() {
     std::fs::write(dir.join("history.json"), history.encode().unwrap()).unwrap();
     let (usage, _) = decode_usage("usage.json");
     std::fs::write(dir.join("usage.json"), usage.encode().unwrap()).unwrap();
+
+    // Rust-written payload: the Swift fixture's entries with the provider settings rewritten.
+    let mut entries = decode_payload(&fixture_bytes("secrets.payload.json")).unwrap();
+    let settings = fixture_settings("secrets.payload.json");
+    set_provider_settings_in(&settings, &mut entries).unwrap();
+    std::fs::write(
+        dir.join("secrets.payload.json"),
+        encode_payload(&entries).unwrap(),
+    )
+    .unwrap();
 }

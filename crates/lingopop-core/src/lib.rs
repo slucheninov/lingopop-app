@@ -11,6 +11,7 @@ pub mod paths;
 pub mod prompts;
 pub mod provider;
 pub mod records;
+pub mod secrets;
 pub mod serde_uuid;
 pub mod settings;
 mod store_common;
@@ -29,6 +30,9 @@ pub use provider::{
     ProviderType,
 };
 pub use records::{HistoryEntry, UsageRecord};
+pub use secrets::{
+    ProtectError, ProviderSettingsState, SecretProtector, SecretStore, SecretsError,
+};
 pub use settings::{sanitize_magic_prompt, Settings, SettingsError};
 pub use time::{Clock, ManualClock, SystemClock, Timestamp};
 pub use usage_store::UsageStore;
