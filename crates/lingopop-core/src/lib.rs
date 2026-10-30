@@ -14,6 +14,7 @@ pub mod operation;
 pub mod paths;
 pub mod prompts;
 pub mod provider;
+pub mod providers;
 pub mod records;
 pub mod secrets;
 pub mod serde_uuid;
@@ -37,6 +38,7 @@ pub use provider::{
     default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,
     ProviderType,
 };
+pub use providers::{AIProvider, ProviderConfig, ProviderRegistry, ProviderResult, TokenUsage};
 pub use records::{HistoryEntry, UsageRecord};
 pub use secrets::{
     ProtectError, ProviderSettingsState, SecretProtector, SecretStore, SecretsError,

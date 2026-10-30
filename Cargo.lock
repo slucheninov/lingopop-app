@@ -630,6 +630,7 @@ name = "lingopop-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "reqwest",
  "serde",
  "serde_json",
