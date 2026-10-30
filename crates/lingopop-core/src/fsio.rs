@@ -1,16 +1,15 @@
 //! File helpers shared by the stores: BOM rule, atomic write, optional read,
 //! quarantine of unreadable files, and the load / error types.
 //!
-//! Windows note: `std::fs::rename` replaces an existing file there too (it calls
-//! `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`), so the temp-file + rename
-//! write is atomic on both platforms. It fails if the target is a directory or
-//! another process holds the target open without share-delete; the error is
-//! returned and the temp file removed.
+//! Windows note: std's `rename` replaces an existing file on Windows; transient
+//! sharing/permission errors caused by antivirus or indexers are retried briefly.
+//! Any error that remains is returned and the temp file removed.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::time::Timestamp;
 
@@ -89,6 +88,46 @@ fn create_temp(dir: &Path, name: &str, private: bool) -> io::Result<(File, PathB
     Err(last_error.unwrap_or_else(|| io::Error::other("could not create a temp file")))
 }
 
+/// Rename attempts: Windows retries briefly (antivirus / indexers can hold the file
+/// for a few milliseconds); elsewhere a failure is final.
+const RENAME_ATTEMPTS: u32 = if cfg!(windows) { 5 } else { 1 };
+
+/// Backoff unit: the pause before attempt `n + 1` is `n` units (10, 20, 30, 40 ms).
+const RENAME_BACKOFF_UNIT: Duration = Duration::from_millis(10);
+
+/// True for a rename error that a short wait can clear: a permission error
+/// everywhere, and on Windows also `ERROR_SHARING_VIOLATION` (32) and
+/// `ERROR_LOCK_VIOLATION` (33).
+fn is_transient_rename_error(error: &io::Error) -> bool {
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        return true;
+    }
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(), Some(32 | 33)) {
+        return true;
+    }
+    false
+}
+
+/// Runs `rename` up to `attempts` times, sleeping `unit * n` after the `n`-th
+/// transient failure; any other error, or the last failure, is returned.
+fn retry_rename(
+    mut rename: impl FnMut() -> io::Result<()>,
+    attempts: u32,
+    unit: Duration,
+) -> io::Result<()> {
+    let mut attempt = 1;
+    loop {
+        match rename() {
+            Err(e) if attempt < attempts && is_transient_rename_error(&e) => {
+                std::thread::sleep(unit * attempt);
+                attempt += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Writes `bytes` to a temp file in the target's directory, syncs it and renames it
 /// over `path`; creates missing parent directories. On Unix `private` makes the
 /// file mode 0600. On any error the temp file is removed and `path` is untouched.
@@ -105,7 +144,11 @@ pub fn atomic_write(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> 
         .and_then(|()| file.sync_all())
         .and_then(|()| {
             drop(file); // must be closed before the rename on Windows
-            fs::rename(&tmp, path)
+            retry_rename(
+                || fs::rename(&tmp, path),
+                RENAME_ATTEMPTS,
+                RENAME_BACKOFF_UNIT,
+            )
         });
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
@@ -113,15 +156,28 @@ pub fn atomic_write(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> 
     result
 }
 
+/// Reads the result of probing a candidate name: only `NotFound` means the name is
+/// free, a successful probe means it is taken, and any other error is returned
+/// (the caller must not rename anything then).
+fn is_free<T>(probe: io::Result<T>) -> io::Result<bool> {
+    match probe {
+        Ok(_) => Ok(false),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(e),
+    }
+}
+
 /// Moves an unreadable file aside to `<file name>.bak-<unix seconds>` (with `-1`,
-/// `-2`, ... appended if that name is taken) and returns the new path.
+/// `-2`, ... appended if that name is taken) and returns the new path. If probing
+/// a candidate name fails with anything but `NotFound`, the error is returned and
+/// the file is not moved.
 pub fn quarantine(path: &Path, now: Timestamp) -> io::Result<PathBuf> {
     let name = file_name_of(path)?.to_string_lossy().into_owned();
     let seconds = now.unix_seconds().floor() as i64;
     let base = format!("{name}.bak-{seconds}");
     let mut candidate = path.with_file_name(&base);
     let mut n = 0_u32;
-    while candidate.symlink_metadata().is_ok() {
+    while !is_free(candidate.symlink_metadata())? {
         n += 1;
         candidate = path.with_file_name(format!("{base}-{n}"));
     }
@@ -245,5 +301,123 @@ mod tests {
         assert_eq!(fs::read(&first).unwrap(), b"first");
         assert_eq!(fs::read(&second).unwrap(), b"second");
         assert_eq!(fs::read(&third).unwrap(), b"third");
+    }
+
+    #[test]
+    fn is_free_only_treats_not_found_as_free() {
+        assert!(is_free::<()>(Err(io::Error::from(io::ErrorKind::NotFound))).unwrap());
+        assert!(!is_free(Ok(())).unwrap());
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::InvalidInput,
+            io::ErrorKind::Other,
+        ] {
+            let err = is_free::<()>(Err(io::Error::from(kind))).unwrap_err();
+            assert_eq!(err.kind(), kind);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quarantine_returns_probe_errors_and_renames_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        fs::write(&blocker, b"i am a file").unwrap();
+        // "blocker/x.json.bak-N" probes with ENOTDIR (not NotFound).
+        let path = blocker.join("x.json");
+        let err = quarantine(&path, Timestamp::from_unix_seconds(1_793_366_956.0)).unwrap_err();
+        assert_ne!(err.kind(), io::ErrorKind::NotFound);
+        assert_eq!(names_in(dir.path()), ["blocker"]);
+        assert_eq!(fs::read(&blocker).unwrap(), b"i am a file");
+    }
+
+    #[test]
+    fn transient_rename_errors_are_recognised() {
+        assert!(is_transient_rename_error(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
+        assert!(!is_transient_rename_error(&io::Error::from(
+            io::ErrorKind::NotFound
+        )));
+        assert!(!is_transient_rename_error(&io::Error::from(
+            io::ErrorKind::AlreadyExists
+        )));
+        #[cfg(windows)]
+        {
+            assert!(is_transient_rename_error(&io::Error::from_raw_os_error(32)));
+            assert!(is_transient_rename_error(&io::Error::from_raw_os_error(33)));
+            assert!(!is_transient_rename_error(&io::Error::from_raw_os_error(2)));
+        }
+        #[cfg(unix)]
+        {
+            // 32 / 33 are EPIPE / EDOM on Unix, not sharing violations.
+            assert!(!is_transient_rename_error(&io::Error::from_raw_os_error(
+                32
+            )));
+            assert!(!is_transient_rename_error(&io::Error::from_raw_os_error(
+                33
+            )));
+        }
+    }
+
+    #[test]
+    fn retry_rename_retries_transient_errors_then_succeeds() {
+        let mut calls = 0;
+        let result = retry_rename(
+            || {
+                calls += 1;
+                if calls < 3 {
+                    Err(io::Error::from(io::ErrorKind::PermissionDenied))
+                } else {
+                    Ok(())
+                }
+            },
+            5,
+            Duration::ZERO,
+        );
+        assert!(result.is_ok());
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn retry_rename_is_bounded_and_returns_the_last_error() {
+        let mut calls = 0;
+        let result = retry_rename(
+            || {
+                calls += 1;
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            },
+            5,
+            Duration::ZERO,
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(calls, 5);
+    }
+
+    #[test]
+    fn retry_rename_does_not_retry_other_errors_or_with_one_attempt() {
+        let mut calls = 0;
+        let result = retry_rename(
+            || {
+                calls += 1;
+                Err(io::Error::from(io::ErrorKind::NotFound))
+            },
+            5,
+            Duration::ZERO,
+        );
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+
+        let mut calls = 0;
+        let result = retry_rename(
+            || {
+                calls += 1;
+                Err(io::Error::from(io::ErrorKind::PermissionDenied))
+            },
+            1,
+            Duration::ZERO,
+        );
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
     }
 }
