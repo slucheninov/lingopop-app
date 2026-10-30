@@ -180,7 +180,9 @@ pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, TranslationError> 
 }
 
 /// MIME type of an image by its magic bytes: JPEG when it starts with `FF D8 FF`,
-/// otherwise PNG (also for unknown or too-short data), like the Swift code.
+/// otherwise PNG (also for unknown data). The `len >= 4` check is deliberate and matches
+/// Swift (`data.count >= 4`): a 3-byte `FF D8 FF` is not enough to call it JPEG and stays
+/// PNG. Do not "simplify" it away.
 pub fn mime_type(image: &[u8]) -> &'static str {
     if image.starts_with(&[0xFF, 0xD8, 0xFF]) && image.len() >= 4 {
         "image/jpeg"
