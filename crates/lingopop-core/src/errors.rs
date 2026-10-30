@@ -171,7 +171,7 @@ impl TranslationError {
             Self::Http { status, body, url } => {
                 let mut lines = vec![UserMessage::with_args(
                     KEY_HTTP_FROM,
-                    vec![status.to_string(), url.clone()],
+                    vec![status.to_string(), redacted_url(url)],
                 )];
                 lines.extend(sanitized_http_body_detail(body));
                 Some(lines)
@@ -338,7 +338,7 @@ mod tests {
         assert_eq!(
             detail,
             vec![
-                msg("HTTP %@ from %@", &["500", "https://x"]),
+                msg("HTTP %@ from %@", &["500", "https://x/"]),
                 msg(
                     "Response body omitted for privacy (%@ characters).",
                     &["11"]
@@ -347,7 +347,7 @@ mod tests {
         );
         assert_eq!(
             english_lines(&detail),
-            "HTTP 500 from https://x\nResponse body omitted for privacy (11 characters)."
+            "HTTP 500 from https://x/\nResponse body omitted for privacy (11 characters)."
         );
         assert_eq!(
             TranslationError::Decoding("raw detail".into()).user_detail(),
@@ -380,8 +380,8 @@ mod tests {
             url: "https://x".into(),
         };
         let detail = e.user_detail().unwrap();
-        assert_eq!(detail, vec![msg("HTTP %@ from %@", &["502", "https://x"])]);
-        assert_eq!(english_lines(&detail), "HTTP 502 from https://x");
+        assert_eq!(detail, vec![msg("HTTP %@ from %@", &["502", "https://x/"])]);
+        assert_eq!(english_lines(&detail), "HTTP 502 from https://x/");
     }
 
     #[test]
@@ -451,6 +451,20 @@ mod tests {
     }
 
     #[test]
+    fn http_url_is_redacted_inside_user_detail_and_display() {
+        let e = TranslationError::Http {
+            status: 401,
+            body: String::new(),
+            url: "https://h/p?key=SECRET".into(),
+        };
+        let detail = english_lines(&e.user_detail().unwrap());
+        assert_eq!(detail, "HTTP 401 from https://h/p");
+        let text = e.to_string();
+        assert!(!text.contains("SECRET"), "{text}");
+        assert!(!text.contains("key="), "{text}");
+    }
+
+    #[test]
     fn display_includes_summary_and_detail_like_error_description() {
         assert_eq!(
             TranslationError::InvalidUrl.to_string(),
@@ -458,7 +472,7 @@ mod tests {
         );
         assert_eq!(
             http(401).to_string(),
-            "Check the API key in Settings → Providers.\n\nHTTP 401 from https://x\nResponse body omitted for privacy (11 characters)."
+            "Check the API key in Settings → Providers.\n\nHTTP 401 from https://x/\nResponse body omitted for privacy (11 characters)."
         );
         assert_eq!(
             TranslationError::Network("timed out".into()).to_string(),
