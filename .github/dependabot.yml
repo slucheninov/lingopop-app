@@ -4,6 +4,9 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "reqwest"
+        versions: [">=0.13.0"]
     groups:
       cargo:
         patterns: ["*"]

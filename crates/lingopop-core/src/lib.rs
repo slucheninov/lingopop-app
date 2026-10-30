@@ -7,13 +7,16 @@ pub mod errors;
 pub mod fsio;
 pub mod history_store;
 pub mod hotkey;
+pub mod http;
 pub mod keyed_map;
 pub mod languages;
 pub mod operation;
 pub mod paths;
 pub mod prompts;
 pub mod provider;
+pub mod providers;
 pub mod records;
+pub mod runner;
 pub mod secrets;
 pub mod serde_uuid;
 pub mod settings;
@@ -36,7 +39,11 @@ pub use provider::{
     default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,
     ProviderType,
 };
+pub use providers::{AIProvider, ProviderConfig, ProviderRegistry, ProviderResult, TokenUsage};
 pub use records::{HistoryEntry, UsageRecord};
+pub use runner::{
+    should_retry_with_fallback, ConfigSnapshot, OperationRunner, RunRequest, TranslationResult,
+};
 pub use secrets::{
     ProtectError, ProviderSettingsState, SecretProtector, SecretStore, SecretsError,
 };
