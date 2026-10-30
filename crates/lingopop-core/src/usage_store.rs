@@ -231,4 +231,35 @@ mod tests {
         assert_eq!(envelope.deleted, vec![tomb]);
         assert_eq!(envelope.cleared_before, Some(unix(NOW_UNIX - 1000.0)));
     }
+
+    #[test]
+    fn failed_write_leaves_memory_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let path = sub.join("usage.json");
+        let seeded = vec![
+            record(unix(NOW_UNIX - 300.0)),
+            record(unix(NOW_UNIX - 200.0)),
+        ];
+        fs::write(
+            &path,
+            MergeableEnvelope::with_items(seeded.clone())
+                .encode()
+                .unwrap(),
+        )
+        .unwrap();
+        let clock = Arc::new(ManualClock::new(unix(NOW_UNIX)));
+        let (mut store, outcome) = open(&path, &clock);
+        assert_eq!(outcome, LoadOutcome::Loaded);
+        assert_eq!(store.records(), seeded.as_slice());
+
+        fs::remove_dir_all(&sub).unwrap();
+        fs::write(&sub, b"now a regular file").unwrap();
+
+        assert!(store.append(record(unix(NOW_UNIX - 100.0))).is_err());
+        assert_eq!(store.records(), seeded.as_slice());
+        assert!(store.reset().is_err());
+        assert_eq!(store.records(), seeded.as_slice());
+    }
 }

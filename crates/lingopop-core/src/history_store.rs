@@ -408,17 +408,32 @@ mod tests {
     fn failed_write_leaves_memory_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
         let path = sub.join("history.json");
+        let seeded = vec![entry(3.0), entry(2.0), entry(1.0)];
+        write_envelope(&path, &MergeableEnvelope::with_items(seeded.clone()));
         let clock = Arc::new(ManualClock::new(t(1000.0)));
         let (mut store, outcome) = open(&path, &clock);
-        assert_eq!(outcome, LoadOutcome::Missing);
+        assert_eq!(outcome, LoadOutcome::Loaded);
+        assert_eq!(store.entries(), seeded.as_slice());
+
+        // Break the directory: every write now fails in `create_dir_all`.
+        fs::remove_dir_all(&sub).unwrap();
         fs::write(&sub, b"now a regular file").unwrap();
-        assert!(store.add(entry(1.0), 10).is_err());
-        assert!(store.entries().is_empty());
-        assert!(store.remove(Uuid::new_v4()).is_err());
+
+        assert!(store.add(entry(4.0), 10).is_err());
+        assert_eq!(store.entries(), seeded.as_slice());
+        assert!(store.remove(seeded[0].id).is_err());
+        assert_eq!(store.entries(), seeded.as_slice());
+        assert!(store.trim(1).is_err());
+        assert_eq!(store.entries(), seeded.as_slice());
         assert!(store.clear().is_err());
-        assert!(store.trim(5).is_err());
-        assert!(store.entries().is_empty());
+        assert_eq!(store.entries(), seeded.as_slice());
+        assert!(
+            store.add(entry(5.0), 0).is_err(),
+            "disabling history is a write too"
+        );
+        assert_eq!(store.entries(), seeded.as_slice());
     }
 
     #[test]
