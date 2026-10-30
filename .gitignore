@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Rust (single workspace-level target/)
+target/
+
+# Node
+node_modules/
+app/dist/
+*.tsbuildinfo
+
+# Tauri
+app/src-tauri/gen/
+
+# Release artifacts
+dist/
+
+# Superpowers / agent session state
+.superpowers/
+
+# Sensitive files - never commit
+*.pem
+*.p12
+*.key
+*.env
+.env.*
+*.cer
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
