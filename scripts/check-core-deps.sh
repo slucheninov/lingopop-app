@@ -6,11 +6,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 status=0
 
-# (a) Direct dependencies: no OS / UI crates by name prefix.
+# (a) Direct dependencies: no OS / UI crates by name prefix, and no tokio (it may only be a
+# dev-dependency or come in transitively via reqwest).
 direct=$(cargo tree -p lingopop-core -e normal,build --depth 1 --prefix none)
 bad_direct=$(printf '%s\n' "$direct" | awk '
   { name = $1 }
-  name ~ /^(windows|winapi|tauri|objc|cocoa|core-foundation)/ || name == "core-graphics" { print }
+  name ~ /^(windows|winapi|tauri|objc|cocoa|core-foundation)/ || name == "core-graphics" || name == "tokio" { print }
 ')
 if [ -n "$bad_direct" ]; then
   echo "error: lingopop-core has forbidden direct dependencies:" >&2

@@ -1,10 +1,11 @@
-//! Async HTTP seam for the providers: a `Transport` trait (the real client arrives in a later
-//! phase), request/response value types, and the shared helpers every provider goes through
+//! Async HTTP seam for the providers: a `Transport` trait (`ReqwestTransport` is the real
+//! client), request/response value types, and the shared helpers every provider goes through
 //! (port of `Providers/ProviderHTTP.swift`). No secret ever appears in `Debug` output or in
 //! error text: secret headers are redacted and URLs lose their query.
 
 mod endpoint;
 mod fake;
+mod reqwest_transport;
 
 use std::fmt;
 
@@ -15,6 +16,7 @@ use url::Url;
 
 pub use endpoint::endpoint;
 pub use fake::FakeTransport;
+pub use reqwest_transport::{redirect_allowed, HttpTimeouts, ReqwestTransport};
 
 use crate::errors::{redacted_url, TranslationError};
 
@@ -102,7 +104,8 @@ impl HttpResponse {
 }
 
 /// Sends one request. Transport failures are `TranslationError::Network`; HTTP status
-/// codes are not interpreted here (see `perform`).
+/// codes are not interpreted here (see `perform`). Cancellation is dropping the future
+/// returned by `send`: the real transport then aborts the in-flight request.
 #[async_trait]
 pub trait Transport: Send + Sync {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, TranslationError>;
