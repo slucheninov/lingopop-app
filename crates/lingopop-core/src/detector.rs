@@ -2,14 +2,16 @@
 
 use crate::languages;
 
-/// The English language name (from the `languages` table) of `text`, or `None` when the
-/// detector is not confident (short or ambiguous text, digits only, empty) or the detected
-/// language is not in the table. Callers then fall back to `target_language`.
+/// The English language name (from the `languages` table) of whatlang's best guess for
+/// `text`, or `None` when whatlang has no guess (empty, whitespace, digits or punctuation
+/// only) or the guess is not in the table.
+///
+/// Deliberately not gated on `Info::is_reliable()`: the mac app uses
+/// `NLLanguageRecognizer.dominantLanguage`, which always returns its best guess, even for a
+/// short text, and the popup relies on that (a one-word selection still gets its language
+/// pair). Callers that need certainty must not rely on short inputs.
 pub fn detect(text: &str) -> Option<&'static str> {
     let info = whatlang::detect(text)?;
-    if !info.is_reliable() {
-        return None;
-    }
     languages::name_for_detect_code(info.lang().code())
 }
 
@@ -93,12 +95,17 @@ mod tests {
     }
 
     #[test]
-    fn short_ambiguous_text_results_are_pinned() {
-        // Observed from whatlang 0.18 at implementation time; `is_reliable()` is false
-        // for each, so the caller falls back to `target_language`. A detector upgrade
-        // that changes this shows up here.
-        assert_eq!(detect("ok"), None);
-        assert_eq!(detect("a"), None);
-        assert_eq!(detect("?!"), None);
+    fn short_text_results_are_pinned() {
+        // Real whatlang 0.18 outputs, recorded at implementation time (best guesses, not necessarily right: "hello" is Danish). A detector upgrade that
+        // changes them shows up here.
+        for (text, expected) in [
+            ("ok", Some("Hungarian")),
+            ("a", Some("Hungarian")),
+            ("?!", None),
+            ("Привет", Some("Russian")),
+            ("hello", Some("Danish")),
+        ] {
+            assert_eq!(detect(text), expected, "{text:?}");
+        }
     }
 }

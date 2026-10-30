@@ -13,10 +13,10 @@ use crate::provider::ProviderType;
 
 const KEY_HTTP_FROM: &str = "HTTP %@ from %@";
 const KEY_BODY_OMITTED: &str = "Response body omitted for privacy (%@ characters).";
-/// `KEY_HTTP_FROM` and `KEY_BODY_OMITTED` joined by a line break, like the Swift detail.
-/// A localization layer translates each line as its own catalog key.
-const KEY_HTTP_FROM_WITH_BODY: &str =
-    "HTTP %@ from %@\nResponse body omitted for privacy (%@ characters).";
+/// Key of a message that is not translated: `english()` renders `args[0]` verbatim. Used for
+/// technical detail text (decoding errors, network error descriptions) that Swift also
+/// passes through unlocalized. It is deliberately not a catalog key.
+pub const VERBATIM_KEY: &str = "%@";
 
 /// A user-visible text: the English catalog key (with `%@` / `%lld` placeholders) and the
 /// arguments for those placeholders, in order.
@@ -66,6 +66,15 @@ impl UserMessage {
         out.push_str(rest);
         out
     }
+}
+
+/// The English rendering of detail lines, joined by a line break like the Swift detail.
+pub fn english_lines(lines: &[UserMessage]) -> String {
+    lines
+        .iter()
+        .map(UserMessage::english)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Strips credentials, query and fragment from a URL before it goes into user text, so
@@ -154,22 +163,23 @@ impl TranslationError {
         }
     }
 
-    /// Optional technical context a UI may hide behind a disclosure.
-    pub fn user_detail(&self) -> Option<UserMessage> {
+    /// Optional technical context a UI may hide behind a disclosure, as separate lines (join
+    /// them with `english_lines`). Every line is its own catalog key, except `VERBATIM_KEY`
+    /// lines.
+    pub fn user_detail(&self) -> Option<Vec<UserMessage>> {
         match self {
             Self::Http { status, body, url } => {
-                let mut args = vec![status.to_string(), url.clone()];
-                match sanitized_http_body_detail(body) {
-                    Some(note) => {
-                        args.extend(note.args);
-                        Some(UserMessage::with_args(KEY_HTTP_FROM_WITH_BODY, args))
-                    }
-                    None => Some(UserMessage::with_args(KEY_HTTP_FROM, args)),
-                }
+                let mut lines = vec![UserMessage::with_args(
+                    KEY_HTTP_FROM,
+                    vec![status.to_string(), url.clone()],
+                )];
+                lines.extend(sanitized_http_body_detail(body));
+                Some(lines)
             }
-            Self::Decoding(detail) | Self::Network(detail) => {
-                Some(UserMessage::with_args("%@", vec![detail.clone()]))
-            }
+            Self::Decoding(detail) | Self::Network(detail) => Some(vec![UserMessage::with_args(
+                VERBATIM_KEY,
+                vec![detail.clone()],
+            )]),
             _ => None,
         }
     }
@@ -192,7 +202,7 @@ impl fmt::Display for TranslationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.user_summary().english())?;
         if let Some(detail) = self.user_detail() {
-            write!(f, "\n\n{}", detail.english())?;
+            write!(f, "\n\n{}", english_lines(&detail))?;
         }
         Ok(())
     }
@@ -205,7 +215,7 @@ impl std::error::Error for TranslationError {}
 pub struct FallbackInfo {
     pub primary_provider: ProviderType,
     pub message: UserMessage,
-    pub details: Option<UserMessage>,
+    pub details: Option<Vec<UserMessage>>,
 }
 
 impl FallbackInfo {
@@ -326,21 +336,26 @@ mod tests {
     fn details() {
         let detail = http(500).user_detail().unwrap();
         assert_eq!(
-            detail.key,
-            "HTTP %@ from %@\nResponse body omitted for privacy (%@ characters)."
+            detail,
+            vec![
+                msg("HTTP %@ from %@", &["500", "https://x"]),
+                msg(
+                    "Response body omitted for privacy (%@ characters).",
+                    &["11"]
+                ),
+            ]
         );
-        assert_eq!(detail.args, ["500", "https://x", "11"]);
         assert_eq!(
-            detail.english(),
+            english_lines(&detail),
             "HTTP 500 from https://x\nResponse body omitted for privacy (11 characters)."
         );
         assert_eq!(
             TranslationError::Decoding("raw detail".into()).user_detail(),
-            Some(msg("%@", &["raw detail"]))
+            Some(vec![msg(VERBATIM_KEY, &["raw detail"])])
         );
         assert_eq!(
             TranslationError::Network("timed out".into()).user_detail(),
-            Some(msg("%@", &["timed out"]))
+            Some(vec![msg(VERBATIM_KEY, &["timed out"])])
         );
         for e in [
             TranslationError::MissingApiKey,
@@ -365,8 +380,8 @@ mod tests {
             url: "https://x".into(),
         };
         let detail = e.user_detail().unwrap();
-        assert_eq!(detail.key, "HTTP %@ from %@");
-        assert_eq!(detail.english(), "HTTP 502 from https://x");
+        assert_eq!(detail, vec![msg("HTTP %@ from %@", &["502", "https://x"])]);
+        assert_eq!(english_lines(&detail), "HTTP 502 from https://x");
     }
 
     #[test]
@@ -464,5 +479,63 @@ mod tests {
         assert_eq!(info.details, e.user_detail());
         let none = FallbackInfo::new(ProviderType::Claude, &TranslationError::EmptyResponse);
         assert_eq!(none.details, None);
+    }
+
+    /// Every catalog key the errors can produce must exist verbatim in the mac app's
+    /// `Localizable.xcstrings` (the translations are keyed by the English text). Local-only:
+    /// the mac repo is a sibling checkout (`../lingo-pop`, or `LINGOPOP_MAC_CATALOG`); when the
+    /// file is absent (CI) the test returns early without asserting.
+    #[test]
+    fn every_produced_key_exists_in_the_mac_catalog() {
+        let path = std::env::var_os("LINGOPOP_MAC_CATALOG")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../lingo-pop/App/Localizable.xcstrings")
+            });
+        let Ok(bytes) = std::fs::read(&path) else {
+            eprintln!("skipped: mac catalog not found at {}", path.display());
+            return;
+        };
+        let catalog: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let strings = catalog["strings"].as_object().unwrap();
+
+        let mut errors = vec![
+            TranslationError::MissingApiKey,
+            TranslationError::InvalidUrl,
+            TranslationError::Decoding("d".into()),
+            TranslationError::EmptyResponse,
+            TranslationError::Network("n".into()),
+            TranslationError::InvalidConfiguration("c".into()),
+        ];
+        for provider in ProviderType::ALL {
+            errors.push(TranslationError::ProviderNotFound(provider));
+        }
+        for operation in AIOperation::ALL {
+            errors.push(TranslationError::OperationNotSupported {
+                provider: ProviderType::DeepL,
+                operation,
+            });
+        }
+        for status in [200, 401, 403, 404, 418, 429, 500, 599] {
+            errors.push(http(status));
+            errors.push(TranslationError::Http {
+                status,
+                body: " ".into(),
+                url: "https://x".into(),
+            });
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        for e in &errors {
+            keys.insert(e.user_summary().key);
+            for line in e.user_detail().unwrap_or_default() {
+                if line.key != VERBATIM_KEY {
+                    keys.insert(line.key);
+                }
+            }
+        }
+        for key in keys {
+            assert!(strings.contains_key(key), "key not in mac catalog: {key:?}");
+        }
     }
 }
