@@ -410,6 +410,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn claude_malformed_200_echoing_a_secret_does_not_leak_it() {
+        const SECRET: &str = "sk-ant-ECHOED-SECRET";
+        for body in [
+            json!({"content": SECRET}).to_string(),
+            json!({"content": [{"type": "text", "text": [SECRET]}]}).to_string(),
+        ] {
+            let fake = FakeTransport::json(200, &body);
+            let err = run(&fake, "t").await.unwrap_err();
+            assert!(matches!(err, TranslationError::Decoding(_)), "{err:?}");
+            let shown = format!(
+                "{err} {err:?} {} {:?}",
+                err.user_summary().english(),
+                err.user_detail()
+            );
+            assert!(!shown.contains(SECRET), "{body}: {shown}");
+        }
+    }
+
+    #[tokio::test]
     async fn claude_error_object_body_is_decoding() {
         let body = json!({"type": "error",
             "error": {"type": "overloaded_error", "message": "x"}})

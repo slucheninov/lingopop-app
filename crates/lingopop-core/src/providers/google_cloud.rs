@@ -242,6 +242,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn google_cloud_malformed_200_echoing_the_key_does_not_leak_it() {
+        for body in [
+            json!({"data": KEY}).to_string(),
+            json!({"data": {"translations": KEY}}).to_string(),
+            json!({"data": {"translations": [{"translatedText": [KEY]}]}}).to_string(),
+        ] {
+            let fake = FakeTransport::json(200, &body);
+            let err = run(&fake).await.unwrap_err();
+            assert!(matches!(err, TranslationError::Decoding(_)), "{err:?}");
+            let shown = format!(
+                "{err} {err:?} {} {:?}",
+                err.user_summary().english(),
+                err.user_detail()
+            );
+            assert!(!shown.contains(KEY), "{body}: {shown}");
+        }
+    }
+
+    #[tokio::test]
     async fn google_cloud_error_object_body_is_decoding() {
         let body = json!({"error": {"code": 403, "message": "x"}}).to_string();
         let fake = FakeTransport::json(200, &body);

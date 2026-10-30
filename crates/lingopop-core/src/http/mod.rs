@@ -149,8 +149,22 @@ pub fn json_post(
     })
 }
 
+/// Parses a response body. The `Decoding` text is built only from serde's error category,
+/// line and column, never from `err.to_string()`: serde quotes offending values
+/// (`invalid type: string "..."`), and a custom endpoint may echo a secret back in its
+/// reply.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, TranslationError> {
-    serde_json::from_slice(bytes).map_err(|err| TranslationError::Decoding(err.to_string()))
+    serde_json::from_slice(bytes).map_err(|err| {
+        let what = match err.classify() {
+            serde_json::error::Category::Data => "Unexpected response shape",
+            _ => "Invalid JSON",
+        };
+        TranslationError::Decoding(format!(
+            "{what} (line {}, column {})",
+            err.line(),
+            err.column()
+        ))
+    })
 }
 
 /// MIME type of an image by its magic bytes: JPEG when it starts with `FF D8 FF`,
@@ -268,6 +282,47 @@ mod tests {
                 panic!("expected Decoding");
             };
             assert!(!text.is_empty());
+        }
+    }
+
+    #[test]
+    fn decode_error_never_contains_response_content() {
+        const SECRET: &str = "AIza-FIXTURE-SECRET";
+        // A type mismatch makes serde quote the offending value; Syntax/Eof must not either.
+        let bodies = [
+            format!(r#"{{"text":["{SECRET}"]}}"#),
+            format!(r#"{{"text":{{"k":"{SECRET}"}}}}"#),
+            format!(r#"{{"text":"{SECRET}"#),
+            format!("{SECRET} not json"),
+        ];
+        for body in bodies {
+            let err = decode::<Reply>(body.as_bytes()).unwrap_err();
+            let shown = format!("{err} {err:?} {:?}", err.user_detail());
+            assert!(!shown.contains(SECRET), "{body}: {shown}");
+            assert!(matches!(err, TranslationError::Decoding(_)), "{body}");
+        }
+        // A bare string where a number is expected: serde says `invalid type: string "..."`.
+        let err = decode::<u32>(format!(r#""{SECRET}""#).as_bytes()).unwrap_err();
+        let shown = format!("{err} {err:?} {:?}", err.user_detail());
+        assert!(!shown.contains(SECRET), "{shown}");
+        let err = decode::<Vec<u32>>(format!(r#"["{SECRET}"]"#).as_bytes()).unwrap_err();
+        let shown = format!("{err} {err:?} {:?}", err.user_detail());
+        assert!(!shown.contains(SECRET), "{shown}");
+    }
+
+    #[test]
+    fn decode_error_text_names_category_line_and_column() {
+        let cases: [(&[u8], &str); 3] = [
+            (
+                br#"{"text":5}"#,
+                "Unexpected response shape (line 1, column 9)",
+            ),
+            (b"not json", "Invalid JSON (line 1, column 2)"),
+            (b"{\"text\":\n", "Invalid JSON (line 2, column 0)"),
+        ];
+        for (body, expected) in cases {
+            let err = decode::<Reply>(body).unwrap_err();
+            assert_eq!(err, TranslationError::Decoding(expected.into()), "{body:?}");
         }
     }
 
