@@ -93,6 +93,20 @@ pub fn redacted_url(url: &str) -> String {
     parsed.to_string()
 }
 
+/// A URL-valued setting (a base URL, a referer) as it may appear in `Debug` output: scheme,
+/// host, port and path survive (`redacted_url`), user info, query and fragment are dropped.
+/// A string that is not an absolute URL is never echoed, since it may still hold a pasted
+/// credential: it becomes `<unparseable, N chars>`. An empty string stays empty.
+pub fn debug_url(url: &str) -> String {
+    if url.is_empty() {
+        return String::new();
+    }
+    if Url::parse(url).is_err() {
+        return format!("<unparseable, {} chars>", url.chars().count());
+    }
+    redacted_url(url)
+}
+
 /// A privacy note that stands in for an HTTP response body (the body may echo secrets);
 /// `None` for a blank body.
 pub fn sanitized_http_body_detail(body: &str) -> Option<UserMessage> {
@@ -478,6 +492,18 @@ mod tests {
         assert_eq!(redacted_url("not a url"), "<redacted-url>");
         assert_eq!(redacted_url("/relative/path?key=SECRET"), "<redacted-url>");
         assert_eq!(redacted_url(""), "<redacted-url>");
+    }
+
+    #[test]
+    fn debug_url_strips_secrets_and_never_echoes_unparseable_input() {
+        assert_eq!(
+            debug_url("https://u:SECRET@h.example:8443/p/v1?key=SECRET#SECRET"),
+            "https://h.example:8443/p/v1"
+        );
+        assert_eq!(debug_url(""), "");
+        assert_eq!(debug_url("not a url SECRET"), "<unparseable, 16 chars>");
+        assert_eq!(debug_url("/rel?key=SECRET"), "<unparseable, 15 chars>");
+        assert_eq!(debug_url("Привіт"), "<unparseable, 6 chars>");
     }
 
     #[test]

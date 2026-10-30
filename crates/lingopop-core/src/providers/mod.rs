@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 
-use crate::errors::TranslationError;
+use crate::errors::{debug_url, TranslationError};
 use crate::http::{mime_type, Transport};
 use crate::operation::AIOperation;
 use crate::prompts::sanitize_output;
@@ -32,7 +32,8 @@ pub use google_free::GoogleFreeProvider;
 pub use microsoft::MicrosoftProvider;
 pub use openai::OpenAiCompatible;
 
-/// Everything a provider needs for one call. `Debug` never prints the API key.
+/// Everything a provider needs for one call. `Debug` never prints the API key, and the
+/// URL-valued fields lose user info, query and fragment (`errors::debug_url`).
 #[derive(Clone)]
 pub struct ProviderConfig {
     pub provider_type: ProviderType,
@@ -50,11 +51,11 @@ impl fmt::Debug for ProviderConfig {
         f.debug_struct("ProviderConfig")
             .field("provider_type", &self.provider_type)
             .field("api_key", &"<redacted>")
-            .field("base_url", &self.base_url)
+            .field("base_url", &debug_url(&self.base_url))
             .field("model", &self.model)
             .field("target_language", &self.target_language)
             .field("magic_prompt", &self.magic_prompt)
-            .field("referer", &self.referer)
+            .field("referer", &self.referer.as_deref().map(debug_url))
             .field("region", &self.region)
             .finish()
     }
@@ -217,6 +218,46 @@ mod tests {
         assert!(debug.contains("Ukrainian"), "{debug}");
         assert!(debug.contains("https://api.anthropic.com"), "{debug}");
         assert!(debug.contains("westeurope"), "{debug}");
+    }
+
+    #[test]
+    fn provider_config_debug_strips_url_credentials_query_and_fragment() {
+        let mut cfg = config();
+        cfg.base_url =
+            "https://user:PWSENTINEL@proxy.example:8443/v1?key=QSENTINEL#FSENTINEL".into();
+        cfg.referer =
+            Some("https://ref-user:RPWSENTINEL@ref.example/app?t=RQSENTINEL#RFSENTINEL".into());
+        let debug = format!("{cfg:?}");
+        for sentinel in [
+            "PWSENTINEL",
+            "QSENTINEL",
+            "FSENTINEL",
+            "RPWSENTINEL",
+            "RQSENTINEL",
+            "RFSENTINEL",
+            "user:",
+        ] {
+            assert!(!debug.contains(sentinel), "{sentinel} leaked: {debug}");
+        }
+        assert!(debug.contains("https://proxy.example:8443/v1"), "{debug}");
+        assert!(debug.contains("https://ref.example/app"), "{debug}");
+    }
+
+    #[test]
+    fn provider_config_debug_never_prints_unparseable_urls() {
+        let mut cfg = config();
+        cfg.base_url = "not a url SENTINEL-BASE".into();
+        cfg.referer = Some("also not SENTINEL-REF".into());
+        let debug = format!("{cfg:?}");
+        assert!(!debug.contains("SENTINEL"), "{debug}");
+        assert!(
+            debug.contains("base_url: \"<unparseable, 23 chars>\""),
+            "{debug}"
+        );
+        assert!(
+            debug.contains("referer: Some(\"<unparseable, 21 chars>\")"),
+            "{debug}"
+        );
     }
 
     #[tokio::test]

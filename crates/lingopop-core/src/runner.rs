@@ -1040,4 +1040,49 @@ mod tests {
         assert!(!debug.contains("sk-ant-FIXTURE"), "{debug}");
         assert!(debug.contains("Claude"), "{debug}");
     }
+
+    #[test]
+    fn config_snapshot_debug_strips_url_secrets_from_connections() {
+        let mut snap = snapshot(&[], &[]);
+        snap.connections.insert(
+            Claude,
+            ProviderConnectionSettings {
+                base_url: "https://user:PWSENTINEL@proxy.example:8443/v1?key=QSENTINEL#FSENTINEL"
+                    .into(),
+                model: "m-1".into(),
+                referer: Some(
+                    "https://ref-user:RPWSENTINEL@ref.example/app?t=RQSENTINEL#RFSENTINEL".into(),
+                ),
+                region: Some("westeurope".into()),
+            },
+        );
+        snap.connections.insert(
+            OpenAI,
+            ProviderConnectionSettings {
+                base_url: "not a url SENTINEL-BASE".into(),
+                model: "m-2".into(),
+                referer: None,
+                region: None,
+            },
+        );
+        let debug = format!("{snap:?}");
+        for sentinel in [
+            "PWSENTINEL",
+            "QSENTINEL",
+            "FSENTINEL",
+            "RPWSENTINEL",
+            "RQSENTINEL",
+            "RFSENTINEL",
+            "SENTINEL-BASE",
+        ] {
+            assert!(!debug.contains(sentinel), "{sentinel} leaked: {debug}");
+        }
+        assert!(debug.contains("https://proxy.example:8443/v1"), "{debug}");
+        assert!(debug.contains("https://ref.example/app"), "{debug}");
+        assert!(debug.contains("<unparseable, 23 chars>"), "{debug}");
+        assert!(
+            debug.contains("m-1") && debug.contains("westeurope"),
+            "{debug}"
+        );
+    }
 }
