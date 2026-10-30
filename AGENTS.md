@@ -19,6 +19,9 @@ Each task appends its own modules here in the same commit.
 - `crates/lingopop-core/src/operation.rs` - `AIOperation` (frozen raw values, English names)
 - `crates/lingopop-core/src/provider.rs` - `ProviderType`, `ProviderField`, static `ProviderCapabilities`, `ProviderConnectionSettings`, `default_providers()`
 - `crates/lingopop-core/src/languages.rs` - `LanguageInfo`, the 28-row `ALL` table, `quick_list()`, `info()`, `code()` / `deepl_code()` / `microsoft_code()`, `name_for_detect_code()` (ISO 639-3 detector codes)
+- `crates/lingopop-core/src/time.rs` - `Timestamp(f64)`, Apple-reference seconds kept exactly as read (lossless round trip, whole seconds written as JSON integers like Swift, always finite)
+- `crates/lingopop-core/src/serde_uuid.rs` - `#[serde(with = ...)]` UUID codec (uppercase on write, any case on read)
+- `crates/lingopop-core/src/records.rs` - `HistoryEntry`, `UsageRecord` (provider/operation kept as raw strings so unknown values survive a rewrite; typed accessors)
 
 ## Build / test
 

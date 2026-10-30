@@ -3,6 +3,9 @@
 pub mod languages;
 pub mod operation;
 pub mod provider;
+pub mod records;
+pub mod serde_uuid;
+pub mod time;
 
 pub use languages::LanguageInfo;
 pub use operation::AIOperation;
@@ -10,6 +13,8 @@ pub use provider::{
     default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,
     ProviderType,
 };
+pub use records::{HistoryEntry, UsageRecord};
+pub use time::Timestamp;
 
 /// Crate version, taken from the workspace `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
