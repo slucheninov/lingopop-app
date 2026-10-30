@@ -28,6 +28,12 @@ const SECRET_HEADERS: [&str; 4] = [
     "ocp-apim-subscription-key",
 ];
 
+/// Whether `name` is a credential header (case-insensitive): its value is redacted in
+/// `Debug` and marked sensitive on the wire client.
+pub(crate) fn is_secret_header(name: &str) -> bool {
+    SECRET_HEADERS.iter().any(|s| name.eq_ignore_ascii_case(s))
+}
+
 /// Header names whose values are URLs and may carry user info or a query; `Debug` prints
 /// them through `debug_url`.
 const URL_HEADERS: [&str; 3] = ["referer", "origin", "location"];
@@ -79,7 +85,7 @@ impl fmt::Debug for HttpRequest {
             .headers
             .iter()
             .map(|(name, value)| {
-                let secret = SECRET_HEADERS.iter().any(|s| name.eq_ignore_ascii_case(s));
+                let secret = is_secret_header(name);
                 let is_url = URL_HEADERS.iter().any(|s| name.eq_ignore_ascii_case(s));
                 let shown = if secret {
                     "<redacted>".to_string()

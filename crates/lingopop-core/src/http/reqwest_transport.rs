@@ -6,11 +6,11 @@ use std::error::Error as _;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::header::{HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::redirect::Policy;
 use url::Url;
 
-use super::{HttpMethod, HttpRequest, HttpResponse, Transport};
+use super::{is_secret_header, HttpMethod, HttpRequest, HttpResponse, Transport};
 use crate::errors::TranslationError;
 
 /// Redirect hops followed before the redirect response itself is returned.
@@ -93,16 +93,10 @@ impl Transport for ReqwestTransport {
             HttpMethod::Get => reqwest::Method::GET,
             HttpMethod::Post => reqwest::Method::POST,
         };
-        let mut builder = self.client.request(method, request.url);
-        for (name, value) in request.headers {
-            // Only the header NAME may appear in the error; the value can be an API key.
-            let invalid = || {
-                TranslationError::InvalidConfiguration(format!("invalid HTTP header \"{name}\""))
-            };
-            let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| invalid())?;
-            let header_value = HeaderValue::from_str(&value).map_err(|_| invalid())?;
-            builder = builder.header(header_name, header_value);
-        }
+        let mut builder = self
+            .client
+            .request(method, request.url)
+            .headers(header_map(&request.headers)?);
         if let Some(body) = request.body {
             builder = builder.body(body);
         }
@@ -111,6 +105,25 @@ impl Transport for ReqwestTransport {
         let body = response.bytes().await.map_err(network_error)?;
         Ok(HttpResponse::new(status, body.to_vec()))
     }
+}
+
+/// Converts our headers into a `HeaderMap`, marking credential headers (see
+/// `is_secret_header`) sensitive so they stay out of HTTP/2 HPACK indexing and `Debug`
+/// output. Repeated names are kept. Only the header NAME may appear in an error; the value
+/// can be an API key.
+fn header_map(headers: &[(String, String)]) -> Result<HeaderMap, TranslationError> {
+    let mut map = HeaderMap::with_capacity(headers.len());
+    for (name, value) in headers {
+        let invalid =
+            || TranslationError::InvalidConfiguration(format!("invalid HTTP header \"{name}\""));
+        let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| invalid())?;
+        let mut header_value = HeaderValue::from_str(value).map_err(|_| invalid())?;
+        if is_secret_header(name) {
+            header_value.set_sensitive(true);
+        }
+        map.append(header_name, header_value);
+    }
+    Ok(map)
 }
 
 /// `Network` error text: the reqwest message without its URL, then the source chain joined
@@ -179,6 +192,54 @@ mod tests {
     #[test]
     fn redirect_refused_for_scheme_change() {
         assert!(!redirect_allowed(&url("https://h/a"), &url("http://h/a")));
+    }
+
+    fn hdrs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn header_map_marks_credential_headers_sensitive() {
+        let map = header_map(&hdrs(&[
+            ("x-api-key", "k1"),
+            ("Authorization", "Bearer k2"),
+            ("x-goog-api-key", "k3"),
+            ("Ocp-Apim-Subscription-Key", "k4"),
+        ]))
+        .unwrap();
+        assert_eq!(map.len(), 4);
+        for (name, value) in &map {
+            assert!(value.is_sensitive(), "{name} should be sensitive");
+        }
+    }
+
+    #[test]
+    fn header_map_secret_match_is_case_insensitive() {
+        let map = header_map(&hdrs(&[("X-API-KEY", "k"), ("AUTHORIZATION", "Bearer k")])).unwrap();
+        assert!(map.get("x-api-key").unwrap().is_sensitive());
+        assert!(map.get("authorization").unwrap().is_sensitive());
+    }
+
+    #[test]
+    fn header_map_leaves_normal_headers_not_sensitive() {
+        let map = header_map(&hdrs(&[
+            ("Content-Type", "application/json"),
+            ("x-api-key", "k"),
+        ]))
+        .unwrap();
+        assert!(!map.get("content-type").unwrap().is_sensitive());
+        assert!(map.get("x-api-key").unwrap().is_sensitive());
+    }
+
+    #[test]
+    fn header_map_error_names_header_but_not_value() {
+        let err = header_map(&hdrs(&[("x-api-key", "bad\nSECRET")])).unwrap_err();
+        let shown = format!("{err:?} {err}");
+        assert!(shown.contains("x-api-key"), "{shown}");
+        assert!(!shown.contains("SECRET"), "{shown}");
     }
 
     #[test]
