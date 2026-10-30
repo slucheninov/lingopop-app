@@ -77,20 +77,49 @@ pub fn english_lines(lines: &[UserMessage]) -> String {
         .join("\n")
 }
 
+/// `http` or `https` with a host: the only URLs whose parts we can reason about. Anything
+/// else (`user:secret`, `mailto:x?k`, `ftp://u:pw@h`) may carry a secret outside the
+/// userinfo / query / fragment that gets stripped.
+fn is_http_with_host(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https") && url.host_str().is_some_and(|h| !h.is_empty())
+}
+
 /// Strips credentials, query and fragment from a URL before it goes into user text, so
-/// key-bearing query parameters (`?key=...`) never leak. Unparsable or relative input
-/// gives `<redacted-url>`. (The `url` crate normalizes: a bare host gets a trailing `/`
-/// and the host is lowercased.)
+/// key-bearing query parameters (`?key=...`) never leak. Unparsable, relative, non-http(s) or
+/// hostless input gives `<redacted-url>`. (The `url` crate normalizes: a bare host gets a
+/// trailing `/` and the host is lowercased.) A secret embedded in the path is not detected.
 pub fn redacted_url(url: &str) -> String {
     let Ok(mut parsed) = Url::parse(url) else {
         return "<redacted-url>".to_string();
     };
+    if !is_http_with_host(&parsed) {
+        return "<redacted-url>".to_string();
+    }
     // Setters fail only for cannot-be-a-base URLs, which carry no credentials anyway.
     let _ = parsed.set_username("");
     let _ = parsed.set_password(None);
     parsed.set_query(None);
     parsed.set_fragment(None);
     parsed.to_string()
+}
+
+/// A URL-valued setting or header (a base URL, a referer) as it may appear in `Debug` output:
+/// scheme, host, port and path survive (`redacted_url`), user info, query and fragment are
+/// dropped. Nothing else is echoed: a string that is not an absolute URL becomes
+/// `<unparseable, N chars>`, one that parses but is not http(s) with a host (`user:secret`,
+/// `mailto:x?k`) becomes `<non-http url, N chars>`. An empty string stays empty. A secret
+/// embedded in the path is not detected.
+pub fn debug_url(url: &str) -> String {
+    if url.is_empty() {
+        return String::new();
+    }
+    match Url::parse(url) {
+        Err(_) => format!("<unparseable, {} chars>", url.chars().count()),
+        Ok(parsed) if !is_http_with_host(&parsed) => {
+            format!("<non-http url, {} chars>", url.chars().count())
+        }
+        Ok(_) => redacted_url(url),
+    }
 }
 
 /// A privacy note that stands in for an HTTP response body (the body may echo secrets);
@@ -105,8 +134,10 @@ pub fn sanitized_http_body_detail(body: &str) -> Option<UserMessage> {
     ))
 }
 
-/// Errors from a provider call, convertible to user text.
-#[derive(Debug, Clone, PartialEq)]
+/// Errors from a provider call, convertible to user text. `Debug` never prints the HTTP
+/// response body (a custom endpoint may echo the submitted API key back); it shows the
+/// body's character count only.
+#[derive(Clone, PartialEq)]
 pub enum TranslationError {
     MissingApiKey,
     InvalidUrl,
@@ -124,6 +155,38 @@ pub enum TranslationError {
     },
     InvalidConfiguration(String),
     ProviderNotFound(ProviderType),
+}
+
+impl fmt::Debug for TranslationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingApiKey => f.write_str("MissingApiKey"),
+            Self::InvalidUrl => f.write_str("InvalidUrl"),
+            Self::Http { status, body, url } => f
+                .debug_struct("Http")
+                .field("status", status)
+                .field("body", &format_args!("<{} chars>", body.chars().count()))
+                .field("url", &debug_url(url))
+                .finish(),
+            Self::Decoding(text) => f.debug_tuple("Decoding").field(text).finish(),
+            Self::EmptyResponse => f.write_str("EmptyResponse"),
+            Self::Network(text) => f.debug_tuple("Network").field(text).finish(),
+            Self::OperationNotSupported {
+                provider,
+                operation,
+            } => f
+                .debug_struct("OperationNotSupported")
+                .field("provider", provider)
+                .field("operation", operation)
+                .finish(),
+            Self::InvalidConfiguration(text) => {
+                f.debug_tuple("InvalidConfiguration").field(text).finish()
+            }
+            Self::ProviderNotFound(provider) => {
+                f.debug_tuple("ProviderNotFound").field(provider).finish()
+            }
+        }
+    }
 }
 
 impl TranslationError {
@@ -233,6 +296,25 @@ mod tests {
     use super::*;
     use crate::operation::AIOperation;
     use crate::provider::ProviderType;
+
+    #[test]
+    fn translation_error_debug_omits_http_body() {
+        let err = TranslationError::Http {
+            status: 401,
+            body: "key sk-ant-FIXTURE echoed".to_string(),
+            url: "https://api.x.com/v1".to_string(),
+        };
+        let debug = format!("{err:?}");
+        assert!(!debug.contains("sk-ant-FIXTURE"), "{debug}");
+        assert!(debug.contains("401"), "{debug}");
+        assert!(debug.contains("https://api.x.com/v1"), "{debug}");
+        assert!(debug.contains("<25 chars>"), "{debug}");
+        assert!(!format!("{err}").contains("sk-ant-FIXTURE"));
+        assert_eq!(
+            format!("{:?}", TranslationError::Decoding("x".to_string())),
+            "Decoding(\"x\")"
+        );
+    }
 
     fn http(status: u16) -> TranslationError {
         TranslationError::Http {
@@ -425,6 +507,75 @@ mod tests {
         assert_eq!(redacted_url("not a url"), "<redacted-url>");
         assert_eq!(redacted_url("/relative/path?key=SECRET"), "<redacted-url>");
         assert_eq!(redacted_url(""), "<redacted-url>");
+    }
+
+    #[test]
+    fn debug_url_strips_secrets_and_never_echoes_unparseable_input() {
+        assert_eq!(
+            debug_url("https://u:SECRET@h.example:8443/p/v1?key=SECRET#SECRET"),
+            "https://h.example:8443/p/v1"
+        );
+        assert_eq!(debug_url(""), "");
+        assert_eq!(debug_url("not a url SECRET"), "<unparseable, 16 chars>");
+        assert_eq!(debug_url("/rel?key=SECRET"), "<unparseable, 15 chars>");
+        assert_eq!(debug_url("Привіт"), "<unparseable, 6 chars>");
+    }
+
+    #[test]
+    fn debug_url_does_not_echo_opaque_or_non_http_urls() {
+        // These all parse, but keep the secret in a non-query part the plain strip misses.
+        for (input, expected) in [
+            ("user:SECRET", "<non-http url, 11 chars>"),
+            ("mailto:x?SECRET", "<non-http url, 15 chars>"),
+            ("ftp://u:SECRET@h.example/p", "<non-http url, 26 chars>"),
+            ("data:text/plain,SECRET", "<non-http url, 22 chars>"),
+        ] {
+            let out = debug_url(input);
+            assert_eq!(out, expected, "{input}");
+            assert!(!out.contains("SECRET"), "{input}: {out}");
+        }
+        // http (not only https) with a host is still shown, stripped.
+        assert_eq!(
+            debug_url("http://u:SECRET@h.example/p?k=SECRET"),
+            "http://h.example/p"
+        );
+    }
+
+    #[test]
+    fn redacted_url_does_not_echo_opaque_or_non_http_urls() {
+        for input in [
+            "user:SECRET",
+            "mailto:x?SECRET",
+            "ftp://u:SECRET@h.example/p",
+        ] {
+            assert_eq!(redacted_url(input), "<redacted-url>", "{input}");
+        }
+    }
+
+    #[test]
+    fn http_error_debug_and_display_redact_a_directly_constructed_url() {
+        for url in [
+            "https://u:SECRET@api.x.com/v1?key=SECRET#SECRET",
+            "user:SECRET",
+            "not a url SECRET",
+        ] {
+            let err = TranslationError::Http {
+                status: 500,
+                body: "b".into(),
+                url: url.into(),
+            };
+            let shown = format!("{err:?} {err} {:?}", err.user_detail());
+            assert!(!shown.contains("SECRET"), "{url}: {shown}");
+        }
+        let err = TranslationError::Http {
+            status: 500,
+            body: String::new(),
+            url: "https://u:SECRET@api.x.com/v1?key=SECRET".into(),
+        };
+        assert_eq!(
+            format!("{err:?}"),
+            r#"Http { status: 500, body: <0 chars>, url: "https://api.x.com/v1" }"#
+        );
     }
 
     #[test]

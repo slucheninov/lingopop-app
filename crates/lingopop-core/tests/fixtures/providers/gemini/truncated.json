@@ -1,0 +1,25 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          { "text": "<text>\nПривіт\n</text>" }
+        ]
+      },
+      "finishReason": "MAX_TOKENS",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 12,
+    "candidatesTokenCount": 4,
+    "totalTokenCount": 16,
+    "thoughtsTokenCount": 9,
+    "promptTokensDetails": [
+      { "modality": "TEXT", "tokenCount": 12 }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "FIXTURE-responseId"
+}

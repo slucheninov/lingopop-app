@@ -25,6 +25,16 @@ bash scripts/check-core-deps.sh
 - Update `AGENTS.md` if you change the architecture or conventions.
 - Include screenshots for UI changes.
 
+## Live provider checks
+
+Optional, owner-run on a Mac before a release or after a provider change. These tests send real requests to the provider APIs, are `#[ignore]`d and never run in CI:
+
+```bash
+LINGOPOP_LIVE_CLAUDE_KEY=... LINGOPOP_LIVE_DEEPL_KEY=... bash scripts/live-tests.sh
+```
+
+Providers whose variable is not set are skipped. Variables: `LINGOPOP_LIVE_CLAUDE_KEY`, `LINGOPOP_LIVE_OPENAI_KEY`, `LINGOPOP_LIVE_GEMINI_KEY`, `LINGOPOP_LIVE_GROK_KEY`, `LINGOPOP_LIVE_GOOGLE_CLOUD_KEY` (optional `LINGOPOP_LIVE_GOOGLE_CLOUD_REFERER`), `LINGOPOP_LIVE_DEEPL_KEY`, `LINGOPOP_LIVE_MICROSOFT_KEY` (optional `LINGOPOP_LIVE_MICROSOFT_REGION`), `LINGOPOP_LIVE_GOOGLE_FREE=1`; optional model override `LINGOPOP_LIVE_<P>_MODEL` (`CLAUDE`, `OPENAI`, `GEMINI`, `GROK`, `GOOGLE_CLOUD`). Never commit or paste keys. Details in [AGENTS.md](AGENTS.md).
+
 ## Core rules
 
 - `lingopop-core` stays OS-agnostic: no `windows`, `winapi`, `tauri*`, `objc*`, `cocoa` or `core-foundation*` dependencies and no `unsafe`.

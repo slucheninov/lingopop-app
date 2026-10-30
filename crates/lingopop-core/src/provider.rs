@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::errors::debug_url;
 use crate::operation::AIOperation;
 
 /// A translation / AI provider. The serde names are the frozen persisted raw
@@ -51,8 +53,10 @@ pub struct ProviderCapabilities {
     pub preferred_default_model: Option<&'static str>,
 }
 
-/// Per-provider connection settings (the `providerSettings.v1` entry shape).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Per-provider connection settings (the `providerSettings.v1` entry shape). The hand-written
+/// `Debug` shows the URL-valued fields through `errors::debug_url` (no user info, query or
+/// fragment), so a pasted `https://user:secret@host/?key=...` never reaches a log.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderConnectionSettings {
     #[serde(rename = "baseURL")]
     pub base_url: String,
@@ -61,6 +65,17 @@ pub struct ProviderConnectionSettings {
     pub referer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+}
+
+impl fmt::Debug for ProviderConnectionSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProviderConnectionSettings")
+            .field("base_url", &debug_url(&self.base_url))
+            .field("model", &self.model)
+            .field("referer", &self.referer.as_deref().map(debug_url))
+            .field("region", &self.region)
+            .finish()
+    }
 }
 
 const CHAT_FIELDS: &[ProviderField] = &[
