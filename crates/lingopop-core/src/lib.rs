@@ -3,18 +3,24 @@
 pub mod envelope;
 pub mod fsio;
 pub mod history_store;
+pub mod hotkey;
+pub mod keyed_map;
 pub mod languages;
 pub mod operation;
 pub mod paths;
+pub mod prompts;
 pub mod provider;
 pub mod records;
 pub mod serde_uuid;
+pub mod settings;
 mod store_common;
 pub mod time;
 pub mod usage_store;
 
 pub use fsio::{LoadOutcome, StoreError};
 pub use history_store::HistoryStore;
+pub use hotkey::{Hotkey, Modifier};
+pub use keyed_map::ProviderKeyedMap;
 pub use languages::LanguageInfo;
 pub use operation::AIOperation;
 pub use paths::DataPaths;
@@ -23,6 +29,7 @@ pub use provider::{
     ProviderType,
 };
 pub use records::{HistoryEntry, UsageRecord};
+pub use settings::{sanitize_magic_prompt, Settings, SettingsError};
 pub use time::{Clock, ManualClock, SystemClock, Timestamp};
 pub use usage_store::UsageStore;
 
