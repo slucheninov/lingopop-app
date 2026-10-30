@@ -7,6 +7,7 @@ pub mod errors;
 pub mod fsio;
 pub mod history_store;
 pub mod hotkey;
+pub mod http;
 pub mod keyed_map;
 pub mod languages;
 pub mod operation;

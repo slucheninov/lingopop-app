@@ -18,12 +18,17 @@ if [ -n "$bad_direct" ]; then
   status=1
 fi
 
-# (b) Whole tree: no tauri*, objc*, core-foundation*, windows, winapi, cocoa.
+# (b) Whole tree: no tauri*, objc*, core-foundation*, system-configuration*, windows, winapi,
+# cocoa, nor a platform TLS stack (native-tls, openssl*, aws-lc-*, rustls-native-certs,
+# rustls-platform-verifier).
 # A transitive windows-sys (e.g. via getrandom or tempfile on Windows) stays legitimate.
 full=$(cargo tree -p lingopop-core -e normal,build --prefix none)
 bad_tree=$(printf '%s\n' "$full" | awk '
   { name = $1 }
-  name ~ /^(tauri|objc|core-foundation)/ || name == "windows" || name == "winapi" || name == "cocoa" { print }
+  name ~ /^(tauri|objc|core-foundation|system-configuration)/ || name == "windows" || name == "winapi" || name == "cocoa" { print }
+  name == "native-tls" || name == "openssl" || name == "openssl-sys" { print }
+  name == "aws-lc-rs" || name == "aws-lc-sys" { print }
+  name == "rustls-native-certs" || name == "rustls-platform-verifier" { print }
 ')
 if [ -n "$bad_tree" ]; then
   echo "error: lingopop-core dependency tree contains forbidden crates:" >&2

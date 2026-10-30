@@ -13,7 +13,7 @@ Each task appends its own modules here in the same commit.
 - `Cargo.toml` - workspace (`resolver = "2"`, members `crates/*`, shared package fields, version `0.1.0`)
 - `rust-toolchain.toml`, `rustfmt.toml` - toolchain (honoured only by CI locally, no `rustup` on the dev machine) and formatting
 - `.gitignore`, `.gitattributes` (`eol=lf`), `LICENSE`, `README.md`, `AGENTS.md`, `CLAUDE.md`
-- `scripts/check-core-deps.sh` - guard: `lingopop-core` must not depend on OS or UI crates
+- `scripts/check-core-deps.sh` - guard: `lingopop-core` must not depend on OS or UI crates, nor on a platform TLS stack (`native-tls`, `openssl*`, `aws-lc-*`, `rustls-native-certs`, `rustls-platform-verifier`, `system-configuration*`)
 - `.github/workflows/ci.yml` - CI (`core` matrix on Windows and macOS, aggregator job `build-and-test`)
 - `crates/lingopop-core/Cargo.toml`, `crates/lingopop-core/src/lib.rs` - the OS-agnostic core crate (`VERSION`)
 - `crates/lingopop-core/src/operation.rs` - `AIOperation` (frozen raw values, English names)
@@ -37,6 +37,9 @@ Each task appends its own modules here in the same commit.
 - `crates/lingopop-core/src/detector.rs` - `detect(text)` with `whatlang` (pure Rust, no model files): restricted to the `languages::ALL` table with a `Detector` allowlist; returns whatlang's best guess mapped through `languages::name_for_detect_code` (not gated on `is_reliable()`, matching the mac `NLLanguageRecognizer.dominantLanguage`); `None` for empty / whitespace / digits / punctuation only or a language outside the table
 - `crates/lingopop-core/src/action_row.rs` - `ActionRowMode` (`Full` / `Mixed` / `Compact`, `is_icon_only`, `preferred`, `candidates`), `LONG_TEXT_CHARACTER_THRESHOLD` (120) and `row_width` (port of `ActionRowMetrics`; the text measurer is injected, widths rounded up like Swift `ceil`)
 - `crates/lingopop-core/src/errors.rs` - `TranslationError` (`user_summary` as a `UserMessage` = English catalog key + args, `user_detail` as a list of such lines joined by `english_lines`, the HTTP URL is redacted inside `user_detail`; every key exists in the mac catalog except `VERBATIM_KEY` pass-through lines, checked by a local-only test; `Display` = summary + detail), `UserMessage::english`, `FallbackInfo`, `redacted_url` (credentials, query, fragment stripped; `<redacted-url>` when unparsable) and `sanitized_http_body_detail` (response bodies are never echoed); no error text ever contains an API key
+- `crates/lingopop-core/src/http/mod.rs` - the async HTTP seam (port of `ProviderHTTP.swift`): `Transport` trait (`async_trait`; transport failures are `TranslationError::Network`), `HttpMethod`, `HttpRequest` (`get`, case-insensitive `header`, `json_body`; hand-written `Debug` redacts `x-api-key` / `authorization` / `x-goog-api-key` / `ocp-apim-subscription-key`, prints the URL without its query and the body as a length only), `HttpResponse`, `perform` (2xx = body, anything else `TranslationError::Http` with a redacted URL, no retries), `json_post` (Content-Type first, compact UTF-8 JSON), `decode`, `mime_type` (JPEG by `FF D8 FF`, else PNG). `tokio` is a dev-dependency only
+- `crates/lingopop-core/src/http/endpoint.rs` - `endpoint(base_url, default_base_url, path, query)`: exact `ProviderHTTP.endpoint` semantics (trim, empty = default, HTTPS only, scheme checked before host, userinfo / query / fragment of the base dropped, trailing slashes of the base path stripped, form-encoded query pairs)
+- `crates/lingopop-core/src/http/fake.rs` - `FakeTransport` (always compiled, reused by Phases 3-4): closure handler, `json(status, body)`, `by_host(routes)`, `requests()` in order
 - `SECURITY.md`, `PRIVACY.md`, `CONTRIBUTING.md`, `CHANGELOG.md` - repository meta files (adapted from the mac repo for Windows: `%APPDATA%\LingoPop\`, DPAPI, no sync)
 - `docs/api-keys.md` - per-provider API key guide; the headings `Claude`, `OpenAI`, `Gemini`, `Grok`, `Google Free`, `Google Translate`, `DeepL`, `Microsoft Translator` are link anchors (`ProviderType.keyGuideURL` in the app, Phase 4) and must keep their names; `docs/icon.png` is a copy of the mac repo icon
 - `.github/CODEOWNERS`, `.github/pull_request_template.md`, `.github/ISSUE_TEMPLATE/`, `.github/dependabot.yml` - repo templates and Dependabot (`cargo` and `github-actions`; the `npm` entry for `/app` is added in Phase 4 together with `app/package.json`)
@@ -81,7 +84,7 @@ cargo test -p lingopop-core --test mac_fixtures -- --ignored write_rust_outputs_
   - `history.json` / `usage.json` use the envelope v2 `{ "version": 2, "items": [...], "deleted": [{"id","at"}], "clearedBefore": <date> }`.
   - UI and error text use `display_name()`, never the raw value.
 - Prompt texts are copied verbatim from the macOS `Core/PromptBuilder.swift` (token `{{targetLanguage}}`) and are never localized.
-- No network in unit tests.
+- No external network in tests; loopback mock servers in `tests/` are allowed. Live tests are `#[ignore]` and never run in CI.
 - No secrets or API keys in logs, fixtures or issues.
 
 ## Mac compatibility
