@@ -400,6 +400,25 @@ mod tests {
     }
 
     #[test]
+    fn hotkeys_object_decides_between_empty_map_and_default() {
+        // A hotkeys object is authoritative: an empty one, or one whose entries are all
+        // skipped, means "no hotkeys" (the user removed them), not "use the default".
+        for json in [
+            r#"{"hotkeys":{}}"#,
+            r#"{"hotkeys":{"rewrite":{"key":"t","modifiers":[]}}}"#,
+        ] {
+            assert!(decode(json).hotkeys.is_empty(), "{json}");
+        }
+        // Anything that is not an object is a bad value: fall back to the default.
+        let defaults = BTreeMap::from([(AIOperation::Translate, Hotkey::default_translate())]);
+        assert_eq!(decode(r#"{"hotkeys":"x"}"#).hotkeys, defaults);
+        assert_eq!(
+            decode(r#"{"hotkeys":"x"}"#).hotkey(AIOperation::Translate),
+            Some(&Hotkey::new("KeyT", [Modifier::Ctrl, Modifier::Alt]))
+        );
+    }
+
+    #[test]
     fn hotkeys_normalize_modifiers_on_decode() {
         let s =
             decode(r#"{"hotkeys":{"explain":{"key":"KeyQ","modifiers":["alt","alt","ctrl"]}}}"#);
