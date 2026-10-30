@@ -1,0 +1,376 @@
+{
+  "helpers" : [
+    {
+      "code" : "uk",
+      "deepLCode" : "UK",
+      "microsoftCode" : "uk",
+      "name" : "Ukrainian"
+    },
+    {
+      "code" : "en",
+      "deepLCode" : "EN",
+      "microsoftCode" : "en",
+      "name" : "English"
+    },
+    {
+      "code" : "ru",
+      "deepLCode" : "RU",
+      "microsoftCode" : "ru",
+      "name" : "Russian"
+    },
+    {
+      "code" : "de",
+      "deepLCode" : "DE",
+      "microsoftCode" : "de",
+      "name" : "German"
+    },
+    {
+      "code" : "es",
+      "deepLCode" : "ES",
+      "microsoftCode" : "es",
+      "name" : "Spanish"
+    },
+    {
+      "code" : "fr",
+      "deepLCode" : "FR",
+      "microsoftCode" : "fr",
+      "name" : "French"
+    },
+    {
+      "code" : "it",
+      "deepLCode" : "IT",
+      "microsoftCode" : "it",
+      "name" : "Italian"
+    },
+    {
+      "code" : "pl",
+      "deepLCode" : "PL",
+      "microsoftCode" : "pl",
+      "name" : "Polish"
+    },
+    {
+      "code" : "pt",
+      "deepLCode" : "PT",
+      "microsoftCode" : "pt",
+      "name" : "Portuguese"
+    },
+    {
+      "code" : "zh",
+      "deepLCode" : "ZH",
+      "microsoftCode" : "zh-Hans",
+      "name" : "Chinese"
+    },
+    {
+      "code" : "ja",
+      "deepLCode" : "JA",
+      "microsoftCode" : "ja",
+      "name" : "Japanese"
+    },
+    {
+      "code" : "ko",
+      "deepLCode" : "KO",
+      "microsoftCode" : "ko",
+      "name" : "Korean"
+    },
+    {
+      "code" : "tr",
+      "deepLCode" : "TR",
+      "microsoftCode" : "tr",
+      "name" : "Turkish"
+    },
+    {
+      "code" : "ar",
+      "deepLCode" : "AR",
+      "microsoftCode" : "ar",
+      "name" : "Arabic"
+    },
+    {
+      "code" : "nl",
+      "deepLCode" : "NL",
+      "microsoftCode" : "nl",
+      "name" : "Dutch"
+    },
+    {
+      "code" : "cs",
+      "deepLCode" : "CS",
+      "microsoftCode" : "cs",
+      "name" : "Czech"
+    },
+    {
+      "code" : "da",
+      "deepLCode" : "DA",
+      "microsoftCode" : "da",
+      "name" : "Danish"
+    },
+    {
+      "code" : "fi",
+      "deepLCode" : "FI",
+      "microsoftCode" : "fi",
+      "name" : "Finnish"
+    },
+    {
+      "code" : "el",
+      "deepLCode" : "EL",
+      "microsoftCode" : "el",
+      "name" : "Greek"
+    },
+    {
+      "code" : "he",
+      "deepLCode" : "HE",
+      "microsoftCode" : "he",
+      "name" : "Hebrew"
+    },
+    {
+      "code" : "hi",
+      "deepLCode" : "HI",
+      "microsoftCode" : "hi",
+      "name" : "Hindi"
+    },
+    {
+      "code" : "hu",
+      "deepLCode" : "HU",
+      "microsoftCode" : "hu",
+      "name" : "Hungarian"
+    },
+    {
+      "code" : "id",
+      "deepLCode" : "ID",
+      "microsoftCode" : "id",
+      "name" : "Indonesian"
+    },
+    {
+      "code" : "no",
+      "deepLCode" : "NB",
+      "microsoftCode" : "nb",
+      "name" : "Norwegian"
+    },
+    {
+      "code" : "ro",
+      "deepLCode" : "RO",
+      "microsoftCode" : "ro",
+      "name" : "Romanian"
+    },
+    {
+      "code" : "sv",
+      "deepLCode" : "SV",
+      "microsoftCode" : "sv",
+      "name" : "Swedish"
+    },
+    {
+      "code" : "th",
+      "deepLCode" : "TH",
+      "microsoftCode" : "th",
+      "name" : "Thai"
+    },
+    {
+      "code" : "vi",
+      "deepLCode" : "VI",
+      "microsoftCode" : "vi",
+      "name" : "Vietnamese"
+    },
+    {
+      "code" : "klingon",
+      "deepLCode" : "KLINGON",
+      "microsoftCode" : "klingon",
+      "name" : "Klingon"
+    }
+  ],
+  "languages" : [
+    {
+      "code" : "uk",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Ukrainian"
+    },
+    {
+      "code" : "en",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "English"
+    },
+    {
+      "code" : "ru",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Russian"
+    },
+    {
+      "code" : "de",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "German"
+    },
+    {
+      "code" : "es",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Spanish"
+    },
+    {
+      "code" : "fr",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "French"
+    },
+    {
+      "code" : "it",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Italian"
+    },
+    {
+      "code" : "pl",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Polish"
+    },
+    {
+      "code" : "pt",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Portuguese"
+    },
+    {
+      "code" : "zh",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : "zh-Hans",
+      "name" : "Chinese"
+    },
+    {
+      "code" : "ja",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Japanese"
+    },
+    {
+      "code" : "ko",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Korean"
+    },
+    {
+      "code" : "tr",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Turkish"
+    },
+    {
+      "code" : "ar",
+      "deepLCode" : null,
+      "inQuickList" : true,
+      "microsoftCode" : null,
+      "name" : "Arabic"
+    },
+    {
+      "code" : "nl",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Dutch"
+    },
+    {
+      "code" : "cs",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Czech"
+    },
+    {
+      "code" : "da",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Danish"
+    },
+    {
+      "code" : "fi",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Finnish"
+    },
+    {
+      "code" : "el",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Greek"
+    },
+    {
+      "code" : "he",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Hebrew"
+    },
+    {
+      "code" : "hi",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Hindi"
+    },
+    {
+      "code" : "hu",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Hungarian"
+    },
+    {
+      "code" : "id",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Indonesian"
+    },
+    {
+      "code" : "no",
+      "deepLCode" : "NB",
+      "inQuickList" : false,
+      "microsoftCode" : "nb",
+      "name" : "Norwegian"
+    },
+    {
+      "code" : "ro",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Romanian"
+    },
+    {
+      "code" : "sv",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Swedish"
+    },
+    {
+      "code" : "th",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Thai"
+    },
+    {
+      "code" : "vi",
+      "deepLCode" : null,
+      "inQuickList" : false,
+      "microsoftCode" : null,
+      "name" : "Vietnamese"
+    }
+  ]
+}

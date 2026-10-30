@@ -29,6 +29,9 @@ Each task appends its own modules here in the same commit.
 - `crates/lingopop-core/src/history_store.rs` - `HistoryStore` (`history.json`, newest first, cap on `add` / `trim`, `remove` tombstones, `clear` watermark, cap overflow never tombstoned)
 - `crates/lingopop-core/src/usage_store.rs` - `UsageStore` (`usage.json`, oldest first, 31-day retention from UTC midnight, `reset` watermark)
 - `crates/lingopop-core/src/time.rs` also holds `Clock`, `SystemClock` and the test-driven `ManualClock`
+- `scripts/mac-fixtures/run.sh`, `scripts/mac-fixtures/main.swift` - compiles the real macOS model files with `swiftc` and generates / checks the compatibility fixtures (macOS only)
+- `crates/lingopop-core/tests/fixtures/mac/` - generated, committed fixtures and goldens (`history.json`, `history.legacy.json`, `usage.json`, `secrets.payload.json`, `languages.golden.json`, `prompts.golden.json`, `SOURCE.txt` with the mac commit); never hand-edited
+- `crates/lingopop-core/tests/mac_fixtures.rs` - checks the Rust types against those fixtures (plus the ignored writer for the Swift reverse check)
 
 ## Build / test
 
@@ -40,6 +43,20 @@ bash scripts/check-core-deps.sh
 ```
 
 Windows is verified only by CI; the dev machine is a Mac.
+
+### Mac fixtures
+
+The fixtures under `crates/lingopop-core/tests/fixtures/mac/` come from the real macOS models, not from Rust. macOS with the Swift toolchain only; the mac repo is read from `$LINGOPOP_MAC_REPO` (default `~/Works/slava/lingo-pop`) and never modified.
+
+```bash
+./scripts/mac-fixtures/run.sh generate    # regenerate fixtures + SOURCE.txt (only when the mac models change)
+cargo test -p lingopop-core --test mac_fixtures
+# manual gate before changing the history / usage / secrets formats (Rust-written files must decode in Swift):
+cargo test -p lingopop-core --test mac_fixtures -- --ignored write_rust_outputs_for_swift_check
+./scripts/mac-fixtures/run.sh check target/mac-roundtrip
+```
+
+`check <dir>` decodes `history.json`, `usage.json` and `secrets.payload.json` with the Swift models, skips absent files and exits 1 on a decode failure or when all three are absent. The roundtrip directory defaults to `target/mac-roundtrip` (override with `LINGOPOP_ROUNDTRIP_DIR`).
 
 ## Rules
 
