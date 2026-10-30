@@ -6,12 +6,13 @@ use std::sync::Arc;
 
 use lingopop_core::envelope::MergeableEnvelope;
 use lingopop_core::languages;
+use lingopop_core::prompts;
 use lingopop_core::records::{HistoryEntry, UsageRecord};
 use lingopop_core::secrets::{
     decode_payload, encode_payload, provider_settings_in, set_provider_settings_in,
     ProviderSettingsState, SecretProtector, SecretStore,
 };
-use lingopop_core::{HistoryStore, LoadOutcome, ManualClock, ProviderType, Timestamp};
+use lingopop_core::{AIOperation, HistoryStore, LoadOutcome, ManualClock, ProviderType, Timestamp};
 use serde_json::Value;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mac");
@@ -378,4 +379,75 @@ fn write_rust_outputs_for_swift_check() {
         encode_payload(&entries).unwrap(),
     )
     .unwrap();
+}
+
+#[test]
+fn prompts_match_swift_golden() {
+    let golden = fixture_value("prompts.golden.json");
+    assert_eq!(
+        prompts::DEFAULT_MAGIC_PROMPT,
+        str_field(&golden, "defaultMagicPrompt")
+    );
+
+    let system_rows = golden["systemPrompt"]
+        .as_array()
+        .expect("systemPrompt rows");
+    assert_eq!(system_rows.len(), 8);
+    let mut seen = std::collections::HashSet::new();
+    for row in system_rows {
+        let raw = str_field(row, "operation");
+        let operation = AIOperation::from_raw_value(raw)
+            .unwrap_or_else(|| panic!("unknown operation {raw} in golden"));
+        seen.insert(operation);
+        assert_eq!(
+            prompts::system_prompt(
+                operation,
+                str_field(row, "targetLanguage"),
+                str_field(row, "magicPrompt")
+            ),
+            str_field(row, "output"),
+            "{raw} / magic {:?}",
+            str_field(row, "magicPrompt")
+        );
+    }
+    assert_eq!(
+        seen.len(),
+        AIOperation::ALL.len(),
+        "golden covers every operation"
+    );
+
+    let user_rows = golden["userContent"].as_array().expect("userContent rows");
+    assert_eq!(user_rows.len(), 2);
+    for row in user_rows {
+        assert_eq!(
+            prompts::user_content(str_field(row, "input")),
+            str_field(row, "output"),
+            "{}",
+            str_field(row, "input")
+        );
+    }
+
+    let sanitize_rows = golden["sanitizeOutput"]
+        .as_array()
+        .expect("sanitizeOutput rows");
+    assert_eq!(sanitize_rows.len(), 5);
+    for row in sanitize_rows {
+        assert_eq!(
+            prompts::sanitize_output(str_field(row, "input")),
+            str_field(row, "output"),
+            "{}",
+            str_field(row, "input")
+        );
+    }
+
+    let vision_rows = golden["visionPrompt"]
+        .as_array()
+        .expect("visionPrompt rows");
+    assert_eq!(vision_rows.len(), 1);
+    for row in vision_rows {
+        assert_eq!(
+            prompts::vision_prompt(str_field(row, "targetLanguage")),
+            str_field(row, "output")
+        );
+    }
 }

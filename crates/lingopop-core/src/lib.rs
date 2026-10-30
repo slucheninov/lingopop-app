@@ -25,6 +25,9 @@ pub use keyed_map::ProviderKeyedMap;
 pub use languages::LanguageInfo;
 pub use operation::AIOperation;
 pub use paths::DataPaths;
+pub use prompts::{
+    sanitize_output, system_prompt, user_content, vision_prompt, DEFAULT_MAGIC_PROMPT,
+};
 pub use provider::{
     default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,
     ProviderType,
