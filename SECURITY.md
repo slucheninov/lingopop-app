@@ -1,5 +1,7 @@
 # Security Policy
 
+> **Status:** LingoPop for Windows is pre-alpha. This document describes the intended behaviour of the released app; parts of it are not implemented yet.
+
 ## Supported versions
 
 Only the latest release receives security fixes. Please update to the latest version before reporting an issue.

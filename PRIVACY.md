@@ -1,5 +1,7 @@
 # Privacy Policy
 
+> **Status:** LingoPop for Windows is pre-alpha. This document describes the intended behaviour of the released app; parts of it are not implemented yet.
+
 LingoPop is a Windows tray app. This document describes what data the app handles and where it goes.
 
 ## Data the app stores locally

@@ -43,8 +43,11 @@ body:
         - Claude
         - OpenAI
         - Gemini
+        - Grok
         - Google (Free)
         - Google Translate
+        - DeepL
+        - Microsoft Translator
         - Multiple / not sure
     validations:
       required: true
@@ -57,6 +60,9 @@ body:
         - Translate
         - Fix grammar
         - Rewrite
+        - Explain
+        - Magic
+        - Screen Translate
         - Other / N/A
     validations:
       required: true
