@@ -16,6 +16,7 @@ pub mod prompts;
 pub mod provider;
 pub mod providers;
 pub mod records;
+pub mod runner;
 pub mod secrets;
 pub mod serde_uuid;
 pub mod settings;
@@ -40,6 +41,9 @@ pub use provider::{
 };
 pub use providers::{AIProvider, ProviderConfig, ProviderRegistry, ProviderResult, TokenUsage};
 pub use records::{HistoryEntry, UsageRecord};
+pub use runner::{
+    should_retry_with_fallback, ConfigSnapshot, OperationRunner, RunRequest, TranslationResult,
+};
 pub use secrets::{
     ProtectError, ProviderSettingsState, SecretProtector, SecretStore, SecretsError,
 };
