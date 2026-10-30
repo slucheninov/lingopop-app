@@ -18,7 +18,7 @@ pub use endpoint::endpoint;
 pub use fake::FakeTransport;
 pub use reqwest_transport::{redirect_allowed, HttpTimeouts, ReqwestTransport};
 
-use crate::errors::{redacted_url, TranslationError};
+use crate::errors::{debug_url, redacted_url, TranslationError};
 
 /// Header names whose values are never printed (compared case-insensitively).
 const SECRET_HEADERS: [&str; 4] = [
@@ -27,6 +27,10 @@ const SECRET_HEADERS: [&str; 4] = [
     "x-goog-api-key",
     "ocp-apim-subscription-key",
 ];
+
+/// Header names whose values are URLs and may carry user info or a query; `Debug` prints
+/// them through `debug_url`.
+const URL_HEADERS: [&str; 3] = ["referer", "origin", "location"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -71,12 +75,20 @@ impl HttpRequest {
 
 impl fmt::Debug for HttpRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let headers: Vec<(&str, &str)> = self
+        let headers: Vec<(&str, String)> = self
             .headers
             .iter()
             .map(|(name, value)| {
                 let secret = SECRET_HEADERS.iter().any(|s| name.eq_ignore_ascii_case(s));
-                (name.as_str(), if secret { "<redacted>" } else { value })
+                let is_url = URL_HEADERS.iter().any(|s| name.eq_ignore_ascii_case(s));
+                let shown = if secret {
+                    "<redacted>".to_string()
+                } else if is_url {
+                    debug_url(value)
+                } else {
+                    value.clone()
+                };
+                (name.as_str(), shown)
             })
             .collect();
         f.debug_struct("HttpRequest")
@@ -445,6 +457,30 @@ mod tests {
             "HttpRequest { method: Post, url: \"https://api.x.com/v1\", headers: \
              [(\"Content-Type\", \"application/json\"), (\"x-api-key\", \"<redacted>\"), \
              (\"Accept\", \"a/b\")], body_len: Some(25) }"
+        );
+    }
+
+    #[test]
+    fn http_request_debug_sanitizes_the_referer_url() {
+        let request = HttpRequest::get(
+            url("https://api.x.com/"),
+            &[
+                (
+                    "Referer",
+                    "https://u:REFSECRET@ref.example/app?key=REFSECRET#REFSECRET",
+                ),
+                ("referer", "user:REFSECRET"),
+            ],
+        );
+        let debug = format!("{request:?}");
+        assert!(!debug.contains("REFSECRET"), "{debug}");
+        assert!(
+            debug.contains(r#"("Referer", "https://ref.example/app")"#),
+            "{debug}"
+        );
+        assert!(
+            debug.contains(r#"("referer", "<non-http url, 14 chars>")"#),
+            "{debug}"
         );
     }
 
