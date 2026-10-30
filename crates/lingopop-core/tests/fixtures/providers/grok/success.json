@@ -1,0 +1,25 @@
+{
+  "id": "5f1b6c1e-3f0a-4c52-9a55-FIXTURE",
+  "object": "chat.completion",
+  "created": 1767225600,
+  "model": "grok-4.3",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "<text>\nПривіт\n</text>",
+        "refusal": null
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 18,
+    "completion_tokens": 5,
+    "total_tokens": 23,
+    "prompt_tokens_details": { "text_tokens": 18, "audio_tokens": 0, "image_tokens": 0, "cached_tokens": 0 },
+    "completion_tokens_details": { "reasoning_tokens": 0, "audio_tokens": 0 }
+  },
+  "system_fingerprint": "fp_FIXTURE"
+}

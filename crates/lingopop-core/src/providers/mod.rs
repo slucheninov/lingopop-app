@@ -17,8 +17,10 @@ use crate::prompts::sanitize_output;
 use crate::provider::ProviderType;
 
 pub mod claude;
+pub mod openai;
 
 pub use claude::ClaudeProvider;
+pub use openai::OpenAiCompatible;
 
 /// Everything a provider needs for one call. `Debug` never prints the API key.
 #[derive(Clone)]
@@ -106,6 +108,8 @@ impl ProviderRegistry {
     pub fn standard() -> Self {
         let mut registry = Self::empty();
         registry.insert(Box::new(ClaudeProvider::new()));
+        registry.insert(Box::new(OpenAiCompatible::openai()));
+        registry.insert(Box::new(OpenAiCompatible::grok()));
         registry
     }
 
@@ -240,6 +244,15 @@ mod tests {
         let registry = ProviderRegistry::standard();
         let provider = registry.get(ProviderType::Claude).unwrap();
         assert_eq!(provider.provider_type(), ProviderType::Claude);
+    }
+
+    #[test]
+    fn registry_standard_registers_openai_and_grok() {
+        let registry = ProviderRegistry::standard();
+        for provider_type in [ProviderType::OpenAI, ProviderType::Grok] {
+            let provider = registry.get(provider_type).unwrap();
+            assert_eq!(provider.provider_type(), provider_type);
+        }
     }
 
     #[test]
