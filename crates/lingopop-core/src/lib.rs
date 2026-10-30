@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
+pub mod action_row;
+pub mod detector;
 pub mod envelope;
+pub mod errors;
 pub mod fsio;
 pub mod history_store;
 pub mod hotkey;
@@ -15,6 +18,7 @@ pub mod secrets;
 pub mod serde_uuid;
 pub mod settings;
 mod store_common;
+pub mod target_language;
 pub mod time;
 pub mod usage_store;
 
