@@ -112,6 +112,21 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_other_parse_errors_are_invalid_configuration() {
+        // An out-of-range port is a parse error that is neither "empty host" nor a scheme
+        // problem; it maps to the same configuration error as any unparseable base.
+        assert_eq!(
+            build("https://api.example.com:99999"),
+            Err(https_only_error())
+        );
+        assert_eq!(
+            build("https://api.example.com:abc"),
+            Err(https_only_error())
+        );
+        assert_eq!(build("https://exa mple.com"), Err(https_only_error()));
+    }
+
+    #[test]
     fn endpoint_empty_host_is_invalid_url() {
         assert_eq!(build("https://"), Err(TranslationError::InvalidUrl));
         assert_eq!(build("https://:443"), Err(TranslationError::InvalidUrl));
