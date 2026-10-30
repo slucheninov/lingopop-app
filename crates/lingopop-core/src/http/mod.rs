@@ -88,10 +88,22 @@ impl fmt::Debug for HttpRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct HttpResponse {
     pub status: u16,
     pub body: Vec<u8>,
+}
+
+/// Prints the status and the body length only: a response body may echo a submitted key.
+impl fmt::Debug for HttpResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "HttpResponse {{ status: {}, body: <{} bytes> }}",
+            self.status,
+            self.body.len()
+        )
+    }
 }
 
 impl HttpResponse {
@@ -402,6 +414,36 @@ mod tests {
         assert!(debug.contains("application/json"), "{debug}");
         assert!(debug.contains("https://ref.example.com"), "{debug}");
         assert!(debug.contains("body_len: Some("), "{debug}");
+    }
+
+    #[test]
+    fn http_response_debug_prints_status_and_body_length_only() {
+        let response = HttpResponse::new(200, b"BODYSECRET sk-ant-FIXTURE".to_vec());
+        assert_eq!(
+            format!("{response:?}"),
+            "HttpResponse { status: 200, body: <25 bytes> }"
+        );
+        assert_eq!(
+            format!("{:?}", HttpResponse::new(500, Vec::new())),
+            "HttpResponse { status: 500, body: <0 bytes> }"
+        );
+    }
+
+    #[test]
+    fn http_request_debug_has_exact_shape_without_body_bytes() {
+        let mut request = json_post(
+            url("https://u:PW@api.x.com/v1?q=URLSECRET#FRAG"),
+            &[("x-api-key", "sk-ant-FIXTURE"), ("Accept", "a/b")],
+            &json!({"prompt": "BODYSECRET"}),
+        )
+        .unwrap();
+        request.body = Some(b"BODYSECRET sk-ant-FIXTURE".to_vec());
+        assert_eq!(
+            format!("{request:?}"),
+            "HttpRequest { method: Post, url: \"https://api.x.com/v1\", headers: \
+             [(\"Content-Type\", \"application/json\"), (\"x-api-key\", \"<redacted>\"), \
+             (\"Accept\", \"a/b\")], body_len: Some(25) }"
+        );
     }
 
     #[test]
