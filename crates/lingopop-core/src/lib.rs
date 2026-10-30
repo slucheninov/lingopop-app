@@ -1,5 +1,14 @@
 #![forbid(unsafe_code)]
 
+pub mod operation;
+pub mod provider;
+
+pub use operation::AIOperation;
+pub use provider::{
+    default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,
+    ProviderType,
+};
+
 /// Crate version, taken from the workspace `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

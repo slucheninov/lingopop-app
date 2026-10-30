@@ -16,6 +16,8 @@ Each task appends its own modules here in the same commit.
 - `scripts/check-core-deps.sh` - guard: `lingopop-core` must not depend on OS or UI crates
 - `.github/workflows/ci.yml` - CI (`core` matrix on Windows and macOS, aggregator job `build-and-test`)
 - `crates/lingopop-core/Cargo.toml`, `crates/lingopop-core/src/lib.rs` - the OS-agnostic core crate (`VERSION`)
+- `crates/lingopop-core/src/operation.rs` - `AIOperation` (frozen raw values, English names)
+- `crates/lingopop-core/src/provider.rs` - `ProviderType`, `ProviderField`, static `ProviderCapabilities`, `ProviderConnectionSettings`, `default_providers()`
 
 ## Build / test
 
