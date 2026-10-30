@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Read the README
+    url: https://github.com/slucheninov/lingopop-app#readme
+    about: Install instructions, getting API keys, and common gotchas live there.
+  - name: Browse releases
+    url: https://github.com/slucheninov/lingopop-app/releases
+    about: Latest releases and per-version changelogs.

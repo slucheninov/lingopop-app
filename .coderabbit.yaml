@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  auto_approvals:
+    allow_author_approval: false
+  high_level_summary: true
+  review_progress: true
+  commit_status: true
+  fail_commit_status: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!docs/screenshots/**"
+    - "!**/*.png"
+    - "!Cargo.lock"
+    - "!crates/**/tests/fixtures/**"
+  path_instructions:
+    - path: "**/*.rs"
+      instructions: |
+        Project rules live in AGENTS.md. Check:
+        - `lingopop-core` uses no OS APIs and no `unsafe` (`#![forbid(unsafe_code)]`); OS code belongs in `lingopop-platform`.
+        - Persisted raw values and the date and UUID encoding are frozen; never rename or change them.
+        - Never log API keys or put them in error text; keys only ever live in `secrets.dat`.
+        - Errors use `thiserror`; no `unwrap` / `expect` outside tests.
+    - path: "**/*.{ts,svelte}"
+      instructions: |
+        Svelte 5 runes only. No secrets in the frontend. All user-visible strings go through the localization lookup.
+    - path: ".github/workflows/**"
+      instructions: |
+        Third-party actions must be pinned by commit SHA. Use least-privilege `permissions`. Do not use `pull_request_target`. No secrets exposed to jobs triggered by pull requests.
+    - path: "scripts/**"
+      instructions: |
+        Bash scripts use strict mode (`set -euo pipefail`), must be shellcheck-clean, quote variables, and must never push directly to `main`.
+  tools:
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    markdownlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    languagetool:
+      enabled: false
+
+chat:
+  auto_reply: true

@@ -1,0 +1,89 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out the form below.
+
+  - type: input
+    id: lingopop-version
+    attributes:
+      label: LingoPop version
+      description: From Settings → About, or the filename you downloaded.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2 / Windows 10 22H2 ..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Architecture
+      options:
+        - x64 (Intel / AMD)
+        - ARM64
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider you were using
+      options:
+        - Claude
+        - OpenAI
+        - Gemini
+        - Google (Free)
+        - Google Translate
+        - Multiple / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operation
+    attributes:
+      label: Operation
+      options:
+        - Translate
+        - Fix grammar
+        - Rewrite
+        - Other / N/A
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what did you see instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Select text ...
+        3. Press ...
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (optional)
+      description: Paste any relevant log output. Remove API keys and personal text first.
+      render: shell

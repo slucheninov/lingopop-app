@@ -6,3 +6,8 @@ LingoPop is a tray app that translates, fixes, rewrites and explains selected te
 
 - Design spec: [docs/superpowers/specs/2026-10-30-lingopop-app-design.md](docs/superpowers/specs/2026-10-30-lingopop-app-design.md)
 - Contributor and agent instructions: [AGENTS.md](AGENTS.md)
+- Getting an API key for each provider: [docs/api-keys.md](docs/api-keys.md)
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security policy: [SECURITY.md](SECURITY.md)
+- Privacy policy: [PRIVACY.md](PRIVACY.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
