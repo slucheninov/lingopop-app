@@ -17,15 +17,19 @@ use crate::prompts::sanitize_output;
 use crate::provider::ProviderType;
 
 pub mod claude;
+pub mod deepl;
 pub mod gemini;
 pub mod google_cloud;
 pub mod google_free;
+pub mod microsoft;
 pub mod openai;
 
 pub use claude::ClaudeProvider;
+pub use deepl::DeepLProvider;
 pub use gemini::GeminiProvider;
 pub use google_cloud::GoogleCloudProvider;
 pub use google_free::GoogleFreeProvider;
+pub use microsoft::MicrosoftProvider;
 pub use openai::OpenAiCompatible;
 
 /// Everything a provider needs for one call. `Debug` never prints the API key.
@@ -119,6 +123,8 @@ impl ProviderRegistry {
         registry.insert(Box::new(GeminiProvider::new()));
         registry.insert(Box::new(GoogleFreeProvider::new()));
         registry.insert(Box::new(GoogleCloudProvider::new()));
+        registry.insert(Box::new(DeepLProvider::new()));
+        registry.insert(Box::new(MicrosoftProvider::new()));
         registry
     }
 
@@ -249,10 +255,13 @@ mod tests {
     }
 
     #[test]
-    fn registry_standard_registers_claude() {
+    fn standard_registry_has_all_eight() {
         let registry = ProviderRegistry::standard();
-        let provider = registry.get(ProviderType::Claude).unwrap();
-        assert_eq!(provider.provider_type(), ProviderType::Claude);
+        for provider_type in ProviderType::ALL {
+            let provider = registry.get(provider_type).unwrap();
+            assert_eq!(provider.provider_type(), provider_type);
+        }
+        assert_eq!(registry.providers.len(), 8);
     }
 
     #[test]
