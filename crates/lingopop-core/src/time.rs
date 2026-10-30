@@ -16,9 +16,10 @@ const MAX_EXACT_INT: f64 = 9_007_199_254_740_992.0;
 #[derive(Clone, Copy, Debug)]
 pub struct Timestamp(f64);
 
-/// Maps NaN to `0.0` and saturates infinities, so a `Timestamp` is always finite.
+/// Maps NaN and `-0.0` to `0.0` and saturates infinities, so a `Timestamp` is always
+/// finite and `-0.0` cannot split equality / ordering from the integer `0` encoding.
 fn sanitize(value: f64) -> f64 {
-    if value.is_nan() {
+    if value.is_nan() || value == 0.0 {
         0.0
     } else if value == f64::INFINITY {
         f64::MAX
@@ -96,7 +97,7 @@ impl Visitor<'_> for TimestampVisitor {
 
     fn visit_f64<E: de::Error>(self, v: f64) -> Result<Timestamp, E> {
         if v.is_finite() {
-            Ok(Timestamp(v))
+            Ok(Timestamp(sanitize(v)))
         } else {
             Err(E::custom("timestamp must be finite"))
         }
@@ -236,6 +237,44 @@ mod tests {
             let back: Timestamp = serde_json::from_str(&json).unwrap();
             assert_eq!(back.apple_seconds().to_bits(), s.to_bits());
         }
+    }
+
+    #[test]
+    fn integer_boundary_encoding() {
+        let enc = |s: f64| serde_json::to_string(&Timestamp::from_apple_seconds(s)).unwrap();
+        // Largest exactly representable odd integer, 2^53 - 1: still an integer.
+        assert_eq!(enc(9007199254740991.0), "9007199254740991");
+        assert_eq!(enc(-9007199254740991.0), "-9007199254740991");
+        assert_eq!(enc(-3.0), "-3");
+        // The rule is `abs() < 2^53`, so -2^53 takes the float path (and round-trips).
+        let json = enc(-9007199254740992.0);
+        assert_eq!(json, "-9007199254740992.0");
+        let back: Timestamp = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.apple_seconds().to_bits(),
+            (-9007199254740992.0_f64).to_bits()
+        );
+    }
+
+    #[test]
+    fn negative_zero_is_normalized_everywhere() {
+        let zero = Timestamp::from_apple_seconds(0.0);
+        let from_ctor = Timestamp::from_apple_seconds(-0.0);
+        assert_eq!(from_ctor.apple_seconds().to_bits(), 0.0_f64.to_bits());
+        assert_eq!(from_ctor, zero);
+        assert_eq!(from_ctor.cmp(&zero), Ordering::Equal);
+        assert_eq!(serde_json::to_string(&from_ctor).unwrap(), "0");
+        // Decoding a JSON -0.0 / -0 gives the same value as 0.
+        for json in ["-0.0", "-0", "-0e0"] {
+            let t: Timestamp = serde_json::from_str(json).unwrap();
+            assert_eq!(t.apple_seconds().to_bits(), 0.0_f64.to_bits(), "{json}");
+            assert_eq!(t, zero, "{json}");
+        }
+        // Arithmetic that lands on -0.0 is normalized as well.
+        let sum = Timestamp::from_apple_seconds(-0.0).plus_seconds(-0.0);
+        assert_eq!(sum.apple_seconds().to_bits(), 0.0_f64.to_bits());
+        let unix = Timestamp::from_unix_seconds(Timestamp::APPLE_TO_UNIX_OFFSET);
+        assert_eq!(unix.apple_seconds().to_bits(), 0.0_f64.to_bits());
     }
 
     #[test]
