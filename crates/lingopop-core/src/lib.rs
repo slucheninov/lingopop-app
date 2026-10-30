@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
+pub mod languages;
 pub mod operation;
 pub mod provider;
 
+pub use languages::LanguageInfo;
 pub use operation::AIOperation;
 pub use provider::{
     default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,

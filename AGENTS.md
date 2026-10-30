@@ -18,6 +18,7 @@ Each task appends its own modules here in the same commit.
 - `crates/lingopop-core/Cargo.toml`, `crates/lingopop-core/src/lib.rs` - the OS-agnostic core crate (`VERSION`)
 - `crates/lingopop-core/src/operation.rs` - `AIOperation` (frozen raw values, English names)
 - `crates/lingopop-core/src/provider.rs` - `ProviderType`, `ProviderField`, static `ProviderCapabilities`, `ProviderConnectionSettings`, `default_providers()`
+- `crates/lingopop-core/src/languages.rs` - `LanguageInfo`, the 28-row `ALL` table, `quick_list()`, `info()`, `code()` / `deepl_code()` / `microsoft_code()`, `name_for_detect_code()` (ISO 639-3 detector codes)
 
 ## Build / test
 
