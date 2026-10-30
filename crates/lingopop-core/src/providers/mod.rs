@@ -17,9 +17,11 @@ use crate::prompts::sanitize_output;
 use crate::provider::ProviderType;
 
 pub mod claude;
+pub mod gemini;
 pub mod openai;
 
 pub use claude::ClaudeProvider;
+pub use gemini::GeminiProvider;
 pub use openai::OpenAiCompatible;
 
 /// Everything a provider needs for one call. `Debug` never prints the API key.
@@ -110,6 +112,7 @@ impl ProviderRegistry {
         registry.insert(Box::new(ClaudeProvider::new()));
         registry.insert(Box::new(OpenAiCompatible::openai()));
         registry.insert(Box::new(OpenAiCompatible::grok()));
+        registry.insert(Box::new(GeminiProvider::new()));
         registry
     }
 
@@ -253,6 +256,13 @@ mod tests {
             let provider = registry.get(provider_type).unwrap();
             assert_eq!(provider.provider_type(), provider_type);
         }
+    }
+
+    #[test]
+    fn registry_standard_registers_gemini() {
+        let registry = ProviderRegistry::standard();
+        let provider = registry.get(ProviderType::Gemini).unwrap();
+        assert_eq!(provider.provider_type(), ProviderType::Gemini);
     }
 
     #[test]
