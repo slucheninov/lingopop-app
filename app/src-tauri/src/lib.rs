@@ -42,7 +42,9 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         .always_on_top(true)
         .skip_taskbar(true)
         .resizable(false)
-        .shadow(true)
+        // With a shadow tao insets the client area of an undecorated window, so the
+        // SetWindowPos rect would no longer equal the webview size (scrollbars, clipped close).
+        .shadow(false)
         .inner_size(width, height)
         .build()?;
 
@@ -60,6 +62,8 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         Arc::new(ReqwestTransport::new(HttpTimeouts::default())?),
     );
     let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
+    #[cfg(windows)]
+    lingopop_platform::set_dismiss_log(log.clone());
     let hotkeys = config.settings().hotkeys;
     let dismiss = platform.dismiss.clone();
     let orchestrator = Orchestrator::new(Deps {

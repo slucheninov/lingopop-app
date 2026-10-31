@@ -57,6 +57,7 @@
 </main>
 <style>
   :global(*) { box-sizing:border-box; }
+  :global(html), :global(body) { overflow:hidden; }
   :global(body) { margin:0; font:13px system-ui,sans-serif; color:#25282c; background:transparent; }
   main { position:relative; padding:14px; background:#fafbfc; border:1px solid #d5d9df; border-radius:10px; }
   .notice { margin:8px 0 0; padding:5px 8px; border-radius:6px; font-size:12px; color:#7a2a12; background:#fdeee8; }
