@@ -82,6 +82,8 @@ fn rig(t: Arc<dyn Transport>, target: Option<WindowHandle>) -> Rig {
     let stores = Arc::new(FakePersist::new());
     let orch = Orchestrator::new(Deps {
         platform: Platform {
+            popup_window: Arc::new(FakePopupWindow::default()),
+            dismiss: Arc::new(FakeDismissWatcher::default()),
             clipboard: clip.clone(),
             keys: keys.clone(),
             foreground: fg.clone(),

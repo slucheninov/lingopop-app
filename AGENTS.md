@@ -107,6 +107,11 @@ Each task appends its own modules here in the same commit.
 - `crates/lingopop-orchestrator/tests/orchestrator_screen.rs` - 21 flow tests (cancelled pick, pick error, invalid region, clipped capture and anchor, OCR phase and auto-copy on / off, empty / unavailable OCR, translate_ocr and fallback rule, vision retry PNG body and no fallback, image lifetime, OCR off the async thread, popup repositioned, vision source kept, stale auto-copy skipped)
 
 
+- `crates/lingopop-platform/src/{popup_window,dismiss}.rs` - `NoActivateWindow`, `DismissEvent`, non-blocking `DismissWatcher` (called under the orchestrator session mutex), half-open `classify_click`; `tests/dismiss.rs` pins inside/outside edge classification.
+- `crates/lingopop-platform/src/windows/{popup_window,dismiss}.rs` - `WindowsPopupWindow`: physical-pixel SetWindowPos with TOPMOST/NOACTIVATE/SHOWWINDOW under DpiGuard, hide via SW_HIDE; `WindowsDismissWatcher`: one shared process-lifetime message-loop backend, posted start/stop, RAII low-level hooks, atomic geometry/active flag, bounded try_send callbacks, real Escape swallowed only while active, injected keyboard/mouse ignored, outside clicks never swallowed; installation failures log API/code only and surface on the next start. `hooks_installed` observes asynchronous completion for diagnostics/smoke tests.
+- `crates/lingopop-platform/src/macos/popup_window.rs` - dev-only `MacPopupWindow` returns Unsupported("no-activate popup on macOS") so the shell falls back to Tauri show; `MacDismissWatcher` is a no-op retaining an idle channel, dev webview handles Escape.
+- `crates/lingopop-platform/src/fake/{popup_window,dismiss}.rs` - recording `FakePopupWindow` / `PopupWindowCall` and `FakeDismissWatcher` / `DismissCall`, active-only scripted `fire`; `native::Platform` includes `popup_window` and `dismiss` in both native bundles and all test bundles. Windows smoke adds no-focus show/hide and observable hook stop/restart plus injected Escape passthrough checks (interactive desktop only).
+
 ## Build / test
 
 ```bash

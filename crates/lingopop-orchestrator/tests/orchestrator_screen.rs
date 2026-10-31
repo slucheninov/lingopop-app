@@ -1,5 +1,6 @@
 //! The Screen Translate flow over platform fakes, a scripted region picker and a `FakeTransport`.
 
+use lingopop_platform::fake::{FakeDismissWatcher, FakePopupWindow};
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 
@@ -126,6 +127,8 @@ fn rig_full(
         after: Mutex::new(None),
     });
     let platform = Platform {
+        popup_window: Arc::new(FakePopupWindow::default()),
+        dismiss: Arc::new(FakeDismissWatcher::default()),
         clipboard: clip.clone(),
         keys: keys.clone(),
         foreground: FakeForeground::new(Some(WindowHandle(7))),

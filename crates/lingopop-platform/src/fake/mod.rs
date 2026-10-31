@@ -19,3 +19,10 @@ pub use log::{Event, EventLog, LoggedEvent};
 pub use monitors::FakeMonitors;
 pub use ocr::FakeOcr;
 pub use sleeper::FakeSleeper;
+
+mod popup_window;
+pub use popup_window::FakePopupWindow;
+mod dismiss;
+pub use dismiss::DismissCall;
+pub use dismiss::FakeDismissWatcher;
+pub use popup_window::PopupWindowCall;

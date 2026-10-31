@@ -1,5 +1,6 @@
 //! The text-operation flow over platform fakes, a `FakeTransport` and a recording popup.
 
+use lingopop_platform::fake::{FakeDismissWatcher, FakePopupWindow};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::ThreadId;
@@ -166,6 +167,8 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         threads: Mutex::new(Vec::new()),
     });
     let platform = Platform {
+        popup_window: Arc::new(FakePopupWindow::default()),
+        dismiss: Arc::new(FakeDismissWatcher::default()),
         clipboard: clipboard.clone(),
         keys: keys.clone(),
         foreground: FakeForeground::new(Some(WindowHandle(7))),

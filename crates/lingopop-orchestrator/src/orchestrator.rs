@@ -450,6 +450,8 @@ mod commit_tests {
         let sleeper = Arc::new(FakeSleeper::new());
         let clipboard = FakeClipboard::new(sleeper.clone());
         Platform {
+            popup_window: Arc::new(FakePopupWindow::default()),
+            dismiss: Arc::new(FakeDismissWatcher::default()),
             keys: FakeKeys::new(clipboard.clone(), sleeper.clone()),
             clipboard,
             foreground: FakeForeground::new(None),
