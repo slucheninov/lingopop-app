@@ -1,6 +1,6 @@
 //! The Screen Translate flow over platform fakes, a scripted region picker and a `FakeTransport`.
 
-use lingopop_platform::fake::{FakeDismissWatcher, FakePopupWindow};
+use lingopop_platform::fake::{DismissCall, FakeDismissWatcher, FakePopupWindow};
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 
@@ -74,6 +74,7 @@ impl Ocr for TestOcr {
 struct Rig {
     orch: Orchestrator,
     popup: Arc<FakePopup>,
+    dismiss: Arc<FakeDismissWatcher>,
     persist: Arc<FakePersist>,
     config: Arc<FakeConfig>,
     clip: Arc<FakeClipboard>,
@@ -126,9 +127,10 @@ fn rig_full(
         threads: Mutex::new(Vec::new()),
         after: Mutex::new(None),
     });
+    let dismiss = Arc::new(FakeDismissWatcher::default());
     let platform = Platform {
         popup_window: Arc::new(FakePopupWindow::default()),
-        dismiss: Arc::new(FakeDismissWatcher::default()),
+        dismiss: dismiss.clone(),
         clipboard: clip.clone(),
         keys: keys.clone(),
         foreground: FakeForeground::new(Some(WindowHandle(7))),
@@ -163,6 +165,7 @@ fn rig_full(
     Rig {
         orch,
         popup,
+        dismiss,
         persist,
         config,
         clip,
@@ -656,4 +659,28 @@ fn superseded_auto_copy_never_writes_clipboard() {
         tokio::task::spawn_blocking(|| ()).await.unwrap();
         assert_eq!(clip_seq(&r), before, "stale text reached the clipboard");
     });
+}
+
+#[tokio::test]
+async fn reposition_updates_dismiss_rect_instead_of_restarting() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let initial_calls = r.dismiss.calls();
+    assert!(matches!(initial_calls.as_slice(), [DismissCall::Start(_)]));
+    let resized = Rect::new(10, 20, 700, 400);
+    r.orch.popup_resized(resized);
+    r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let origin = popup_origin(
+        INITIAL_POPUP_SIZE,
+        Point { x: 1000, y: 540 },
+        &monitor_list(),
+    );
+    assert_eq!(
+        &r.dismiss.calls()[1..],
+        &[
+            DismissCall::UpdateRect(resized),
+            DismissCall::UpdateRect(Rect::new(origin.x, origin.y, 360, 100)),
+        ]
+    );
 }

@@ -36,6 +36,7 @@ impl FakeDismissWatcher {
 impl DismissWatcher for FakeDismissWatcher {
     fn start(&self, rect: Rect) -> Result<(), PlatformError> {
         self.calls.lock().unwrap().push(DismissCall::Start(rect));
+        while self.receiver.try_recv().is_ok() {}
         self.active.store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }

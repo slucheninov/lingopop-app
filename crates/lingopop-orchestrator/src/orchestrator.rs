@@ -193,20 +193,18 @@ impl Orchestrator {
         }
         let (cursor, monitors) = (st.cursor, &st.monitors);
         let popup = &self.deps().popup;
-        if popup.is_visible() && !reposition {
+        let was_visible = popup.is_visible();
+        if was_visible && !reposition {
             popup.update(model);
         } else {
             let origin = popup_origin(INITIAL_POPUP_SIZE, cursor, monitors);
             popup.show_at(origin, model);
             let scale = monitor_at(origin, monitors).map_or(1.0, |m| m.scale_factor);
             let size = physical_size(INITIAL_POPUP_SIZE.0, INITIAL_POPUP_SIZE.1, scale);
-            if self
-                .deps()
-                .platform
-                .dismiss
-                .start(Rect::new(origin.x, origin.y, size.width, size.height))
-                .is_err()
-            {
+            let rect = Rect::new(origin.x, origin.y, size.width, size.height);
+            if was_visible {
+                self.deps().platform.dismiss.update_rect(rect);
+            } else if self.deps().platform.dismiss.start(rect).is_err() {
                 self.log("popup dismiss watcher failed to start");
             }
         }

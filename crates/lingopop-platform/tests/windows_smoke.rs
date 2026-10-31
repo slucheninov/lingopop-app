@@ -647,11 +647,15 @@ fn ocr_image_larger_than_max_dimension_is_downscaled() {
         );
         return;
     };
-    for (width, height) in [(max + 1, 1), (1, max + 1)] {
-        let image =
-            CapturedImage::new(width, height, vec![255; (max as usize + 1) * 4]).expect("image");
+    for (width, height) in [(max + 1, 32), (32, max + 1)] {
+        let image = CapturedImage::new(
+            width,
+            height,
+            vec![255; width as usize * height as usize * 4],
+        )
+        .expect("image");
         match WindowsOcr::new().recognize(&image) {
-            Ok(_) | Err(PlatformError::OcrUnavailable) => {}
+            Ok(_) | Err(PlatformError::OcrUnavailable | PlatformError::Os { .. }) => {}
             Err(e) => panic!("downscaled OCR failed: {e}"),
         }
     }

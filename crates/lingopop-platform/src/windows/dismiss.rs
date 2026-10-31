@@ -2,20 +2,22 @@
 //! start/stop post commands; callbacks use only atomics and bounded try_send, never a lock.
 //! Installation failures are printed as a fixed API name and numeric code, and returned by
 //! the next start. Construction waits only for message-queue readiness, never for hooks.
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::OnceLock;
 
 use ::windows::core::PCWSTR;
 use ::windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use ::windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use ::windows::Win32::System::Threading::GetCurrentThreadId;
-use ::windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+use ::windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_RWIN, VK_SHIFT,
+};
 use ::windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PeekMessageW, PostThreadMessageW,
     SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT,
-    LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL,
-    WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
-    WM_XBUTTONDOWN,
+    LLKHF_ALTDOWN, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE,
+    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
+    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
 };
 
 use super::util::{map_err, os_err};
@@ -23,6 +25,8 @@ use crate::{classify_click, DismissEvent, DismissWatcher, PlatformError, Point, 
 
 const START: u32 = WM_APP + 41;
 const STOP: u32 = WM_APP + 42;
+// Outside the i32 OS-error range: even an installation failure with code 0 is retained.
+const NO_ERROR: i64 = i64::MIN;
 struct State {
     active: AtomicBool,
     installed: AtomicBool,
@@ -30,7 +34,7 @@ struct State {
     y: AtomicI32,
     width: AtomicI32,
     height: AtomicI32,
-    error: AtomicI32,
+    error: AtomicI64,
     sender: crossbeam_channel::Sender<DismissEvent>,
     receiver: crossbeam_channel::Receiver<DismissEvent>,
 }
@@ -56,7 +60,7 @@ fn state() -> &'static State {
             y: 0.into(),
             width: 0.into(),
             height: 0.into(),
-            error: 0.into(),
+            error: NO_ERROR.into(),
             sender,
             receiver,
         }
@@ -70,7 +74,14 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     {
         // SAFETY: for a nonnegative low-level keyboard hook code Windows supplies this structure.
         let key = unsafe { &*(l.0 as *const KBDLLHOOKSTRUCT) };
-        if !key.flags.contains(LLKHF_INJECTED) && key.vkCode == u32::from(VK_ESCAPE.0) {
+        if !key.flags.contains(LLKHF_INJECTED)
+            && key.vkCode == u32::from(VK_ESCAPE.0)
+            && !key.flags.contains(LLKHF_ALTDOWN)
+            && ![VK_CONTROL, VK_SHIFT, VK_LWIN, VK_RWIN].iter().any(|vk| {
+                // SAFETY: pure, non-blocking key-state query; the high bit means held down.
+                unsafe { GetAsyncKeyState(i32::from(vk.0)) < 0 }
+            })
+        {
             let _ = state().sender.try_send(DismissEvent::Escape);
             return LRESULT(1);
         }
@@ -144,6 +155,7 @@ fn backend() -> &'static Result<u32, PlatformError> {
         let _thread = std::thread::Builder::new()
             .name("popup-dismiss".into())
             .spawn(move || {
+                let _dpi = super::util::DpiGuard::per_monitor_v2();
                 let mut msg = MSG::default();
                 // SAFETY: valid MSG out-pointer; PeekMessage creates this thread's message queue.
                 let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
@@ -171,7 +183,7 @@ fn backend() -> &'static Result<u32, PlatformError> {
                                 state().installed.store(true, Ordering::SeqCst);
                             }
                             Err(PlatformError::Os { code, .. }) => {
-                                state().error.store(code, Ordering::SeqCst);
+                                state().error.store(i64::from(code), Ordering::SeqCst);
                                 state().active.store(false, Ordering::SeqCst);
                                 eprintln!("SetWindowsHookExW failed (code {code})");
                             }
@@ -225,14 +237,15 @@ impl WindowsDismissWatcher {
 impl DismissWatcher for WindowsDismissWatcher {
     fn start(&self, rect: Rect) -> Result<(), PlatformError> {
         self.update_rect(rect);
-        let error = state().error.swap(0, Ordering::SeqCst);
-        if error != 0 {
-            return Err(os_err("SetWindowsHookExW", error));
-        }
+        let error = state().error.swap(NO_ERROR, Ordering::SeqCst);
+        while state().receiver.try_recv().is_ok() {}
         state().active.store(true, Ordering::SeqCst);
         if let Err(e) = self.post(START) {
             state().active.store(false, Ordering::SeqCst);
             return Err(e);
+        }
+        if error != NO_ERROR {
+            return Err(os_err("SetWindowsHookExW", error as i32));
         }
         Ok(())
     }

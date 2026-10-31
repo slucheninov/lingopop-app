@@ -64,3 +64,23 @@ fn fake_popup_records_visibility_calls_in_order() {
         ]
     );
 }
+
+#[test]
+fn restarting_dismiss_discards_queued_events_from_previous_popup() {
+    use lingopop_platform::{fake::FakeDismissWatcher, DismissWatcher};
+    let fake = FakeDismissWatcher::default();
+    let events = fake.events();
+    let rect = Rect::new(1, 2, 30, 40);
+    fake.start(rect).unwrap();
+    for _ in 0..32 {
+        fake.fire(DismissEvent::Escape);
+        fake.fire(DismissEvent::ClickOutside);
+    }
+    fake.stop();
+    assert!(!events.is_empty());
+    fake.start(rect).unwrap();
+    assert!(events.try_recv().is_err());
+    fake.fire(DismissEvent::ClickOutside);
+    assert_eq!(events.try_recv().unwrap(), DismissEvent::ClickOutside);
+    assert!(events.try_recv().is_err());
+}
