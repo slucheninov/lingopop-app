@@ -30,7 +30,8 @@ updates:
         versions: [">=3.0.0-0"]
       # `typescript` stays on 6: svelte-check needs it as the language-service
       # host (peer ^5 || ^6). TypeScript 7 itself is used through the
-      # `@typescript/native` alias (`svelte-check --tsgo`) and updated there.
+      # `@typescript/native` alias (`svelte-check --tsgo`); Dependabot version
+      # updates skip npm aliases, so bump the alias by hand.
       - dependency-name: "typescript"
         versions: [">=7.0.0-0"]
     groups:
