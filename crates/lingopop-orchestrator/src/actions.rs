@@ -54,6 +54,7 @@ impl Orchestrator {
                 };
                 let target = session.target_window;
                 me.deps().popup.hide();
+                me.deps().platform.dismiss.stop();
                 st.session = None;
                 (text, target)
             };
@@ -207,6 +208,7 @@ impl Orchestrator {
                 return;
             }
             me.deps().popup.hide();
+            me.deps().platform.dismiss.stop();
             st.session = None;
         })
         .await;

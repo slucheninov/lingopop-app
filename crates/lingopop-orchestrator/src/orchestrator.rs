@@ -14,8 +14,8 @@ use lingopop_core::settings::Settings;
 use lingopop_core::target_language::{operation_uses_auto_detect, target_language_for};
 use lingopop_core::time::Clock;
 use lingopop_platform::{
-    capture_selection, CaptureOptions, LogFn, MonitorInfo, Platform, PlatformError, Point,
-    WindowHandle,
+    capture_selection, monitor_at, physical_size, CaptureOptions, DismissEvent, LogFn, MonitorInfo,
+    Platform, PlatformError, Point, Rect, WindowHandle,
 };
 
 use crate::gate::PlatformGate;
@@ -96,6 +96,21 @@ impl Orchestrator {
             }
         })
         .await;
+    }
+
+    /// The shell reports the actual physical popup rect after layout. This is geometry
+    /// only: it never bumps the generation or cancels the current translation.
+    pub fn popup_resized(&self, rect: Rect) {
+        let _commit = self.state();
+        self.deps().platform.dismiss.update_rect(rect);
+    }
+
+    /// Called by the shell's dismiss-event forwarder (the shell owns the async runtime).
+    pub async fn dismissed(&self, event: DismissEvent) {
+        match event {
+            DismissEvent::Escape => self.escape().await,
+            DismissEvent::ClickOutside => self.close().await,
+        }
     }
 
     /// True while the session holds the captured Screen Translate image (diagnostics / tests).
@@ -181,7 +196,19 @@ impl Orchestrator {
         if popup.is_visible() && !reposition {
             popup.update(model);
         } else {
-            popup.show_at(popup_origin(INITIAL_POPUP_SIZE, cursor, monitors), model);
+            let origin = popup_origin(INITIAL_POPUP_SIZE, cursor, monitors);
+            popup.show_at(origin, model);
+            let scale = monitor_at(origin, monitors).map_or(1.0, |m| m.scale_factor);
+            let size = physical_size(INITIAL_POPUP_SIZE.0, INITIAL_POPUP_SIZE.1, scale);
+            if self
+                .deps()
+                .platform
+                .dismiss
+                .start(Rect::new(origin.x, origin.y, size.width, size.height))
+                .is_err()
+            {
+                self.log("popup dismiss watcher failed to start");
+            }
         }
     }
 
@@ -557,6 +584,8 @@ mod commit_tests {
         stores.inner.set(Arc::downgrade(&me.inner)).unwrap();
         popup.inner.set(Arc::downgrade(&me.inner)).unwrap();
         me.state().generation = 2;
+        me.popup_resized(Rect::new(1, 2, 300, 200));
+        assert_eq!(me.state().generation, 2, "resize must not cancel a run");
         let request = || RunRequest {
             operation: AIOperation::Translate,
             text: "original".into(),

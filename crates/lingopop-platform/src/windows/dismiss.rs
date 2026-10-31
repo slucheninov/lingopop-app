@@ -141,7 +141,7 @@ fn backend() -> &'static Result<u32, PlatformError> {
     BACKEND.get_or_init(|| {
         state();
         let (ready, receive) = std::sync::mpsc::sync_channel(1);
-        std::thread::Builder::new()
+        let _thread = std::thread::Builder::new()
             .name("popup-dismiss".into())
             .spawn(move || {
                 let mut msg = MSG::default();

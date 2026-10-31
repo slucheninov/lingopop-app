@@ -50,6 +50,7 @@ impl PopupView for Popup {
 }
 struct Rig {
     orch: Orchestrator,
+    dismiss: Arc<FakeDismissWatcher>,
     popup: Arc<Popup>,
     clip: Arc<FakeClipboard>,
     keys: Arc<FakeKeys>,
@@ -80,14 +81,23 @@ fn rig(t: Arc<dyn Transport>, target: Option<WindowHandle>) -> Rig {
     };
     let config = Arc::new(FakeConfig::new(Settings::default(), snapshot));
     let stores = Arc::new(FakePersist::new());
+    let dismiss = Arc::new(FakeDismissWatcher::default());
     let orch = Orchestrator::new(Deps {
         platform: Platform {
             popup_window: Arc::new(FakePopupWindow::default()),
-            dismiss: Arc::new(FakeDismissWatcher::default()),
+            dismiss: dismiss.clone(),
             clipboard: clip.clone(),
             keys: keys.clone(),
             foreground: fg.clone(),
-            monitors: Arc::new(FakeMonitors::new(Point { x: 10, y: 20 }, vec![])),
+            monitors: Arc::new(FakeMonitors::new(
+                Point { x: 10, y: 20 },
+                vec![MonitorInfo {
+                    bounds: Rect::new(-1000, -1000, 4000, 4000),
+                    work_area: Rect::new(-1000, -1000, 4000, 4000),
+                    scale_factor: 1.5,
+                    primary: true,
+                }],
+            )),
             capture: Arc::new(FakeCapture::new([0; 4])),
             ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
             protector: Arc::new(Protector),
@@ -105,6 +115,7 @@ fn rig(t: Arc<dyn Transport>, target: Option<WindowHandle>) -> Rig {
     });
     Rig {
         orch,
+        dismiss,
         popup,
         clip,
         keys,
@@ -398,4 +409,69 @@ async fn rewrite_and_explain_use_active_provider_with_fallback() {
             matches!(model(&r).phase, PopupPhase::Result(result) if result.via_fallback && result.operation == operation)
         );
     }
+}
+
+#[tokio::test]
+async fn dismiss_event_closes_popup() {
+    for event in [DismissEvent::Escape, DismissEvent::ClickOutside] {
+        let (r, _) = ready_rig();
+        ready(&r).await;
+        r.dismiss.fire(event);
+        r.orch
+            .dismissed(r.dismiss.events().try_recv().unwrap())
+            .await;
+        assert!(!r.popup.is_visible());
+        assert!(matches!(r.popup.view.calls().last(), Some(PopupCall::Hide)));
+        let count = r.popup.view.calls().len();
+        r.orch.retry(ProviderType::Claude).await;
+        assert_eq!(
+            r.popup.view.calls().len(),
+            count,
+            "dismissal clears session"
+        );
+    }
+}
+#[tokio::test]
+async fn showing_popup_starts_dismiss_watcher_with_popup_rect() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    let PopupCall::ShowAt(origin, _) = &r.popup.view.calls()[0] else {
+        panic!("show expected");
+    };
+    let size = physical_size(
+        popup::INITIAL_POPUP_SIZE.0,
+        popup::INITIAL_POPUP_SIZE.1,
+        1.5,
+    );
+    assert_eq!(
+        r.dismiss.calls(),
+        [DismissCall::Start(Rect::new(
+            origin.x,
+            origin.y,
+            size.width,
+            size.height
+        ))]
+    );
+}
+#[tokio::test]
+async fn hiding_popup_stops_dismiss_watcher() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.orch.close().await;
+    assert_eq!(r.dismiss.calls().last(), Some(&DismissCall::Stop));
+    r.dismiss.fire(DismissEvent::Escape);
+    assert!(r.dismiss.events().try_recv().is_err());
+}
+#[tokio::test]
+async fn popup_resized_updates_dismiss_rect() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    let popup_calls = r.popup.view.calls().len();
+    let rect = Rect::new(-40, 20, 700, 400);
+    r.orch.popup_resized(rect);
+    assert_eq!(
+        r.dismiss.calls().last(),
+        Some(&DismissCall::UpdateRect(rect))
+    );
+    assert_eq!(r.popup.view.calls().len(), popup_calls);
 }
