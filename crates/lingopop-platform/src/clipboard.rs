@@ -64,6 +64,9 @@ pub trait Clipboard: Send + Sync {
     /// `None` when the clipboard holds no text.
     fn read_text(&self) -> Result<Option<String>, PlatformError>;
     /// Text excluded from clipboard history and cloud sync (our own temporary write).
+    /// Contract: a failure before the clipboard is emptied (e.g. `ClipboardBusy`) leaves it
+    /// untouched, and a failure after that is returned as an error, never swallowed, so the
+    /// caller's `RestoreGuard` puts the snapshot back over the partial write.
     fn write_text_transient(&self, text: &str) -> Result<(), PlatformError>;
     /// An ordinary text entry the user may paste manually.
     fn write_text(&self, text: &str) -> Result<(), PlatformError>;

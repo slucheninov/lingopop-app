@@ -13,7 +13,12 @@ pub mod inject;
 pub mod keys;
 pub mod selection;
 pub mod sleeper;
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod windows;
 
+#[cfg(windows)]
+pub use crate::windows::{WindowsClipboard, WindowsForeground, WindowsKeys};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
 pub use error::{LogFn, PlatformError};
 pub use foreground::{ForegroundWindow, WindowHandle};

@@ -13,3 +13,22 @@ pub trait ForegroundWindow: Send + Sync {
     /// drop our synthesized input (`SendInput` still reports success).
     fn is_elevated(&self, window: WindowHandle) -> bool;
 }
+
+/// UIPI drops input sent to a window whose process runs elevated when ours does not.
+#[doc(hidden)]
+pub fn integrity_blocks(target_elevated: bool, self_elevated: bool) -> bool {
+    target_elevated && !self_elevated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integrity_blocks_only_when_target_is_elevated_and_we_are_not() {
+        assert!(integrity_blocks(true, false));
+        assert!(!integrity_blocks(true, true));
+        assert!(!integrity_blocks(false, false));
+        assert!(!integrity_blocks(false, true));
+    }
+}
