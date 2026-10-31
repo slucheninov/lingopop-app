@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { ready, resized, sendAction } from '../lib/ipc';
-  import { popupWidth } from '../lib/actionRow';
+  import { panelWidth, rowAvailable, viewKey } from '../lib/actionRow';
+  import { createResizeReporter } from '../lib/resizeReporter';
   import { icons } from '../lib/icons';
   import type { PopupModel } from '../lib/types';
   import LoadingView from './LoadingView.svelte';
@@ -12,35 +13,43 @@
   let model = $state<PopupModel | null>(null);
   let content = $state<HTMLElement>();
   let disposed = false;
-  async function report() {
-    await tick();
-    if (disposed || !model || !content) return;
-    const rect = content.getBoundingClientRect();
-    await resized(Math.ceil(rect.width), Math.ceil(rect.height)).catch(() => {});
+  const reporter = createResizeReporter(resized);
+  let frame = 0;
+  // Coalesce model updates and observer callbacks into one measurement per frame.
+  function report() {
+    if (frame || disposed) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (disposed || !model || !content) return;
+      const rect = content.getBoundingClientRect();
+      void reporter.report(Math.ceil(rect.width), Math.ceil(rect.height));
+    });
   }
-  $effect(() => { void model; void report(); });
+  let width = $derived(model ? panelWidth(model) : 320);
+  $effect(() => { void model; report(); });
   onMount(() => {
-    const observer = new ResizeObserver(() => { void report(); });
+    const observer = new ResizeObserver(() => report());
     if (content) observer.observe(content);
     const registration = listen<PopupModel>('popup://model', event => { if (!disposed) model = event.payload; });
     // Register first: popup_ready re-emits a model that may have arrived before mount.
     void registration.then(() => { if (!disposed) void ready().catch(() => {}); }).catch(() => {});
     return () => {
       disposed = true;
+      if (frame) cancelAnimationFrame(frame);
       observer.disconnect();
       void registration.then(unlisten => unlisten()).catch(() => {});
     };
   });
 </script>
 <svelte:window onkeydown={event => { if (event.key === 'Escape') sendAction({type:'close'}); }} />
-<main bind:this={content} style:width={`${model ? popupWidth(model) : 320}px`}>
+<main bind:this={content} style:width={`${width}px`}>
   {#if model}
     <button class="close" type="button" title="Close" aria-label="Close" onclick={() => sendAction({type:'close'})}>{@html icons.close}</button>
-    {#key model}
+    {#key viewKey(model)}
       {#if model.phase === 'loading'}<LoadingView {model} />
-      {:else if model.phase === 'result'}<ResultView {model} />
-      {:else if model.phase === 'ocr'}<OcrView {model} />
-      {:else}<ErrorView {model} />{/if}
+      {:else if model.phase === 'result'}<ResultView {model} available={rowAvailable(width)} />
+      {:else if model.phase === 'ocr'}<OcrView {model} available={rowAvailable(width)} />
+      {:else}<ErrorView {model} available={rowAvailable(width)} />{/if}
     {/key}
   {/if}
 </main>
@@ -58,5 +67,6 @@
   :global(p), :global(details) { overflow-wrap:anywhere; }
   :global(details) { margin-top:10px; }
   :global(summary) { cursor:pointer; color:#596574; }
+  :global(header) { padding-right:22px; }
   :global(.warning) { color:#a64b08; }
 </style>

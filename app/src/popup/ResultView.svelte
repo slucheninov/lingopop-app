@@ -1,10 +1,9 @@
 <script lang="ts">
   import ActionRow from './ActionRow.svelte';
-  import { popupWidth } from '../lib/actionRow';
-  import { t } from '../lib/i18n';
+    import { t } from '../lib/i18n';
   import { sendAction } from '../lib/ipc';
   import type { ResultModel, PopupAction } from '../lib/types';
-  let { model }: {model: ResultModel} = $props();
+  let { model, available = 700 }: {model: ResultModel; available?: number} = $props();
   let buttons = $derived([
     {label:'Copy',icon:'copy' as const,action:{type:'copy'} as PopupAction},
     ...(model.showReplace ? [{label:'Replace',icon:'replace' as const,action:{type:'replace'} as PopupAction}] : []),
@@ -29,9 +28,9 @@
 {/if}
 <div class="text">{model.text}</div>
 {#if model.truncated}<p class="warning">Response was truncated</p>{/if}
-<ActionRow row={model.actionRow} {buttons} retryProviders={model.retryProviders} available={popupWidth(model)} />
+<ActionRow row={model.actionRow} {buttons} retryProviders={model.retryProviders} {available} />
 <style>
-  header { display:flex; align-items:center; gap:6px; padding-right:22px; flex-wrap:wrap; }
+  header { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   select { max-width:100%; }
   .fallback { font-size:11px; color:#a64b08; background:#fff0dc; border-radius:9px; padding:2px 7px; }
 </style>
