@@ -158,6 +158,16 @@ impl Orchestrator {
 
     // Caller holds the generation mutex through every synchronous side effect.
     pub(crate) fn present_locked(&self, st: &mut SessionState, model: &PopupViewModel) {
+        self.present_inner(st, model, false);
+    }
+
+    /// Like `present_locked`, but a visible popup is moved to the cursor anchor too (the first
+    /// Loading of a Screen Translate flow: the new region may be on another monitor).
+    pub(crate) fn present_at_locked(&self, st: &mut SessionState, model: &PopupViewModel) {
+        self.present_inner(st, model, true);
+    }
+
+    fn present_inner(&self, st: &mut SessionState, model: &PopupViewModel, reposition: bool) {
         if let Some(session) = st.session.as_mut() {
             // The OCR phase's text is what Copy offers there.
             session.last_result = match &model.phase {
@@ -168,7 +178,7 @@ impl Orchestrator {
         }
         let (cursor, monitors) = (st.cursor, &st.monitors);
         let popup = &self.deps().popup;
-        if popup.is_visible() {
+        if popup.is_visible() && !reposition {
             popup.update(model);
         } else {
             popup.show_at(popup_origin(INITIAL_POPUP_SIZE, cursor, monitors), model);
@@ -391,16 +401,26 @@ impl Orchestrator {
     }
 
     /// Writes `text` to the clipboard through the gate (autoCopyOCR). A failure is logged
-    /// without any text and not shown.
+    /// without any text and not shown. `spawn_blocking` survives cancellation, so the
+    /// generation is re-checked INSIDE the blocking closure right before `write_text`; the
+    /// session mutex is taken only for that check, never during the write (a hung clipboard
+    /// owner must not freeze the orchestrator). A sub-millisecond window remains between the
+    /// check and the write.
     pub(crate) async fn auto_copy(&self, generation: u64, text: String) {
         if !self.is_current(generation) {
             return;
         }
         let clipboard = self.deps().platform.clipboard.clone();
+        let me = self.clone();
         if self
             .deps()
             .gate
-            .run(move || clipboard.write_text(&text))
+            .run(move || {
+                if !me.is_current(generation) {
+                    return Ok(());
+                }
+                clipboard.write_text(&text)
+            })
             .await
             .is_err()
         {

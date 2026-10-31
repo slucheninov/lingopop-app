@@ -53,6 +53,7 @@ impl SecretProtector for PlainProtector {
 struct TestOcr {
     inner: FakeOcr,
     threads: Mutex<Vec<ThreadId>>,
+    after: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Ocr for TestOcr {
@@ -61,7 +62,11 @@ impl Ocr for TestOcr {
             .lock()
             .unwrap()
             .push(std::thread::current().id());
-        self.inner.recognize(image)
+        let out = self.inner.recognize(image);
+        if let Some(hook) = self.after.lock().unwrap().take() {
+            hook();
+        }
+        out
     }
 }
 
@@ -118,6 +123,7 @@ fn rig_full(
     let ocr = Arc::new(TestOcr {
         inner: FakeOcr::new(ocr),
         threads: Mutex::new(Vec::new()),
+        after: Mutex::new(None),
     });
     let platform = Platform {
         clipboard: clip.clone(),
@@ -557,4 +563,94 @@ async fn ocr_runs_off_the_async_thread() {
     let threads = r.ocr.threads.lock().unwrap().clone();
     assert_eq!(threads.len(), 1);
     assert!(threads.iter().all(|&id| id != here));
+}
+
+#[tokio::test]
+async fn screen_translate_repositions_visible_popup() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert!(matches!(r.popup.calls().last(), Some(PopupCall::Update(_))));
+    let second = Rect {
+        x: 900,
+        y: 500,
+        width: 100,
+        height: 40,
+    };
+    r.picker.set_result(Ok(Some(second)));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let anchor = Point {
+        x: second.right(),
+        y: second.bottom(),
+    };
+    let want = popup_origin(INITIAL_POPUP_SIZE, anchor, &monitor_list());
+    let shows: Vec<(Point, PopupViewModel)> = r
+        .popup
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            PopupCall::ShowAt(o, m) => Some((o, m)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shows.len(), 2, "{shows:?}");
+    assert_eq!(shows[1].0, want);
+    assert!(matches!(shows[1].1.phase, PopupPhase::Loading { .. }));
+}
+
+#[tokio::test]
+async fn vision_retry_keeps_detected_source_in_history() {
+    let t = Arc::new(FakeTransport::by_host(vec![
+        ("api.anthropic.com", HttpResponse::new(500, b"{}")),
+        (
+            "api.openai.com",
+            HttpResponse::new(200, OPENAI_OK.as_bytes()),
+        ),
+    ]));
+    let r = rig(
+        ocr_ok("Привет, как твои дела сегодня? Я надеюсь, что у тебя всё хорошо."),
+        t,
+    );
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    r.orch.translate_ocr(ProviderType::Claude).await;
+    r.orch.retry(ProviderType::OpenAI).await;
+    let entry = r.persist.history().last().unwrap().0.clone();
+    assert_eq!(entry.source_language.as_deref(), Some("Russian"));
+}
+
+/// Occupies the only blocking-pool thread right after OCR so the auto-copy job is queued
+/// behind it, cancels the flow, then lets the stale job run.
+#[test]
+fn superseded_auto_copy_never_writes_clipboard() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+        let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let release_rx = Mutex::new(Some(release_rx));
+        *r.ocr.after.lock().unwrap() = Some(Box::new(move || {
+            let rx = release_rx.lock().unwrap().take().unwrap();
+            // Queued behind the running OCR job, ahead of the auto-copy job.
+            tokio::task::spawn_blocking(move || {
+                let _ = started_tx.send(());
+                let _ = rx.recv();
+            });
+        }));
+        let before = clip_seq(&r);
+        let orch = r.orch.clone();
+        let flow = tokio::spawn(async move { orch.trigger(AIOperation::ScreenTranslate).await });
+        started_rx.recv().await.unwrap();
+        // Let the flow reach the auto-copy gate job (queued behind the blocker).
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        r.orch.escape().await;
+        release_tx.send(()).unwrap();
+        let _ = flow.await;
+        // FIFO on the single blocking thread: runs after the stale job.
+        tokio::task::spawn_blocking(|| ()).await.unwrap();
+        assert_eq!(clip_seq(&r), before, "stale text reached the clipboard");
+    });
 }

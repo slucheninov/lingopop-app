@@ -13,8 +13,9 @@ pub const INITIAL_POPUP_SIZE: (f64, f64) = (360.0, 100.0);
 /// Calls run under the generation commit lock: implementations must not synchronously call
 /// back into `Orchestrator`. The Tauri shell emits events / IPC asynchronously.
 pub trait PopupView: Send + Sync {
-    /// Shows the popup at `origin` (physical px, top-left). Called only when not visible, like
-    /// mac `show` not repositioning a visible popup.
+    /// Shows the popup at `origin` (physical px, top-left). Called when not visible, and for the
+    /// first Loading of a Screen Translate flow even when visible (the new region may be on
+    /// another monitor); other flows only `update` a visible popup, like mac `show`.
     fn show_at(&self, origin: Point, model: &PopupViewModel);
     /// Replaces the content of the visible popup.
     fn update(&self, model: &PopupViewModel);

@@ -182,7 +182,7 @@ impl Orchestrator {
                 primary: settings.active_provider,
                 image: Some(image.clone()),
             });
-            self.present_locked(
+            self.present_at_locked(
                 &mut st,
                 &PopupViewModel::loading(AIOperation::ScreenTranslate, ""),
             );
@@ -247,7 +247,7 @@ impl Orchestrator {
         let d = self.deps();
         let settings = d.config.settings();
         let snapshot = d.config.snapshot();
-        let (image, original, target) = {
+        let (image, original, target, detected) = {
             let mut st = self.state();
             if st.generation != generation {
                 return;
@@ -259,12 +259,16 @@ impl Orchestrator {
                 return;
             };
             session.primary = provider;
-            let (original, target) = (session.text.clone(), session.target_language.clone());
+            let (original, target, detected) = (
+                session.text.clone(),
+                session.target_language.clone(),
+                session.detected_source.clone(),
+            );
             self.present_locked(
                 &mut st,
                 &PopupViewModel::loading(AIOperation::ScreenTranslate, ""),
             );
-            (image, original, target)
+            (image, original, target, detected)
         };
         let png = d.gate.run(move || image.to_png()).await;
         if !self.is_current(generation) {
@@ -278,10 +282,14 @@ impl Orchestrator {
                 return;
             }
         };
-        let outcome = d
+        let mut outcome = d
             .runner
             .run_vision(provider, &png, original, target, &snapshot)
             .await;
+        // The vision request detects nothing itself: history keeps the OCR-detected source.
+        if let Ok(result) = outcome.as_mut() {
+            result.detected_source = detected;
+        }
         self.finish(
             generation,
             &settings,
