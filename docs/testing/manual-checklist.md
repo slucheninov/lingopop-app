@@ -6,9 +6,9 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 
 ## Startup, tray and files
 
-- [ ] Launch `lingopop.exe`. Expected: a tray icon with the tooltip "LingoPop", no window, no taskbar button.
-- [ ] Launch it a second time. Expected: the second process exits at once; the first keeps running (single instance).
-- [ ] Tray menu, "Quit LingoPop". Expected: the icon disappears and the process ends. Closing the popup never quits the app.
+- [x] Launch `lingopop.exe`. Expected: a tray icon with the tooltip "LingoPop", no window, no taskbar button.
+- [x] Launch it a second time. Expected: the second process exits at once; the first keeps running (single instance).
+- [x] Tray menu, "Quit LingoPop". Expected: the icon disappears and the process ends. Closing the popup never quits the app.
 - [ ] Open `%APPDATA%\LingoPop`. Expected: the data folder is exactly this (not `%APPDATA%\app.lingopop.windows`) and holds `lingopop.log`; `history.json` / `usage.json` appear after the first successful run.
 - [ ] Occupy the Translate chord with another app, then start LingoPop. Expected: the app starts, the tray works, other hotkeys work, and `lingopop.log` has one line naming the operation and chord (no user text).
 - [ ] Screen Translate hotkey (Phase 4a). Expected: no chord is registered for it and pressing it does nothing (the region picker arrives in Phase 4b).
