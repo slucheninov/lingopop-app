@@ -22,8 +22,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub enum PopupCall {
     ShowAt(Point, PopupViewModel),
     Update(PopupViewModel),
-    /// A visible popup re-placed at its origin with the given logical size.
-    Resize((f64, f64)),
+    /// A visible popup moved to the origin and resized to the logical size.
+    Resize(Point, (f64, f64)),
     Hide,
 }
 
@@ -32,7 +32,7 @@ pub enum PopupCall {
 pub struct FakePopup {
     calls: Mutex<Vec<PopupCall>>,
     visible: AtomicBool,
-    origin: Mutex<Option<Point>>,
+    sizes: Mutex<Vec<(f64, f64)>>,
 }
 
 impl FakePopup {
@@ -43,12 +43,17 @@ impl FakePopup {
     pub fn calls(&self) -> Vec<PopupCall> {
         lock(&self.calls).clone()
     }
+
+    /// The logical size passed to every `show_at`, in order.
+    pub fn show_sizes(&self) -> Vec<(f64, f64)> {
+        lock(&self.sizes).clone()
+    }
 }
 
 impl PopupView for FakePopup {
-    fn show_at(&self, origin: Point, model: &PopupViewModel) {
+    fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) {
         lock(&self.calls).push(PopupCall::ShowAt(origin, model.clone()));
-        *lock(&self.origin) = Some(origin);
+        lock(&self.sizes).push(size);
         self.visible.store(true, Ordering::SeqCst);
     }
 
@@ -56,20 +61,11 @@ impl PopupView for FakePopup {
         lock(&self.calls).push(PopupCall::Update(model.clone()));
     }
 
-    /// Visible: records `Resize` and returns the rect at the last origin with the size rounded
-    /// up (scale 1). Hidden: `None`, nothing recorded.
-    fn resize(&self, size: (f64, f64)) -> Option<Rect> {
-        if !self.is_visible() {
-            return None;
+    /// Visible: records `Resize`. Hidden: nothing recorded.
+    fn resize(&self, origin: Point, size: (f64, f64)) {
+        if self.is_visible() {
+            lock(&self.calls).push(PopupCall::Resize(origin, size));
         }
-        let origin = (*lock(&self.origin))?;
-        lock(&self.calls).push(PopupCall::Resize(size));
-        Some(Rect::new(
-            origin.x,
-            origin.y,
-            size.0.ceil() as i32,
-            size.1.ceil() as i32,
-        ))
     }
 
     fn hide(&self) {

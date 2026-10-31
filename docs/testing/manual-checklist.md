@@ -50,9 +50,10 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 
 - [ ] Hold the clipboard open from another tool (for example a script that calls `OpenClipboard` and sleeps), then click Copy. Expected: the translation stays visible with a notice (clipboard did not update in time); the popup is not replaced by an error.
 - [ ] Release the clipboard and click Copy again. Expected: it succeeds and the notice disappears.
-- [ ] Hold the clipboard open and click Replace. Expected: the popup closes, then reappears near the same place with the same result and a notice; nothing was pasted.
+- [ ] Hold the clipboard open and click Replace. Expected: the popup closes, then reappears near the same place with the same result and a notice; nothing was pasted (a confirmed failure, so Replace stays available).
 - [ ] After that failure click Replace again with the clipboard free. Expected: the text is pasted into the original window.
-- [ ] After the failure press Esc / click outside. Expected: the popup closes (the dismiss watcher works on the re-shown popup).
+- [ ] After the failure press Esc / click outside. Expected: the popup closes (the dismiss watcher works on the re-shown popup), also when you click inside a re-shown popup larger than the first 360x100 size (inside clicks never dismiss).
+- [ ] Make the paste hang past the 3 s limit (for example a target app that stops responding). Expected: the result reappears with a notice and WITHOUT a Replace button for the rest of that session; Copy still works.
 
 ## Hung clipboard owner
 
@@ -64,7 +65,8 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Two monitors with different scaling (100% and 150% or more). Translate with the cursor on each. Expected: the popup appears next to the cursor on the same monitor, fully inside its work area, with the same physical-looking size relative to the text.
 - [ ] Move the cursor near each screen edge and corner. Expected: the popup flips above / beside the cursor and never goes off screen.
 - [ ] Taskbar on the bottom, top, left and right. Expected: the popup never overlaps the taskbar.
-- [ ] Long text (more than 120 characters, and more than 700 px wide). Expected: the popup grows to at most 700 px wide, the action row switches between full, mixed and compact labels so it never overflows, and the popup stays on screen as it resizes.
+- [ ] Long text (more than 120 characters, and more than 700 px wide). Expected: the popup grows to at most 700 px wide, the action row switches between full, mixed and compact labels so it never overflows, and when it resizes it is repositioned (flipped above the cursor or pushed left/up) so it stays inside the work area, including with the cursor near the bottom or right edge.
+- [ ] With a long result near the bottom-right corner, click inside the grown popup far from its top-left corner. Expected: it does not dismiss; clicking just outside its edge does.
 - [ ] Change the display scaling while the app runs, then translate. Expected: placement and size are correct.
 - [ ] Monitors arranged with a gap or negative coordinates (left of or above the primary). Expected: placement is still correct on those monitors.
 

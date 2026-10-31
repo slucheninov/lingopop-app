@@ -24,7 +24,7 @@ use crate::messages::{
     translation_error_view,
 };
 use crate::placement::popup_origin;
-use crate::popup::{PopupView, INITIAL_POPUP_SIZE};
+use crate::popup::{PopupView, MAX_LOGICAL_SIDE};
 use crate::providers::retry_providers;
 use crate::screen::RegionPicker;
 use crate::session::{Session, SessionState};
@@ -75,6 +75,14 @@ struct Captured {
     selection: Result<Option<String>, PlatformError>,
 }
 
+/// The physical rect of a popup of `size_logical` at `origin`, with the scale of the monitor
+/// under the origin (the same conversion the shell applies when placing the window).
+fn popup_rect(origin: Point, size_logical: (f64, f64), monitors: &[MonitorInfo]) -> Rect {
+    let scale = monitor_at(origin, monitors).map_or(1.0, |m| m.scale_factor);
+    let size = physical_size(size_logical.0, size_logical.1, scale);
+    Rect::new(origin.x, origin.y, size.width, size.height)
+}
+
 impl Orchestrator {
     pub fn new(deps: Deps) -> Self {
         Self {
@@ -98,19 +106,31 @@ impl Orchestrator {
         .await;
     }
 
-    /// The shell reports the measured LOGICAL popup size after layout. The re-placement and
-    /// the dismiss geometry update happen under the commit lock and only while the popup is
-    /// visible, so a resize racing a Close can never resurrect the popup. Geometry only: it
-    /// never bumps the generation or cancels the current translation.
+    /// The shell reports the measured LOGICAL popup size after layout. The orchestrator owns the
+    /// geometry: the size is stored (so every later show and the dismiss rect use it), and a
+    /// visible popup is re-placed with `popup_origin(size, last cursor, last monitors)`, which
+    /// keeps it inside the work area, and the dismiss rect follows. All of it happens under the
+    /// commit lock and only while the popup is visible, so a resize racing a Close can never
+    /// resurrect the popup. Geometry only: it never bumps the generation or cancels the
+    /// current translation.
     pub fn popup_resized(&self, size_logical: (f64, f64)) {
-        let _commit = self.state();
+        let (width, height) = size_logical;
+        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
+            return;
+        }
+        let size = (width.min(MAX_LOGICAL_SIDE), height.min(MAX_LOGICAL_SIDE));
+        let mut st = self.state();
+        st.size = size;
         let popup = &self.deps().popup;
         if !popup.is_visible() {
             return;
         }
-        if let Some(rect) = popup.resize(size_logical) {
-            self.deps().platform.dismiss.update_rect(rect);
-        }
+        let origin = popup_origin(size, st.cursor, &st.monitors);
+        popup.resize(origin, size);
+        self.deps()
+            .platform
+            .dismiss
+            .update_rect(popup_rect(origin, size, &st.monitors));
     }
 
     /// Called by the shell's dismiss-event forwarder (the shell owns the async runtime).
@@ -191,6 +211,16 @@ impl Orchestrator {
     }
 
     fn present_inner(&self, st: &mut SessionState, model: &PopupViewModel, reposition: bool) {
+        // After a Replace of unknown outcome no later Result offers Replace again.
+        let replace_disabled = st.session.as_ref().is_some_and(|s| s.replace_disabled);
+        let hidden;
+        let model = match &model.phase {
+            PopupPhase::Result(r) if replace_disabled && r.show_replace => {
+                hidden = model.clone().without_replace();
+                &hidden
+            }
+            _ => model,
+        };
         if let Some(session) = st.session.as_mut() {
             // The OCR phase's text is what Copy offers there.
             session.last_result = match &model.phase {
@@ -202,17 +232,15 @@ impl Orchestrator {
                 matches!(model.phase, PopupPhase::Result(_) | PopupPhase::Ocr { .. })
                     .then(|| model.clone());
         }
-        let (cursor, monitors) = (st.cursor, &st.monitors);
+        let (cursor, monitors, size) = (st.cursor, &st.monitors, st.size);
         let popup = &self.deps().popup;
         let was_visible = popup.is_visible();
         if was_visible && !reposition {
             popup.update(model);
         } else {
-            let origin = popup_origin(INITIAL_POPUP_SIZE, cursor, monitors);
-            popup.show_at(origin, model);
-            let scale = monitor_at(origin, monitors).map_or(1.0, |m| m.scale_factor);
-            let size = physical_size(INITIAL_POPUP_SIZE.0, INITIAL_POPUP_SIZE.1, scale);
-            let rect = Rect::new(origin.x, origin.y, size.width, size.height);
+            let origin = popup_origin(size, cursor, monitors);
+            popup.show_at(origin, size, model);
+            let rect = popup_rect(origin, size, monitors);
             if was_visible {
                 self.deps().platform.dismiss.update_rect(rect);
             } else if self.deps().platform.dismiss.start(rect).is_err() {
@@ -380,6 +408,7 @@ impl Orchestrator {
                 primary,
                 image: None,
                 last_model: None,
+                replace_disabled: false,
             });
         }
         self.present(generation, &PopupViewModel::loading(operation, &text));
@@ -532,7 +561,7 @@ mod commit_tests {
         view: FakePopup,
     }
     impl PopupView for CheckedPopup {
-        fn show_at(&self, origin: Point, model: &PopupViewModel) {
+        fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) {
             assert!(self
                 .inner
                 .get()
@@ -542,7 +571,7 @@ mod commit_tests {
                 .state
                 .try_lock()
                 .is_err());
-            self.view.show_at(origin, model);
+            self.view.show_at(origin, size, model);
         }
         fn update(&self, model: &PopupViewModel) {
             assert!(self
@@ -556,8 +585,8 @@ mod commit_tests {
                 .is_err());
             self.view.update(model);
         }
-        fn resize(&self, size: (f64, f64)) -> Option<lingopop_platform::Rect> {
-            self.view.resize(size)
+        fn resize(&self, origin: Point, size: (f64, f64)) {
+            self.view.resize(origin, size);
         }
         fn hide(&self) {
             self.view.hide();

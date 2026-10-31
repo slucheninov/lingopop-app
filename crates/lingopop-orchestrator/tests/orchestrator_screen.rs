@@ -197,7 +197,7 @@ fn models(r: &Rig) -> Vec<PopupViewModel> {
         .into_iter()
         .filter_map(|c| match c {
             PopupCall::ShowAt(_, m) | PopupCall::Update(m) => Some(m),
-            PopupCall::Hide | PopupCall::Resize(_) => None,
+            PopupCall::Hide | PopupCall::Resize(..) => None,
         })
         .collect()
 }
@@ -673,16 +673,13 @@ async fn reposition_updates_dismiss_rect_instead_of_restarting() {
     };
     r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
     r.orch.trigger(AIOperation::ScreenTranslate).await;
-    let origin = popup_origin(
-        INITIAL_POPUP_SIZE,
-        Point { x: 1000, y: 540 },
-        &monitor_list(),
-    );
+    // The reposition uses the measured size, not the initial one.
+    let origin = popup_origin((700.0, 400.0), Point { x: 1000, y: 540 }, &monitor_list());
     assert_eq!(
         &r.dismiss.calls()[1..],
         &[
             DismissCall::UpdateRect(resized),
-            DismissCall::UpdateRect(Rect::new(origin.x, origin.y, 360, 100)),
+            DismissCall::UpdateRect(Rect::new(origin.x, origin.y, 700, 400)),
         ]
     );
 }

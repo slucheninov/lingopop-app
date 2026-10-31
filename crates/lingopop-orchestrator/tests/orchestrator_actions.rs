@@ -34,14 +34,14 @@ struct Popup {
     hidden_at: Mutex<Vec<usize>>,
 }
 impl PopupView for Popup {
-    fn show_at(&self, p: Point, m: &PopupViewModel) {
-        self.view.show_at(p, m);
+    fn show_at(&self, p: Point, s: (f64, f64), m: &PopupViewModel) {
+        self.view.show_at(p, s, m);
     }
     fn update(&self, m: &PopupViewModel) {
         self.view.update(m);
     }
-    fn resize(&self, s: (f64, f64)) -> Option<Rect> {
-        self.view.resize(s)
+    fn resize(&self, o: Point, s: (f64, f64)) {
+        self.view.resize(o, s);
     }
     fn hide(&self) {
         self.hidden_at.lock().unwrap().push(self.log.events().len());
@@ -63,6 +63,17 @@ struct Rig {
 }
 const OK: &str = r#"{"content":[{"type":"text","text":"DISPLAYED"}],"usage":{"input_tokens":3,"output_tokens":2}}"#;
 fn rig(t: Arc<dyn Transport>, target: Option<WindowHandle>) -> Rig {
+    rig_with_gate(t, target, Default::default())
+}
+fn rig_with_gate(t: Arc<dyn Transport>, target: Option<WindowHandle>, gate: GateTimeouts) -> Rig {
+    rig_full(t, target, gate, Point { x: 10, y: 20 })
+}
+fn rig_full(
+    t: Arc<dyn Transport>,
+    target: Option<WindowHandle>,
+    gate: GateTimeouts,
+    cursor: Point,
+) -> Rig {
     let sleeper = Arc::new(FakeSleeper::new());
     let clip = FakeClipboard::new(sleeper.clone());
     let keys = FakeKeys::new(clip.clone(), sleeper.clone());
@@ -93,7 +104,7 @@ fn rig(t: Arc<dyn Transport>, target: Option<WindowHandle>) -> Rig {
             keys: keys.clone(),
             foreground: fg.clone(),
             monitors: Arc::new(FakeMonitors::new(
-                Point { x: 10, y: 20 },
+                cursor,
                 vec![MonitorInfo {
                     bounds: Rect::new(-1000, -1000, 4000, 4000),
                     work_area: Rect::new(-1000, -1000, 4000, 4000),
@@ -111,7 +122,7 @@ fn rig(t: Arc<dyn Transport>, target: Option<WindowHandle>) -> Rig {
         config: config.clone(),
         stores: stores.clone(),
         popup: popup.clone(),
-        gate: PlatformGate::new(Default::default()),
+        gate: PlatformGate::new(gate),
         clock: Arc::new(ManualClock::new(Timestamp::from_unix_seconds(1000.))),
         log: None,
         picker: Arc::new(FakePicker::new(Ok(None))),
@@ -386,6 +397,127 @@ async fn replace_gate_failure_reshows_result() {
     assert!(!r.popup.is_visible());
 }
 
+fn replace_shown(r: &Rig) -> bool {
+    matches!(&model(r).phase, PopupPhase::Result(v) if v.show_replace)
+}
+#[tokio::test]
+async fn replace_gate_failure_keeps_replace_available() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.clip
+        .fail_next(FakeOp::WriteTransient, PlatformError::ClipboardBusy);
+    r.orch.replace().await;
+    assert!(replace_shown(&r), "a confirmed failure keeps Replace");
+}
+#[tokio::test]
+async fn replace_timeout_disables_further_replace() {
+    let timeouts = GateTimeouts {
+        acquire: std::time::Duration::from_millis(200),
+        run: std::time::Duration::from_millis(100),
+    };
+    let r = rig_with_gate(
+        Arc::new(FakeTransport::json(200, OK)),
+        Some(WindowHandle(7)),
+        timeouts,
+    );
+    ready(&r).await;
+    assert!(replace_shown(&r));
+    let (release, wait) = std::sync::mpsc::channel::<()>();
+    let wait = Mutex::new(wait);
+    r.keys.on_paste(Box::new(move |_| {
+        let _ = wait.lock().unwrap().recv();
+    }));
+    r.orch.replace().await;
+    // Unknown outcome: the result is shown again with a notice, without Replace.
+    assert!(r.popup.is_visible());
+    assert_eq!(result_text(&r), "DISPLAYED");
+    assert_eq!(notice_key(&r).as_deref(), Some(KEY_CLIPBOARD_TIMEOUT));
+    assert!(!replace_shown(&r));
+    // A second Replace does nothing: no new popup call, no extra paste.
+    let calls = r.popup.view.calls().len();
+    r.orch.replace().await;
+    assert_eq!(r.popup.view.calls().len(), calls);
+    // Release the blocked job and wait for it to finish.
+    release.send(()).unwrap();
+    for _ in 0..200 {
+        if !r.keys.pasted().is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(r.keys.pasted().len(), 1, "only the first job pasted");
+    assert_eq!(
+        r.popup.view.calls().len(),
+        calls,
+        "the late job shows nothing"
+    );
+    assert!(r.popup.is_visible());
+    // A later result of the same session does not offer Replace, and Replace stays a no-op.
+    r.orch.rewrite().await;
+    assert!(matches!(model(&r).phase, PopupPhase::Result(_)));
+    assert!(!replace_shown(&r));
+    r.orch.replace().await;
+    assert_eq!(r.keys.pasted().len(), 1);
+}
+
+#[tokio::test]
+async fn reshow_uses_measured_size_for_dismiss_rect() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.orch.popup_resized((700.0, 400.0));
+    for _ in 0..2 {
+        r.clip
+            .fail_next(FakeOp::WriteTransient, PlatformError::ClipboardBusy);
+        r.orch.replace().await;
+    }
+    let starts: Vec<Rect> = r
+        .dismiss
+        .calls()
+        .into_iter()
+        .filter_map(|c| match c {
+            DismissCall::Start(rect) => Some(rect),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(starts.len(), 3);
+    let measured = physical_size(700.0, 400.0, 1.5);
+    for rect in &starts[1..] {
+        assert_eq!((rect.width, rect.height), (measured.width, measured.height));
+    }
+    assert_eq!(r.popup.view.show_sizes()[1..], [(700.0, 400.0); 2]);
+}
+
+#[tokio::test]
+async fn resize_near_edge_is_clamped() {
+    let work = Rect::new(-1000, -1000, 4000, 4000);
+    // Cursor near the bottom-right corner of the monitor.
+    let cursor = Point { x: 2990, y: 2990 };
+    let r = rig_full(
+        Arc::new(FakeTransport::json(200, OK)),
+        Some(WindowHandle(7)),
+        Default::default(),
+        cursor,
+    );
+    ready(&r).await;
+    r.orch.popup_resized((700.0, 400.0));
+    let Some(PopupCall::Resize(origin, size)) = r.popup.view.calls().last().cloned() else {
+        panic!("expected a Resize call");
+    };
+    let monitors = vec![MonitorInfo {
+        bounds: work,
+        work_area: work,
+        scale_factor: 1.5,
+        primary: true,
+    }];
+    assert_eq!(origin, popup_origin(size, cursor, &monitors));
+    let phys = physical_size(size.0, size.1, 1.5);
+    let inset = (8.0f64 * 1.5).ceil() as i32;
+    assert!(origin.x + phys.width <= work.right() - inset);
+    assert!(origin.y + phys.height <= work.bottom() - inset);
+    assert!(origin.x >= work.left() + inset && origin.y >= work.top() + inset);
+}
+
 struct PendingTransport {
     entered: tokio::sync::Notify,
     dropped: Arc<std::sync::atomic::AtomicBool>,
@@ -525,14 +657,14 @@ async fn popup_resized_updates_dismiss_rect() {
     ready(&r).await;
     let popup_calls = r.popup.view.calls().len();
     r.orch.popup_resized((700.0, 400.0));
-    let Some(PopupCall::Resize(size)) = r.popup.view.calls().last().cloned() else {
+    let Some(PopupCall::Resize(_, size)) = r.popup.view.calls().last().cloned() else {
         panic!("expected a Resize call");
     };
     assert_eq!(size, (700.0, 400.0));
     assert_eq!(r.popup.view.calls().len(), popup_calls + 1);
     assert!(matches!(
         r.dismiss.calls().last(),
-        Some(DismissCall::UpdateRect(rect)) if (rect.width, rect.height) == (700, 400)
+        Some(DismissCall::UpdateRect(rect)) if (rect.width, rect.height) == (1050, 600)
     ));
 }
 #[tokio::test]

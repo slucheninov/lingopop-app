@@ -48,8 +48,9 @@ impl Orchestrator {
                 let Some(session) = st.session.as_ref() else {
                     return;
                 };
-                // Screen Translate results never offer Replace.
-                if session.operation == AIOperation::ScreenTranslate {
+                // Screen Translate results never offer Replace; after an unknown outcome
+                // (see below) it is off for the rest of the session.
+                if session.operation == AIOperation::ScreenTranslate || session.replace_disabled {
                     return;
                 }
                 let Some(text) = session.last_result.clone() else {
@@ -109,13 +110,32 @@ impl Orchestrator {
                         gate_message(&GateError::Platform(PlatformError::InputBlocked)),
                     );
                 }
-                // Busy / TimedOut / Panicked / other platform errors: nothing was replaced, so
-                // show the same result again (popup re-shown at the last origin, dismiss
-                // watcher restarted by the show) with a notice. The session stays usable.
+                // UNKNOWN outcome: the gate stopped waiting but the blocking job keeps running
+                // and may still paste (or already did). Show the result again with a notice
+                // but disable Replace for the rest of the session, so the text can never be
+                // inserted twice.
+                Err(e @ (GateError::TimedOut | GateError::Panicked)) => {
+                    me.disable_replace(generation);
+                    me.present_notice(generation, gate_message(&e));
+                }
+                // Confirmed failure: `Busy` (the job never started) or an error the job itself
+                // returned (it stopped before pasting). Show the same result again (popup
+                // re-shown at the last origin, dismiss watcher restarted by the show) with a
+                // notice; Replace stays available.
                 Err(e) => me.present_notice(generation, gate_message(&e)),
             }
         })
         .await;
+    }
+
+    /// Turns Replace off for the rest of this session if `generation` is still current.
+    fn disable_replace(&self, generation: u64) {
+        let mut st = self.state();
+        if st.generation == generation {
+            if let Some(session) = st.session.as_mut() {
+                session.replace_disabled = true;
+            }
+        }
     }
 
     /// Clears the session if `generation` is still current.

@@ -225,6 +225,19 @@ impl PopupViewModel {
         self
     }
 
+    /// A Result with Replace removed (button and row width recomputed); other phases unchanged.
+    pub fn without_replace(mut self) -> Self {
+        let retry_available = !self.retry_providers.is_empty();
+        if let PopupPhase::Result(r) = &mut self.phase {
+            if r.show_replace {
+                r.show_replace = false;
+                let buttons = 2 + usize::from(r.show_explain) + usize::from(retry_available);
+                r.action_row = ActionRowView::new(r.text.chars().count(), buttons);
+            }
+        }
+        self
+    }
+
     pub fn loading(operation: AIOperation, original: &str) -> Self {
         Self {
             phase: PopupPhase::Loading {

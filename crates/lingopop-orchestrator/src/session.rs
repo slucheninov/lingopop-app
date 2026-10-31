@@ -9,6 +9,7 @@ use std::sync::Arc;
 use lingopop_platform::{CapturedImage, MonitorInfo, Point, WindowHandle};
 use tokio::task::AbortHandle;
 
+use crate::popup::INITIAL_POPUP_SIZE;
 use crate::view_model::PopupViewModel;
 
 /// What the popup actions (Task 4) need about the running operation.
@@ -29,6 +30,10 @@ pub struct Session {
     /// The Result / OCR view model on screen, so a failed Copy or Replace can show the same
     /// result again with a notice. Cleared when any other phase is presented.
     pub last_model: Option<PopupViewModel>,
+    /// Set after a Replace whose outcome is unknown (the gate timed out or the job panicked,
+    /// so the paste may still happen). Replace is then a no-op and hidden for the rest of the
+    /// session, so the text cannot be inserted twice. Only a new session resets it.
+    pub replace_disabled: bool,
 }
 
 impl std::fmt::Debug for Session {
@@ -54,6 +59,9 @@ pub(crate) struct SessionState {
     pub session: Option<Session>,
     pub cursor: Point,
     pub monitors: Vec<MonitorInfo>,
+    /// The popup's LOGICAL size: `INITIAL_POPUP_SIZE` until the frontend reports a measured one.
+    /// Every show and resize is placed and clamped from this size.
+    pub size: (f64, f64),
 }
 
 impl SessionState {
@@ -64,6 +72,7 @@ impl SessionState {
             session: None,
             cursor: Point { x: 0, y: 0 },
             monitors: Vec::new(),
+            size: INITIAL_POPUP_SIZE,
         }
     }
 }
@@ -83,6 +92,7 @@ mod tests {
             primary: ProviderType::Claude,
             image: None,
             last_model: None,
+            replace_disabled: false,
         };
         let debug = format!("{s:?}");
         assert!(!debug.contains("PRIVATE-"));

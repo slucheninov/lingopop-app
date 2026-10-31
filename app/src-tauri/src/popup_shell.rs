@@ -15,29 +15,24 @@
 //!   built) and passed to `ShellPopup::new`. `WebviewWindow::hwnd()` synchronously dispatches
 //!   to the main thread on Windows, so no `PopupView` method may ever call it.
 //!
-//! The window size is kept in LOGICAL pixels (what the frontend measures) and converted with
-//! the scale of the monitor under the popup's origin on every show, so it survives a move to
-//! another monitor. The orchestrator starts its dismiss watcher with the initial size; the
-//! frontend reports the measured size after every render (`popup_resized`), which corrects it
-//! through `PopupView::resize`, called by the orchestrator under its commit mutex and only while
-//! the popup is visible (a resize never re-shows a popup that Close just hid).
+//! The orchestrator owns the geometry: it passes the origin and the LOGICAL size (what the
+//! frontend measures, reported through `popup_resized`) to every `show_at` / `resize`, clamped
+//! into the work area, and builds the dismiss rect from the same numbers. This shell only
+//! converts logical to physical pixels with the scale of the monitor under the origin and places
+//! the window. `resize` is called under the orchestrator's commit mutex and only while the popup
+//! is visible (a resize never re-shows a popup that Close just hid).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-use lingopop_orchestrator::{PopupView, PopupViewModel, INITIAL_POPUP_SIZE};
+use lingopop_orchestrator::{PopupView, PopupViewModel};
 use lingopop_platform::{monitor_at, physical_size, Platform, Point, Rect, WindowHandle};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 pub const POPUP_LABEL: &str = "popup";
 pub const MODEL_EVENT: &str = "popup://model";
 
-/// Largest logical side accepted from the webview (a defence against a runaway measurement).
-const MAX_LOGICAL_SIDE: f64 = 4096.0;
-
 struct Geometry {
-    origin: Option<Point>,
-    logical: (f64, f64),
     ready: bool,
     last_model: Option<serde_json::Value>,
 }
@@ -74,8 +69,6 @@ impl ShellPopup {
             handle,
             visible: AtomicBool::new(false),
             geometry: Mutex::new(Geometry {
-                origin: None,
-                logical: INITIAL_POPUP_SIZE,
                 ready: false,
                 last_model: None,
             }),
@@ -147,20 +140,13 @@ impl ShellPopup {
 }
 
 impl PopupView for ShellPopup {
-    fn show_at(&self, origin: Point, model: &PopupViewModel) {
+    fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel) {
         let value = serde_json::to_value(model).ok();
-        let logical = {
-            let mut geometry = self.geometry();
-            geometry.origin = Some(origin);
-            if let Some(value) = &value {
-                geometry.last_model = Some(value.clone());
-            }
-            geometry.logical
-        };
         if let Some(value) = &value {
+            self.geometry().last_model = Some(value.clone());
             self.emit_model(value);
         }
-        self.place(self.rect_for(origin, logical));
+        self.place(self.rect_for(origin, size_logical));
         self.visible.store(true, Ordering::Release);
     }
 
@@ -172,23 +158,10 @@ impl PopupView for ShellPopup {
         self.emit_model(&value);
     }
 
-    fn resize(&self, size_logical: (f64, f64)) -> Option<Rect> {
-        let (width, height) = size_logical;
-        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
-            return None;
+    fn resize(&self, origin: Point, size_logical: (f64, f64)) {
+        if self.is_visible() {
+            self.place(self.rect_for(origin, size_logical));
         }
-        let logical = (width.min(MAX_LOGICAL_SIDE), height.min(MAX_LOGICAL_SIDE));
-        let origin = {
-            let mut geometry = self.geometry();
-            geometry.logical = logical;
-            geometry.origin
-        };
-        if !self.is_visible() {
-            return None;
-        }
-        let rect = self.rect_for(origin?, logical);
-        self.place(rect);
-        Some(rect)
     }
 
     fn hide(&self) {

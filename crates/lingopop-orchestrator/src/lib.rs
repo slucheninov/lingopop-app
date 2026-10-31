@@ -22,7 +22,7 @@ pub use messages::{
 };
 pub use orchestrator::{ConfigSource, Deps, Orchestrator, Persist};
 pub use placement::popup_origin;
-pub use popup::{PopupView, INITIAL_POPUP_SIZE};
+pub use popup::{PopupView, INITIAL_POPUP_SIZE, MAX_LOGICAL_SIDE};
 pub use providers::{ocr_translate_providers, retry_providers, vision_providers};
 pub use screen::RegionPicker;
 pub use view_model::{

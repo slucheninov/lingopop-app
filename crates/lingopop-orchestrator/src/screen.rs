@@ -182,6 +182,7 @@ impl Orchestrator {
                 primary: settings.active_provider,
                 image: Some(image.clone()),
                 last_model: None,
+                replace_disabled: false,
             });
             self.present_at_locked(
                 &mut st,
