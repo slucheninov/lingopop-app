@@ -34,8 +34,8 @@ struct Popup {
     hidden_at: Mutex<Vec<usize>>,
 }
 impl PopupView for Popup {
-    fn show_at(&self, p: Point, s: (f64, f64), m: &PopupViewModel) {
-        self.view.show_at(p, s, m);
+    fn show_at(&self, p: Point, s: (f64, f64), m: &PopupViewModel) -> bool {
+        self.view.show_at(p, s, m)
     }
     fn update(&self, m: &PopupViewModel) {
         self.view.update(m);
@@ -52,6 +52,7 @@ impl PopupView for Popup {
     }
 }
 struct Rig {
+    logs: Arc<Mutex<Vec<String>>>,
     orch: Orchestrator,
     dismiss: Arc<FakeDismissWatcher>,
     popup: Arc<Popup>,
@@ -96,6 +97,10 @@ fn rig_full(
     let config = Arc::new(FakeConfig::new(Settings::default(), snapshot));
     let stores = Arc::new(FakePersist::new());
     let dismiss = Arc::new(FakeDismissWatcher::default());
+    let logs = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = logs.clone();
+    let log: Arc<lingopop_platform::LogFn> =
+        Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string()));
     let orch = Orchestrator::new(Deps {
         platform: Platform {
             popup_window: Arc::new(FakePopupWindow::default()),
@@ -124,7 +129,7 @@ fn rig_full(
         popup: popup.clone(),
         gate: PlatformGate::new(gate),
         clock: Arc::new(ManualClock::new(Timestamp::from_unix_seconds(1000.))),
-        log: None,
+        log: Some(log),
         picker: Arc::new(FakePicker::new(Ok(None))),
     });
     Rig {
@@ -136,6 +141,7 @@ fn rig_full(
         fg,
         config,
         stores,
+        logs,
     }
 }
 fn ready_rig() -> (Rig, Arc<FakeTransport>) {
@@ -678,4 +684,22 @@ async fn popup_resized_after_close_does_nothing() {
     assert_eq!(r.popup.view.calls(), popup_calls, "no show or resize");
     assert!(!r.popup.view.is_visible());
     assert_eq!(r.dismiss.calls(), dismiss_calls, "no update_rect");
+}
+#[tokio::test]
+async fn show_failure_does_not_start_dismiss_watcher() {
+    let (r, _) = ready_rig();
+    r.popup.view.fail_show(true);
+    r.orch.trigger(AIOperation::Translate).await;
+    assert!(!r.popup.view.is_visible());
+    assert!(r.dismiss.calls().is_empty(), "no dismiss.start");
+    assert!(r
+        .logs
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|l| l == "popup show failed"));
+    let popup_calls = r.popup.view.calls();
+    r.orch.popup_resized((700.0, 400.0));
+    assert_eq!(r.popup.view.calls(), popup_calls, "no resize");
+    assert!(r.dismiss.calls().is_empty(), "no update_rect");
 }

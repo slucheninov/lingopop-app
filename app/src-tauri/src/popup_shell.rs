@@ -103,25 +103,34 @@ impl ShellPopup {
     }
 
     /// Shows or moves the window to `rect` without activating it.
-    fn place(&self, rect: Rect) {
+    fn place(&self, rect: Rect) -> bool {
         let Some(handle) = self.handle else {
             log::warn!("popup window handle is unavailable");
-            return;
+            return false;
         };
         match self.platform.popup_window.show_at(handle, rect) {
-            Ok(()) => {}
+            Ok(()) => true,
             // macOS dev only: the platform has no no-activate show; Tauri `show()` may activate.
             #[cfg(not(windows))]
             Err(lingopop_platform::PlatformError::Unsupported(_)) => {
-                let Some(window) = self.window() else { return };
-                let _ = window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
-                let _ = window.set_size(tauri::PhysicalSize::new(
-                    rect.width.max(1) as u32,
-                    rect.height.max(1) as u32,
-                ));
-                let _ = window.show();
+                let Some(window) = self.window() else {
+                    return false;
+                };
+                window
+                    .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
+                    .and_then(|()| {
+                        window.set_size(tauri::PhysicalSize::new(
+                            rect.width.max(1) as u32,
+                            rect.height.max(1) as u32,
+                        ))
+                    })
+                    .and_then(|()| window.show())
+                    .is_ok()
             }
-            Err(e) => log::warn!("popup show failed: {e}"),
+            Err(e) => {
+                log::warn!("popup show failed: {e}");
+                false
+            }
         }
     }
 
@@ -138,14 +147,15 @@ impl ShellPopup {
 }
 
 impl PopupView for ShellPopup {
-    fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel) {
+    fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel) -> bool {
         if let Ok(value) = serde_json::to_value(model) {
             let mut pending = self.pending();
             self.emit_model(&value);
             pending.last_model = Some(value);
         }
-        self.place(self.rect_for(origin, size_logical));
-        self.visible.store(true, Ordering::Release);
+        let shown = self.place(self.rect_for(origin, size_logical));
+        self.visible.store(shown, Ordering::Release);
+        shown
     }
 
     fn update(&self, model: &PopupViewModel) {
@@ -159,7 +169,7 @@ impl PopupView for ShellPopup {
 
     fn resize(&self, origin: Point, size_logical: (f64, f64)) {
         if self.is_visible() {
-            self.place(self.rect_for(origin, size_logical));
+            let _ = self.place(self.rect_for(origin, size_logical));
         }
     }
 

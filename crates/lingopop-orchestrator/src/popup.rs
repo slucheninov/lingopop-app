@@ -23,7 +23,11 @@ pub trait PopupView: Send + Sync {
     /// visible, and for the first Loading of a Screen Translate flow even when visible (the new
     /// region may be on another monitor); other flows only `update` a visible popup, like mac
     /// `show`.
-    fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel);
+    ///
+    /// Returns true when the popup is on screen afterwards; false when placing it failed (the
+    /// popup is then not visible, and the caller must not start dismissal for it). The model
+    /// is delivered either way.
+    fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel) -> bool;
     /// Replaces the content of the visible popup.
     fn update(&self, model: &PopupViewModel);
     /// Moves and resizes the visible popup to `origin` / `size_logical`. Called by the

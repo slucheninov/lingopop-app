@@ -252,7 +252,10 @@ impl Orchestrator {
             popup.update(model);
         } else {
             let origin = popup_origin(size, cursor, monitors);
-            popup.show_at(origin, size, model);
+            if !popup.show_at(origin, size, model) {
+                self.log("popup show failed");
+                return;
+            }
             let rect = popup_rect(origin, size, monitors);
             if was_visible {
                 self.deps().platform.dismiss.update_rect(rect);
@@ -574,7 +577,7 @@ mod commit_tests {
         view: FakePopup,
     }
     impl PopupView for CheckedPopup {
-        fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) {
+        fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) -> bool {
             assert!(self
                 .inner
                 .get()
@@ -584,7 +587,7 @@ mod commit_tests {
                 .state
                 .try_lock()
                 .is_err());
-            self.view.show_at(origin, size, model);
+            self.view.show_at(origin, size, model)
         }
         fn update(&self, model: &PopupViewModel) {
             assert!(self

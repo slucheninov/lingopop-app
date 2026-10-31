@@ -33,6 +33,7 @@ pub struct FakePopup {
     calls: Mutex<Vec<PopupCall>>,
     visible: AtomicBool,
     sizes: Mutex<Vec<(f64, f64)>>,
+    fail_show: AtomicBool,
 }
 
 impl FakePopup {
@@ -44,6 +45,11 @@ impl FakePopup {
         lock(&self.calls).clone()
     }
 
+    /// Makes every later `show_at` fail: recorded, returns false, popup stays hidden.
+    pub fn fail_show(&self, fail: bool) {
+        self.fail_show.store(fail, Ordering::SeqCst);
+    }
+
     /// The logical size passed to every `show_at`, in order.
     pub fn show_sizes(&self) -> Vec<(f64, f64)> {
         lock(&self.sizes).clone()
@@ -51,10 +57,14 @@ impl FakePopup {
 }
 
 impl PopupView for FakePopup {
-    fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) {
+    fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) -> bool {
         lock(&self.calls).push(PopupCall::ShowAt(origin, model.clone()));
         lock(&self.sizes).push(size);
+        if self.fail_show.load(Ordering::SeqCst) {
+            return false;
+        }
         self.visible.store(true, Ordering::SeqCst);
+        true
     }
 
     fn update(&self, model: &PopupViewModel) {
