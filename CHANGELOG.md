@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.3] - 2026-10-31
+
 ### Fixed
 
 - Popup scrollbars and a clipped close button on Windows: the window shadow shrank the client area below the size the frontend measured; the popup window no longer has a shadow
