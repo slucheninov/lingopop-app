@@ -26,6 +26,8 @@ pub const KEY_FOREGROUND_LOST: &str = "Couldn't switch back to the original app,
 pub const KEY_OCR_UNAVAILABLE: &str = "No OCR language is installed. Add a language with Optical character recognition in Settings → Time & language → Language & region, or use Retry to send the image to AI.";
 /// NEW (Windows only).
 pub const KEY_PLATFORM_GENERIC: &str = "Something went wrong on this PC (%@). Try again.";
+/// NEW (Windows only).
+pub const KEY_SCREEN_TIMEOUT: &str = "Screen capture or text recognition took too long. Try again.";
 
 fn plain(key: &str) -> UserMessageView {
     UserMessageView::new(key, Vec::new())
@@ -80,6 +82,15 @@ pub fn gate_message(e: &GateError) -> UserMessageView {
         GateError::Busy | GateError::TimedOut => plain(KEY_CLIPBOARD_TIMEOUT),
         GateError::Panicked => UserMessageView::new(KEY_PLATFORM_GENERIC, vec![e.to_string()]),
         GateError::Platform(p) => platform_message(p),
+    }
+}
+
+/// Like `gate_message` for Screen Translate work (capture, OCR, PNG encoding): `Busy` /
+/// `TimedOut` mean the screen job was too slow, not that the clipboard did not update.
+pub fn screen_gate_message(e: &GateError) -> UserMessageView {
+    match e {
+        GateError::Busy | GateError::TimedOut => plain(KEY_SCREEN_TIMEOUT),
+        other => gate_message(other),
     }
 }
 
@@ -140,6 +151,26 @@ mod tests {
         );
         assert_eq!(
             platform_message(&PlatformError::HotkeyConflict).key,
+            KEY_PLATFORM_GENERIC
+        );
+    }
+
+    #[test]
+    fn screen_gate_message_uses_the_screen_timeout() {
+        assert_eq!(
+            screen_gate_message(&GateError::Busy),
+            plain(KEY_SCREEN_TIMEOUT)
+        );
+        assert_eq!(
+            screen_gate_message(&GateError::TimedOut),
+            plain(KEY_SCREEN_TIMEOUT)
+        );
+        assert_eq!(
+            screen_gate_message(&GateError::Platform(PlatformError::InputBlocked)),
+            plain(KEY_INPUT_BLOCKED)
+        );
+        assert_eq!(
+            screen_gate_message(&GateError::Panicked).key,
             KEY_PLATFORM_GENERIC
         );
     }

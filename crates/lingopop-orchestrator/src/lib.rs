@@ -18,7 +18,7 @@ pub mod view_model;
 pub use gate::{GateError, GateTimeouts, PlatformGate};
 pub use messages::{
     gate_message, max_input, missing_key, no_text_found, nothing_selected, platform_message,
-    selection_too_small, translation_error_view,
+    screen_gate_message, selection_too_small, translation_error_view,
 };
 pub use orchestrator::{ConfigSource, Deps, Orchestrator, Persist};
 pub use placement::popup_origin;

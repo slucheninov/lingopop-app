@@ -97,7 +97,7 @@ pub fn run() {
     }
     logging::init(&data_dir);
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         // A second launch just exits (Phase 4b may open Settings here). Registered first.
         .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .invoke_handler(tauri::generate_handler![
@@ -106,15 +106,24 @@ pub fn run() {
             commands::popup_ready
         ])
         .setup(move |app| setup(app, &data_dir))
-        .build(tauri::generate_context!())
-        .expect("error while building LingoPop")
-        .run(|_app, event| {
-            // A tray app keeps running when its last window closes.
-            if let RunEvent::ExitRequested {
-                code: None, api, ..
-            } = event
-            {
-                api.prevent_exit();
-            }
-        });
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(app) => app,
+        Err(e) => {
+            // `windows_subsystem = "windows"` hides stderr: the log file is the only trace.
+            // Tauri build errors carry no user text.
+            log::error!("LingoPop failed to start: {e}");
+            log::logger().flush();
+            std::process::exit(1);
+        }
+    };
+    app.run(|_app, event| {
+        // A tray app keeps running when its last window closes.
+        if let RunEvent::ExitRequested {
+            code: None, api, ..
+        } = event
+        {
+            api.prevent_exit();
+        }
+    });
 }

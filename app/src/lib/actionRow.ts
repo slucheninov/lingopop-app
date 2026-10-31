@@ -1,4 +1,12 @@
+import { t } from './i18n';
 import type { PopupModel, RowMode } from './types';
+/**
+ * The action titles, defined once: the rendered buttons and the row measurement (`rowSpec`,
+ * `rowWidth`) both read them, so a translated title is measured as it is drawn.
+ */
+export function actionTitles() {
+  return { copy: t('Copy'), replace: t('Replace'), rewrite: t('Rewrite'), explain: t('Explain'), translate: t('Translate'), retry: t('Retry') };
+}
 export const LONG_TEXT_CHARACTER_THRESHOLD = 120;
 export const isIconOnly = (mode: RowMode, index: number): boolean => mode === 'compact' || (mode === 'mixed' && index >= 2);
 export function candidates(chars: number, buttons: number): RowMode[] {
@@ -8,10 +16,10 @@ export function pickMode(modes: readonly RowMode[], measure: (mode: RowMode) => 
   return modes.find(mode => measure(mode) <= available) ?? 'compact';
 }
 // Same chrome/spacing metrics as core/action_row.rs, with an injected text measurer.
-export function rowWidth(titles: readonly string[], retry: boolean, mode: RowMode, measure: (text: string) => number, chevrons = 0): number {
+export function rowWidth(titles: readonly string[], retry: boolean, mode: RowMode, measure: (text: string) => number, chevrons = 0, retryTitle: string = actionTitles().retry): number {
   const widths = titles.map((title, i) => isIconOnly(mode, i) ? 30 : Math.ceil(measure(title)) + 38);
   if (chevrons && widths.length) widths[widths.length - 1] += chevrons * 34;
-  if (retry) widths.push((isIconOnly(mode, titles.length) ? 30 : Math.ceil(measure('Retry')) + 38) + 14);
+  if (retry) widths.push((isIconOnly(mode, titles.length) ? 30 : Math.ceil(measure(retryTitle)) + 38) + 14);
   return widths.length ? widths.reduce((a,b) => a+b, 0) + 8 * widths.length + 28 : 0;
 }
 let sharedContext: CanvasRenderingContext2D | null | undefined;
@@ -33,11 +41,13 @@ export const MAX_WIDTH = 700;
 /** Row inputs for result / OCR phases (mac `PopupView.panelWidth` titles), else null. */
 export function rowSpec(model: PopupModel): { titles: string[]; retry: boolean; chevrons: number } | null {
   if (model.phase === 'result') {
-    return { titles: ['Copy', ...(model.showReplace ? ['Replace'] : []), 'Rewrite', ...(model.showExplain ? ['Explain'] : [])],
+    const a = actionTitles();
+    return { titles: [a.copy, ...(model.showReplace ? [a.replace] : []), a.rewrite, ...(model.showExplain ? [a.explain] : [])],
       retry: model.retryProviders.length > 0, chevrons: 0 };
   }
   if (model.phase === 'ocr') {
-    return { titles: ['Copy', 'Translate'], retry: model.retryProviders.length > 0, chevrons: model.translateProviders.length ? 1 : 0 };
+    const a = actionTitles();
+    return { titles: [a.copy, a.translate], retry: model.retryProviders.length > 0, chevrons: model.translateProviders.length ? 1 : 0 };
   }
   return null;
 }

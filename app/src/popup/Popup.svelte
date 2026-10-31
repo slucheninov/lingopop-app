@@ -45,7 +45,7 @@
 <svelte:window onkeydown={event => { if (event.key === 'Escape') sendAction({type:'close'}); }} />
 <main bind:this={content} style:width={`${width}px`}>
   {#if model}
-    <button class="close" type="button" title="Close" aria-label="Close" onclick={() => sendAction({type:'close'})}>{@html icons.close}</button>
+    <button class="close" type="button" title={t('Close')} aria-label={t('Close')} onclick={() => sendAction({type:'close'})}>{@html icons.close}</button>
     {#key viewKey(model)}
       {#if model.phase === 'loading'}<LoadingView {model} />
       {:else if model.phase === 'result'}<ResultView {model} available={rowAvailable(width)} />

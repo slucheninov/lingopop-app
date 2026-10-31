@@ -34,8 +34,8 @@ use tauri::{AppHandle, Emitter, WebviewWindow};
 pub const POPUP_LABEL: &str = "popup";
 pub const MODEL_EVENT: &str = "popup://model";
 
-struct Geometry {
-    ready: bool,
+/// The newest model, kept so `ready` can re-emit one that arrived before the webview listened.
+struct Pending {
     last_model: Option<serde_json::Value>,
 }
 
@@ -45,7 +45,7 @@ pub struct ShellPopup {
     /// Native handle cached at construction (see the module docs); `None` = unavailable.
     handle: Option<WindowHandle>,
     visible: AtomicBool,
-    geometry: Mutex<Geometry>,
+    pending: Mutex<Pending>,
 }
 
 /// Reads the native handle. On Windows this blocks on the main thread: call it only from
@@ -70,15 +70,12 @@ impl ShellPopup {
             platform,
             handle,
             visible: AtomicBool::new(false),
-            geometry: Mutex::new(Geometry {
-                ready: false,
-                last_model: None,
-            }),
+            pending: Mutex::new(Pending { last_model: None }),
         }
     }
 
-    fn geometry(&self) -> MutexGuard<'_, Geometry> {
-        self.geometry
+    fn pending(&self) -> MutexGuard<'_, Pending> {
+        self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -130,11 +127,7 @@ impl ShellPopup {
 
     /// The frontend mounted and listens: re-emits a model that arrived before that.
     pub fn ready(&self) {
-        let pending = {
-            let mut geometry = self.geometry();
-            geometry.ready = true;
-            geometry.last_model.clone()
-        };
+        let pending = { self.pending().last_model.clone() };
         if let Some(model) = pending {
             self.emit_model(&model);
         }
@@ -145,7 +138,7 @@ impl PopupView for ShellPopup {
     fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel) {
         let value = serde_json::to_value(model).ok();
         if let Some(value) = &value {
-            self.geometry().last_model = Some(value.clone());
+            self.pending().last_model = Some(value.clone());
             self.emit_model(value);
         }
         self.place(self.rect_for(origin, size_logical));
@@ -156,7 +149,7 @@ impl PopupView for ShellPopup {
         let Ok(value) = serde_json::to_value(model) else {
             return;
         };
-        self.geometry().last_model = Some(value.clone());
+        self.pending().last_model = Some(value.clone());
         self.emit_model(&value);
     }
 

@@ -2,7 +2,7 @@
   let nextId = 0;
 </script>
 <script lang="ts">
-  import { isIconOnly, pickMode, rowWidth, measureText } from '../lib/actionRow';
+  import { actionTitles, isIconOnly, pickMode, rowWidth, measureText } from '../lib/actionRow';
   import { icons } from '../lib/icons';
   import { sendAction } from '../lib/ipc';
   import { t } from '../lib/i18n';
@@ -12,11 +12,13 @@
     retryProviders?: RetryProvider[]; available?: number; measure?: (text: string) => number; translateProviders?: RetryProvider[];
   } = $props();
   const uid = nextId++;
+  const translateWith = t('Translate with…');
   const translateMenuId = `translate-menu-${uid}`;
   const retryMenuId = `retry-menu-${uid}`;
   let retryOpen = $state(false);
   let translateOpen = $state(false);
-  let mode = $derived(pickMode(row.candidates, m => rowWidth(buttons.map(b => b.label), retryProviders.length > 0, m, measure, translateProviders.length ? 1 : 0), Math.min(700, available)));
+  let retryTitle = $derived(actionTitles().retry);
+  let mode = $derived(pickMode(row.candidates, m => rowWidth(buttons.map(b => b.label), retryProviders.length > 0, m, measure, translateProviders.length ? 1 : 0, retryTitle), Math.min(700, available)));
 </script>
 <div class="action-row" data-mode={mode}>
   {#each buttons as button, i}
@@ -26,22 +28,22 @@
   {/each}
   {#if translateProviders.length}
     <div class="menu attached">
-      <button type="button" title="Translate with…" aria-label="Translate with…" aria-haspopup="menu" aria-expanded={translateOpen} aria-controls={translateOpen ? translateMenuId : undefined} onclick={() => { translateOpen = !translateOpen; retryOpen = false; }}>{@html icons.chevron}</button>
+      <button type="button" title={translateWith} aria-label={translateWith} aria-haspopup="menu" aria-expanded={translateOpen} aria-controls={translateOpen ? translateMenuId : undefined} onclick={() => { translateOpen = !translateOpen; retryOpen = false; }}>{@html icons.chevron}</button>
     </div>
   {/if}
   <span class="spacer"></span>
   {#if retryProviders.length}
     <div class="menu">
-      <button type="button" class="retry" class:icon-only={isIconOnly(mode, buttons.length)} title="Retry" aria-label="Retry" aria-haspopup="menu" aria-expanded={retryOpen} aria-controls={retryOpen ? retryMenuId : undefined} onclick={() => { retryOpen = !retryOpen; translateOpen = false; }}>
-        {@html icons.retry}{#if !isIconOnly(mode, buttons.length)}<span>Retry</span>{/if}{@html icons.chevron}
+      <button type="button" class="retry" class:icon-only={isIconOnly(mode, buttons.length)} title={retryTitle} aria-label={retryTitle} aria-haspopup="menu" aria-expanded={retryOpen} aria-controls={retryOpen ? retryMenuId : undefined} onclick={() => { retryOpen = !retryOpen; translateOpen = false; }}>
+        {@html icons.retry}{#if !isIconOnly(mode, buttons.length)}<span>{retryTitle}</span>{/if}{@html icons.chevron}
       </button>
     </div>
   {/if}
 </div>
-{#if translateOpen}<div class="menu-items" role="menu" id={translateMenuId} aria-label="Translate with…">
+{#if translateOpen}<div class="menu-items" role="menu" id={translateMenuId} aria-label={translateWith}>
   {#each translateProviders as provider}<button type="button" role="menuitem" onclick={() => { translateOpen = false; sendAction({type:'translateOcr',provider:provider.provider}); }}>{t('Translate with %@', [provider.name])}</button>{/each}
 </div>{/if}
-{#if retryOpen}<div class="menu-items" role="menu" id={retryMenuId} aria-label="Retry">
+{#if retryOpen}<div class="menu-items" role="menu" id={retryMenuId} aria-label={retryTitle}>
   {#each retryProviders as provider}<button type="button" role="menuitem" onclick={() => { retryOpen = false; sendAction({type:'retry',provider:provider.provider}); }}>{t('Retry with %@', [provider.name])}</button>{/each}
 </div>{/if}
 <style>

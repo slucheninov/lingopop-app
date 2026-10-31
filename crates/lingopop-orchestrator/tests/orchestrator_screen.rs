@@ -15,10 +15,11 @@ use lingopop_core::time::{ManualClock, Timestamp};
 use lingopop_orchestrator::fake::{FakeConfig, FakePersist, FakePicker, FakePopup, PopupCall};
 use lingopop_orchestrator::messages::{
     KEY_NOTHING_SELECTED, KEY_NO_TEXT_FOUND, KEY_NO_TEXT_FOUND_RETRY, KEY_OCR_UNAVAILABLE,
-    KEY_PLATFORM_GENERIC, KEY_SELECTION_TOO_SMALL,
+    KEY_PLATFORM_GENERIC, KEY_SCREEN_TIMEOUT, KEY_SELECTION_TOO_SMALL,
 };
 use lingopop_orchestrator::{
-    popup_origin, Deps, Orchestrator, PlatformGate, PopupPhase, PopupViewModel, INITIAL_POPUP_SIZE,
+    popup_origin, Deps, GateTimeouts, Orchestrator, PlatformGate, PopupPhase, PopupViewModel,
+    INITIAL_POPUP_SIZE,
 };
 use lingopop_platform::fake::{
     CopyBehavior, FakeCapture, FakeClipboard, FakeForeground, FakeKeys, FakeMonitors, FakeOcr,
@@ -117,6 +118,24 @@ fn rig_full(
     keys_for: &[ProviderType],
     fallbacks: &[(ProviderType, ProviderType)],
 ) -> Rig {
+    rig_gated(
+        pick,
+        ocr,
+        transport,
+        keys_for,
+        fallbacks,
+        GateTimeouts::default(),
+    )
+}
+
+fn rig_gated(
+    pick: Result<Option<Rect>, PlatformError>,
+    ocr: Result<OcrText, PlatformError>,
+    transport: Arc<dyn Transport>,
+    keys_for: &[ProviderType],
+    fallbacks: &[(ProviderType, ProviderType)],
+    gate: GateTimeouts,
+) -> Rig {
     let sleeper = Arc::new(FakeSleeper::new());
     let clip = FakeClipboard::new(sleeper.clone());
     let keys = FakeKeys::new(clip.clone(), sleeper.clone());
@@ -157,7 +176,7 @@ fn rig_full(
         config: config.clone(),
         stores: persist.clone(),
         popup: popup.clone(),
-        gate: PlatformGate::new(Default::default()),
+        gate: PlatformGate::new(gate),
         clock: Arc::new(ManualClock::new(Timestamp::from_unix_seconds(1000.0))),
         log: None,
         picker: picker.clone(),
@@ -366,6 +385,26 @@ async fn ocr_unavailable_message() {
     let m = last_model(&r);
     assert_eq!(error_key(&m), KEY_OCR_UNAVAILABLE);
     assert!(!m.retry_providers.is_empty());
+}
+
+#[tokio::test]
+async fn ocr_gate_timeout_uses_the_screen_message() {
+    let r = rig_gated(
+        Ok(Some(REGION)),
+        ocr_ok(OCR_TEXT),
+        ok_transport(),
+        &KEYED,
+        &[],
+        GateTimeouts {
+            acquire: std::time::Duration::from_secs(2),
+            run: std::time::Duration::from_millis(50),
+        },
+    );
+    *r.ocr.after.lock().unwrap() = Some(Box::new(|| {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(error_key(&last_model(&r)), KEY_SCREEN_TIMEOUT);
 }
 
 #[tokio::test]

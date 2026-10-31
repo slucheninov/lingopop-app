@@ -17,7 +17,9 @@ use lingopop_core::secrets::{ProtectError, SecretProtector};
 use lingopop_core::settings::Settings;
 use lingopop_core::time::{ManualClock, Timestamp};
 use lingopop_orchestrator::fake::{FakeConfig, FakePersist, FakePicker, FakePopup, PopupCall};
-use lingopop_orchestrator::messages::{KEY_CLIPBOARD_TIMEOUT, KEY_NOTHING_SELECTED};
+use lingopop_orchestrator::messages::{
+    KEY_CLIPBOARD_TIMEOUT, KEY_NOTHING_SELECTED, KEY_PLATFORM_GENERIC,
+};
 use lingopop_orchestrator::{
     max_input, missing_key, nothing_selected, popup_origin, Deps, GateTimeouts, Orchestrator,
     PlatformGate, PopupPhase, PopupViewModel, INITIAL_POPUP_SIZE,
@@ -540,4 +542,29 @@ async fn capture_log_hook_receives_no_user_text() {
     let lines = lines.lock().unwrap();
     assert!(!lines.is_empty());
     assert!(lines.iter().all(|l| !l.contains(marker)), "{lines:?}");
+}
+
+#[tokio::test]
+async fn flow_task_panic_shows_generic_error_and_logs_fixed_line() {
+    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = lines.clone();
+    let log: Arc<LogFn> = Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string()));
+    let marker = "ZQ-PANIC-PAYLOAD-91c2";
+    let r = rig_with(
+        Arc::new(FakeTransport::new(move |_| panic!("{marker}"))),
+        RigOptions {
+            log: Some(log),
+            ..Default::default()
+        },
+    );
+    r.keys.on_copy(CopyBehavior::Select("Hello".into()));
+    r.orch.trigger(AIOperation::Translate).await;
+    // Not stuck in Loading: the last model is the generic error.
+    assert_eq!(error_message_key(&last_model(&r)), KEY_PLATFORM_GENERIC);
+    let lines = lines.lock().unwrap();
+    assert!(
+        lines.iter().any(|l| l == "operation flow panicked"),
+        "{lines:?}"
+    );
+    assert!(lines.iter().all(|l| !l.contains(marker)));
 }

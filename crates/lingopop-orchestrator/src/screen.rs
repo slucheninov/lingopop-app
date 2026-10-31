@@ -21,7 +21,7 @@ use lingopop_core::runner::RunRequest;
 use lingopop_core::target_language::resolve_target_language;
 use lingopop_platform::{validate_region, MonitorInfo, Point, WindowHandle};
 
-use crate::messages::{gate_message, no_text_found, platform_message};
+use crate::messages::{no_text_found, platform_message, screen_gate_message};
 use crate::orchestrator::Orchestrator;
 use crate::providers::{ocr_translate_providers, vision_providers};
 use crate::session::Session;
@@ -108,7 +108,7 @@ impl Orchestrator {
             Ok(p) => p,
             Err(e) => {
                 self.log("screen translate: platform did not run");
-                self.present_error(generation, gate_message(&e));
+                self.present_error(generation, screen_gate_message(&e));
                 return;
             }
         };
@@ -154,7 +154,7 @@ impl Orchestrator {
             Ok(c) => c,
             Err(e) => {
                 self.log("screen translate: capture failed");
-                self.present_error(generation, gate_message(&e));
+                self.present_error(generation, screen_gate_message(&e));
                 return;
             }
         };
@@ -238,7 +238,7 @@ impl Orchestrator {
             }
             Err(e) => {
                 self.log("ocr failed");
-                self.present_error_with_vision(generation, gate_message(&e));
+                self.present_error_with_vision(generation, screen_gate_message(&e));
             }
         }
     }
@@ -280,7 +280,7 @@ impl Orchestrator {
             Ok(png) => png,
             Err(e) => {
                 self.log("png encoding failed");
-                self.present_error_with_vision(generation, gate_message(&e));
+                self.present_error_with_vision(generation, screen_gate_message(&e));
                 return;
             }
         };

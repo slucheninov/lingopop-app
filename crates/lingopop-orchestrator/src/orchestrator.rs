@@ -21,7 +21,7 @@ use lingopop_platform::{
 use crate::gate::PlatformGate;
 use crate::messages::{
     gate_message, max_input, missing_key, nothing_selected, platform_message,
-    translation_error_view,
+    translation_error_view, KEY_PLATFORM_GENERIC,
 };
 use crate::placement::popup_origin;
 use crate::popup::{PopupView, MAX_LOGICAL_SIDE};
@@ -151,13 +151,13 @@ impl Orchestrator {
 
     /// The cancellation primitive shared by `trigger` and the popup actions: bumps the
     /// generation, aborts the previous flow, spawns `make(self, generation)` and waits for it
-    /// (a cancelled join is ignored). The previous flow's blocking gate job still finishes.
+    /// (a cancelled join is ignored; a panic of the flow task is logged with a fixed line and shown as a generic error while its generation is current). The previous flow's blocking gate job still finishes.
     pub(crate) async fn start<F, Fut>(&self, make: F)
     where
         F: FnOnce(Orchestrator, u64) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let handle = {
+        let (handle, generation) = {
             let mut st = self.state();
             st.generation += 1;
             let generation = st.generation;
@@ -166,9 +166,22 @@ impl Orchestrator {
             }
             let handle = tokio::spawn(make(self.clone(), generation));
             st.current = Some(handle.abort_handle());
-            handle
+            (handle, generation)
         };
-        let _ = handle.await;
+        match handle.await {
+            Ok(()) => {}
+            // Superseded by a newer generation (or the runtime is shutting down).
+            Err(e) if e.is_cancelled() => {}
+            Err(e) if e.is_panic() => {
+                // Fixed text only: the panic payload may hold user text.
+                self.log("operation flow panicked");
+                self.present_error(
+                    generation,
+                    UserMessageView::new(KEY_PLATFORM_GENERIC, vec!["internal error".to_string()]),
+                );
+            }
+            Err(_) => {}
+        }
     }
 
     pub(crate) fn state(&self) -> MutexGuard<'_, SessionState> {

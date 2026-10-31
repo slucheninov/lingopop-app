@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { t } from '../lib/i18n';
   import type { LoadingModel } from '../lib/types';
   let {model}: {model:LoadingModel} = $props();
-  const labels = {translate:'Translating…',grammarFix:'Fixing grammar…',rewrite:'Rewriting…',explain:'Explaining…',screenTranslate:'Recognizing text…',magic:'Working…'};
+  const labels = $derived({translate:t('Translating…'),grammarFix:t('Fixing grammar…'),rewrite:t('Rewriting…'),explain:t('Explaining…'),screenTranslate:t('Recognizing text…'),magic:t('Working…')});
 </script>
 <header role="status"><span class="spinner" aria-hidden="true"></span><strong>{labels[model.operation]}</strong></header>
 <p class="preview">{model.preview}</p>
