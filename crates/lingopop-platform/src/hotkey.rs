@@ -53,7 +53,7 @@ pub fn to_chord(hotkey: &Hotkey) -> Result<(Modifiers, Code), PlatformError> {
 }
 
 #[cfg(any(windows, target_os = "macos"))]
-pub use real::{to_global_hotkey, GlobalHotkeyService};
+pub use real::{map_error, to_global_hotkey, GlobalHotkeyService};
 
 #[cfg(any(windows, target_os = "macos"))]
 mod real {
@@ -78,7 +78,9 @@ mod real {
         Ok(HotKey::new(Some(modifiers), code))
     }
 
-    fn map_error(error: global_hotkey::Error) -> PlatformError {
+    /// Maps a `global-hotkey` error; public only so the integration tests can pin the table.
+    #[doc(hidden)]
+    pub fn map_error(error: global_hotkey::Error) -> PlatformError {
         use global_hotkey::Error;
         match error {
             Error::AlreadyRegistered(_) => PlatformError::HotkeyConflict,
@@ -101,14 +103,15 @@ mod real {
 
     /// `global-hotkey` based service. Create it on the OS event-loop thread (see the module docs).
     ///
-    /// `global-hotkey` has one process-wide event channel, so only one service should be alive at a
-    /// time: a second one's forwarder would compete for the same events. A short-lived second
-    /// service that fails to register (a conflict test) is harmless.
+    /// `global-hotkey` has one process-wide event channel, so only one service may be alive at a
+    /// time: a second live service's forwarder would compete for the same events. Dropping a
+    /// service joins its forwarder, so dropping and recreating one (settings change) is safe.
     pub struct GlobalHotkeyService {
         manager: GlobalHotKeyManager,
         registered: Arc<Mutex<HashMap<u32, HotKey>>>,
         events: crossbeam_channel::Receiver<HotkeyEvent>,
         stop: Arc<AtomicBool>,
+        forwarder: Option<std::thread::JoinHandle<()>>,
     }
 
     impl GlobalHotkeyService {
@@ -121,7 +124,7 @@ mod real {
             let thread_stop = Arc::clone(&stop);
             // Forwards `Pressed` events of our ids from the global channel. Never use
             // `GlobalHotKeyEvent::set_event_handler`: it replaces the channel for the whole process.
-            std::thread::Builder::new()
+            let forwarder = std::thread::Builder::new()
                 .name("lingopop-hotkey-events".into())
                 .spawn(move || {
                     let global = GlobalHotKeyEvent::receiver();
@@ -154,13 +157,20 @@ mod real {
                 registered,
                 events: rx,
                 stop,
+                forwarder: Some(forwarder),
             })
         }
     }
 
     impl Drop for GlobalHotkeyService {
         fn drop(&mut self) {
+            // Join the forwarder (at most one poll interval) so it cannot outlive the service and
+            // take a press meant for a later service; the manager is dropped after this body, on
+            // the creating thread.
             self.stop.store(true, Ordering::Release);
+            if let Some(handle) = self.forwarder.take() {
+                let _ = handle.join();
+            }
         }
     }
 

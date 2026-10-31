@@ -588,11 +588,11 @@ fn on_hotkey_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -
 fn hotkey_register_conflict_and_unregister() {
     use lingopop_platform::{GlobalHotkeyService, HotkeyService};
     on_hotkey_thread(|| {
+        // One live service only: RegisterHotKey reports the same chord twice on one window too.
         let first = GlobalHotkeyService::new().expect("service");
         let id = first.register(&f9_chord()).expect("first register");
-        let second = GlobalHotkeyService::new().expect("second service");
         assert_eq!(
-            second.register(&f9_chord()),
+            first.register(&f9_chord()),
             Err(PlatformError::HotkeyConflict)
         );
         first.unregister(id).expect("unregister");
@@ -660,5 +660,23 @@ fn hotkey_press_delivers_event() {
             .recv_timeout(Duration::from_secs(1))
             .expect("hotkey event");
         assert_eq!(event.id, id);
+    });
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn hotkey_service_drop_joins_forwarder_and_allows_recreate() {
+    use lingopop_platform::{GlobalHotkeyService, HotkeyService};
+    on_hotkey_thread(|| {
+        let service = GlobalHotkeyService::new().expect("service");
+        service.register(&f9_chord()).expect("register");
+        let started = Instant::now();
+        drop(service);
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "drop must join the forwarder within a poll interval"
+        );
+        let again = GlobalHotkeyService::new().expect("recreated service");
+        again.register(&f9_chord()).expect("chord is free again");
     });
 }

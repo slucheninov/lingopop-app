@@ -134,3 +134,56 @@ fn fake_hotkey_service_fire_delivers_event() {
         Ok(HotkeyEvent { id })
     );
 }
+
+#[cfg(any(windows, target_os = "macos"))]
+mod error_mapping {
+    use global_hotkey::hotkey::HotKey;
+    use global_hotkey::Error;
+    use lingopop_platform::hotkey::map_error;
+    use lingopop_platform::PlatformError;
+
+    fn chord() -> HotKey {
+        HotKey::new(
+            Some(keyboard_types::Modifiers::CONTROL),
+            keyboard_types::Code::KeyT,
+        )
+    }
+
+    #[test]
+    fn map_error_already_registered_is_conflict() {
+        assert_eq!(
+            map_error(Error::AlreadyRegistered(chord())),
+            PlatformError::HotkeyConflict
+        );
+    }
+
+    #[test]
+    fn map_error_os_1409_is_conflict() {
+        let e = Error::OsError(std::io::Error::from_raw_os_error(1409));
+        assert_eq!(map_error(e), PlatformError::HotkeyConflict);
+    }
+
+    #[test]
+    fn map_error_unknown_key_is_invalid() {
+        assert_eq!(
+            map_error(Error::UnrecognizedHotKeyCode("x".into())),
+            PlatformError::InvalidHotkey
+        );
+        assert_eq!(
+            map_error(Error::FailedToRegister("x".into())),
+            PlatformError::InvalidHotkey
+        );
+    }
+
+    #[test]
+    fn map_error_other_os_error_carries_code() {
+        let e = Error::OsError(std::io::Error::from_raw_os_error(5));
+        assert_eq!(
+            map_error(e),
+            PlatformError::Os {
+                api: "RegisterHotKey",
+                code: 5
+            }
+        );
+    }
+}
