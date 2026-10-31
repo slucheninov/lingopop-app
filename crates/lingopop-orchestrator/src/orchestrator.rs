@@ -28,7 +28,7 @@ use crate::popup::{PopupView, INITIAL_POPUP_SIZE};
 use crate::providers::retry_providers;
 use crate::screen::RegionPicker;
 use crate::session::{Session, SessionState};
-use crate::view_model::{PopupPhase, PopupViewModel};
+use crate::view_model::{PopupPhase, PopupViewModel, UserMessageView};
 
 /// Settings and the provider snapshot, read fresh for every run.
 pub trait ConfigSource: Send + Sync {
@@ -198,6 +198,9 @@ impl Orchestrator {
                 PopupPhase::Ocr { text, .. } => Some(text.clone()),
                 _ => None,
             };
+            session.last_model =
+                matches!(model.phase, PopupPhase::Result(_) | PopupPhase::Ocr { .. })
+                    .then(|| model.clone());
         }
         let (cursor, monitors) = (st.cursor, &st.monitors);
         let popup = &self.deps().popup;
@@ -224,6 +227,33 @@ impl Orchestrator {
         message: crate::view_model::UserMessageView,
     ) {
         self.present(generation, &PopupViewModel::error(message, Vec::new(), &[]));
+    }
+
+    /// Shows the on-screen Result / OCR model again with `notice` (a failed Copy or Replace),
+    /// so the user keeps the translation. Without a stored model it falls back to an error.
+    pub(crate) fn present_notice(&self, generation: u64, notice: UserMessageView) {
+        let mut st = self.state();
+        if st.generation != generation {
+            return;
+        }
+        let model = match st.session.as_ref().and_then(|s| s.last_model.clone()) {
+            Some(m) => m.with_notice(notice),
+            None => PopupViewModel::error(notice, Vec::new(), &[]),
+        };
+        self.present_locked(&mut st, &model);
+    }
+
+    /// After a successful Copy: drops a notice left by an earlier failure.
+    pub(crate) fn clear_notice(&self, generation: u64) {
+        let mut st = self.state();
+        if st.generation != generation {
+            return;
+        }
+        let model = match st.session.as_ref().and_then(|s| s.last_model.clone()) {
+            Some(m) if m.notice.is_some() => m.without_notice(),
+            _ => return,
+        };
+        self.present_locked(&mut st, &model);
     }
 
     async fn text_flow(&self, operation: AIOperation, generation: u64) {
@@ -349,6 +379,7 @@ impl Orchestrator {
                 target_window: captured.target,
                 primary,
                 image: None,
+                last_model: None,
             });
         }
         self.present(generation, &PopupViewModel::loading(operation, &text));

@@ -317,19 +317,73 @@ async fn actions_without_result_do_nothing() {
     assert!(r.popup.view.calls().is_empty());
     assert!(t.requests().is_empty());
 }
+fn notice_key(r: &Rig) -> Option<String> {
+    model(r).notice.map(|n| n.key)
+}
+fn result_text(r: &Rig) -> String {
+    match model(r).phase {
+        PopupPhase::Result(v) => v.text,
+        _ => panic!("result expected"),
+    }
+}
 #[tokio::test]
-async fn copy_failure_shows_error_and_clears_displayed_result() {
+async fn copy_failure_keeps_result_with_notice() {
     let (r, t) = ready_rig();
     ready(&r).await;
     r.clip
         .fail_next(FakeOp::Write, PlatformError::ClipboardBusy);
     r.orch.copy().await;
-    error(&r, KEY_CLIPBOARD_TIMEOUT);
-    let calls = r.popup.view.calls();
+    assert_eq!(result_text(&r), "DISPLAYED");
+    assert_eq!(notice_key(&r).as_deref(), Some(KEY_CLIPBOARD_TIMEOUT));
+    assert!(r.popup.is_visible());
+    // The session stays usable: a later Copy succeeds and drops the notice.
     r.orch.copy().await;
-    r.orch.rewrite().await;
-    assert_eq!(r.popup.view.calls(), calls);
-    assert_eq!(t.requests().len(), 1);
+    assert_eq!(r.clip.text().as_deref(), Some("DISPLAYED"));
+    assert_eq!(result_text(&r), "DISPLAYED");
+    assert_eq!(notice_key(&r), None);
+    // Replace and Retry still work.
+    r.orch.retry(ProviderType::Claude).await;
+    assert_eq!(t.requests().len(), 2);
+    r.orch.replace().await;
+    assert_eq!(r.keys.pasted(), vec![Some("DISPLAYED".into())]);
+}
+#[tokio::test]
+async fn replace_gate_failure_reshows_result() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.clip
+        .fail_next(FakeOp::WriteTransient, PlatformError::ClipboardBusy);
+    r.orch.replace().await;
+    assert!(r.keys.pasted().is_empty());
+    assert!(r.popup.is_visible());
+    assert!(matches!(
+        r.popup.view.calls().last(),
+        Some(PopupCall::ShowAt(_, _))
+    ));
+    assert_eq!(result_text(&r), "DISPLAYED");
+    assert_eq!(notice_key(&r).as_deref(), Some(KEY_CLIPBOARD_TIMEOUT));
+    // The dismiss watcher is restarted with the re-shown popup.
+    let starts = r
+        .dismiss
+        .calls()
+        .iter()
+        .filter(|c| matches!(c, DismissCall::Start(_)))
+        .count();
+    assert_eq!(starts, 2);
+    assert_eq!(
+        r.dismiss
+            .calls()
+            .iter()
+            .filter(|c| **c == DismissCall::Stop)
+            .count(),
+        1
+    );
+    // Same session: Copy works and Replace now pastes.
+    r.orch.copy().await;
+    assert_eq!(r.clip.text().as_deref(), Some("DISPLAYED"));
+    r.orch.replace().await;
+    assert_eq!(r.keys.pasted(), vec![Some("DISPLAYED".into())]);
+    assert!(!r.popup.is_visible());
 }
 
 struct PendingTransport {

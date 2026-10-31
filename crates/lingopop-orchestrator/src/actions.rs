@@ -1,9 +1,10 @@
 //! Popup actions. Each action cancels the previous flow through `start`; blocking platform
 //! work finishes under the gate even if its awaiting action has since been cancelled.
 use lingopop_core::{operation::AIOperation, provider::ProviderType, runner::RunRequest};
-use lingopop_platform::{replace_selection, ReplaceOptions, ReplaceOutcome};
+use lingopop_platform::{replace_selection, PlatformError, ReplaceOptions, ReplaceOutcome};
 
 use crate::{
+    gate::GateError,
     messages::{gate_message, KEY_FOREGROUND_LOST},
     orchestrator::Orchestrator,
     view_model::{PopupViewModel, UserMessageView},
@@ -23,13 +24,15 @@ impl Orchestrator {
                 return;
             };
             let clipboard = me.deps().platform.clipboard.clone();
-            if let Err(e) = me
+            // A failed Copy keeps the result on screen and adds a notice.
+            match me
                 .deps()
                 .gate
                 .run(move || clipboard.write_text(&text))
                 .await
             {
-                me.present_error(generation, gate_message(&e));
+                Ok(()) => me.clear_notice(generation),
+                Err(e) => me.present_notice(generation, gate_message(&e)),
             }
         })
         .await;
@@ -38,7 +41,7 @@ impl Orchestrator {
     pub async fn replace(&self) {
         self.start(|me, generation| async move {
             let (text, target) = {
-                let mut st = me.state();
+                let st = me.state();
                 if st.generation != generation {
                     return;
                 }
@@ -53,9 +56,10 @@ impl Orchestrator {
                     return;
                 };
                 let target = session.target_window;
+                // The session stays until the paste is decided, so a gate failure can
+                // show the result again.
                 me.deps().popup.hide();
                 me.deps().platform.dismiss.stop();
-                st.session = None;
                 (text, target)
             };
             let p = &me.deps().platform;
@@ -90,15 +94,36 @@ impl Orchestrator {
                 })
                 .await;
             match outcome {
-                Ok(ReplaceOutcome::Pasted) => {}
-                Ok(ReplaceOutcome::ForegroundLost) => me.present_error(
-                    generation,
-                    UserMessageView::new(KEY_FOREGROUND_LOST, vec![]),
-                ),
-                Err(e) => me.present_error(generation, gate_message(&e)),
+                Ok(ReplaceOutcome::Pasted) => me.end_session(generation),
+                Ok(ReplaceOutcome::ForegroundLost) => {
+                    me.end_session(generation);
+                    me.present_error(
+                        generation,
+                        UserMessageView::new(KEY_FOREGROUND_LOST, vec![]),
+                    );
+                }
+                Err(GateError::Platform(PlatformError::InputBlocked)) => {
+                    me.end_session(generation);
+                    me.present_error(
+                        generation,
+                        gate_message(&GateError::Platform(PlatformError::InputBlocked)),
+                    );
+                }
+                // Busy / TimedOut / Panicked / other platform errors: nothing was replaced, so
+                // show the same result again (popup re-shown at the last origin, dismiss
+                // watcher restarted by the show) with a notice. The session stays usable.
+                Err(e) => me.present_notice(generation, gate_message(&e)),
             }
         })
         .await;
+    }
+
+    /// Clears the session if `generation` is still current.
+    fn end_session(&self, generation: u64) {
+        let mut st = self.state();
+        if st.generation == generation {
+            st.session = None;
+        }
     }
 
     pub async fn retry(&self, provider: ProviderType) {

@@ -5,7 +5,7 @@ export type RowMode = 'full' | 'mixed' | 'compact';
 export interface ActionRowView { preferred: RowMode; candidates: RowMode[] }
 export interface UserMessageView { key: string; args: string[] }
 export interface RetryProvider { provider: Provider; name: string }
-interface Base { retryProviders: RetryProvider[] }
+interface Base { retryProviders: RetryProvider[]; notice?: UserMessageView }
 export interface LoadingModel extends Base { phase: 'loading'; operation: Operation; preview: string }
 export interface OcrModel extends Base { phase: 'ocr'; text: string; translateProviders: RetryProvider[]; activeTranslateProvider: Provider | null; actionRow: ActionRowView }
 export interface ResultModel extends Base {

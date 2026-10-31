@@ -152,6 +152,17 @@ test('popup_renders_loading_phase_without_action_row', async () => {
   await waitFor(() => expect(screen.getByText('Translating…')).toBeTruthy());
   expect(screen.queryByRole('button',{name:'Copy'})).toBeNull();
 });
+test('popup_shows_notice_next_to_the_result', async () => {
+  render(Popup);
+  const handler = vi.mocked(listen).mock.calls.at(-1)![1];
+  handler({event:'popup://model',id:1,payload:result});
+  await waitFor(() => expect(screen.getByText('Hello')).toBeTruthy());
+  expect(screen.queryByRole('status')).toBeNull();
+  handler({event:'popup://model',id:2,payload:{...result,notice:{key:'Clipboard busy %@',args:['now']}}});
+  await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Clipboard busy now'));
+  expect(screen.getByText('Hello')).toBeTruthy();
+  expect(viewKey({...result,notice:{key:'x',args:[]}})).toBe(viewKey(result));
+});
 const m6 = (text: string) => text.length * 6;
 test('row_width_exact_full_arithmetic_matches_core', () => {
   expect(rowWidth(['Copy','Replace'], true, 'full', m6)).toBe(224 + 24 + 28);

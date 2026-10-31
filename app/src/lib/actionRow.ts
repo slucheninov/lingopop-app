@@ -56,6 +56,6 @@ export function panelWidth(model: PopupModel, measure: (text: string) => number 
 export const rowAvailable = (width: number): number => width - 2 * BORDER_WIDTH;
 /** Identity of a displayed result: changes when content changes, not when only the retry list does. */
 export function viewKey(model: PopupModel): string {
-  const { retryProviders: _retry, ...rest } = model;
+  const { retryProviders: _retry, notice: _notice, ...rest } = model;
   return JSON.stringify(rest);
 }

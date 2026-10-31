@@ -9,6 +9,8 @@ use std::sync::Arc;
 use lingopop_platform::{CapturedImage, MonitorInfo, Point, WindowHandle};
 use tokio::task::AbortHandle;
 
+use crate::view_model::PopupViewModel;
+
 /// What the popup actions (Task 4) need about the running operation.
 #[derive(Clone)]
 pub struct Session {
@@ -24,6 +26,9 @@ pub struct Session {
     /// The captured Screen Translate region, kept for the vision retry. Dropped on close and
     /// whenever a non-ScreenTranslate operation starts.
     pub image: Option<Arc<CapturedImage>>,
+    /// The Result / OCR view model on screen, so a failed Copy or Replace can show the same
+    /// result again with a notice. Cleared when any other phase is presented.
+    pub last_model: Option<PopupViewModel>,
 }
 
 impl std::fmt::Debug for Session {
@@ -77,6 +82,7 @@ mod tests {
             target_window: None,
             primary: ProviderType::Claude,
             image: None,
+            last_model: None,
         };
         let debug = format!("{s:?}");
         assert!(!debug.contains("PRIVATE-"));

@@ -181,6 +181,7 @@ impl Orchestrator {
                 target_window: prelude.target,
                 primary: settings.active_provider,
                 image: Some(image.clone()),
+                last_model: None,
             });
             self.present_at_locked(
                 &mut st,

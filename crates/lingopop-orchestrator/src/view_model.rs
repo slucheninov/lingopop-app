@@ -207,9 +207,24 @@ pub struct PopupViewModel {
     #[serde(flatten)]
     pub phase: PopupPhase,
     pub retry_providers: Vec<RetryProvider>,
+    /// A transient, non-destructive message shown next to a result (a failed Copy or
+    /// Replace). Absent from the JSON when `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<UserMessageView>,
 }
 
 impl PopupViewModel {
+    /// The same model with a transient notice (replaces an earlier one).
+    pub fn with_notice(mut self, notice: UserMessageView) -> Self {
+        self.notice = Some(notice);
+        self
+    }
+
+    pub fn without_notice(mut self) -> Self {
+        self.notice = None;
+        self
+    }
+
     pub fn loading(operation: AIOperation, original: &str) -> Self {
         Self {
             phase: PopupPhase::Loading {
@@ -217,6 +232,7 @@ impl PopupViewModel {
                 preview: original.chars().take(PREVIEW_CHARS).collect(),
             },
             retry_providers: Vec::new(),
+            notice: None,
         }
     }
 
@@ -224,6 +240,7 @@ impl PopupViewModel {
         Self {
             phase: PopupPhase::Result(ResultView::from_result(result, !retry_providers.is_empty())),
             retry_providers: RetryProvider::list(retry_providers),
+            notice: None,
         }
     }
 
@@ -235,6 +252,7 @@ impl PopupViewModel {
         Self {
             phase: PopupPhase::Error(ErrorView { message, details }),
             retry_providers: RetryProvider::list(retry_providers),
+            notice: None,
         }
     }
 
@@ -255,6 +273,7 @@ impl PopupViewModel {
                 action_row: ActionRowView::new(text.chars().count(), button_count),
             },
             retry_providers: RetryProvider::list(retry_providers),
+            notice: None,
         }
     }
 }

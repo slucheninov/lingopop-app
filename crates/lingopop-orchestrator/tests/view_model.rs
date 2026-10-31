@@ -151,3 +151,17 @@ fn view_model_json_shape() {
         json!({"phase": "loading", "operation": "grammarFix", "preview": "abc", "retryProviders": []})
     );
 }
+
+#[test]
+fn notice_serializes_only_when_set() {
+    let vm = PopupViewModel::loading(AIOperation::GrammarFix, "abc");
+    let with = vm.clone().with_notice(UserMessageView::new("Busy", vec![]));
+    assert_eq!(
+        serde_json::to_value(&with).unwrap()["notice"],
+        json!({"key": "Busy", "args": []})
+    );
+    assert!(serde_json::to_value(with.without_notice())
+        .unwrap()
+        .get("notice")
+        .is_none());
+}
