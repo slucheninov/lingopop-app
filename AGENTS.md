@@ -15,6 +15,7 @@ Each task appends its own modules here in the same commit.
 - `.gitignore`, `.gitattributes` (`eol=lf`), `LICENSE`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 - `scripts/check-core-deps.sh` - guard: `lingopop-core` must not depend on OS or UI crates, nor on a platform TLS stack (`native-tls`, `openssl*`, `aws-lc-*`, `rustls-native-certs`, `rustls-platform-verifier`, `system-configuration*`) and must not have `tokio` as a direct normal dependency (dev-dependency or transitive via reqwest is fine); a second guard fails when `lingopop-orchestrator` has a direct normal dependency on `tauri*`, `windows*`, `winapi`, `objc*`, `cocoa`, `core-foundation*` or `core-graphics`
 - `.github/workflows/ci.yml` - CI (`core` matrix on Windows and macOS, aggregator job `build-and-test`)
+- `.github/workflows/release.yml` - release workflow (triggers: push of a `v*` tag and `workflow_dispatch`; dispatch only uploads the workflow artifact). Job `build-windows-portable` on `windows-latest`: on tag runs the tag without `v` must equal the workspace `version` in `Cargo.toml` and `version` in `app/src-tauri/tauri.conf.json` (the two must always match); frontend `npm ci` / build / test, `cargo build -p lingopop-app --release --locked`, stages `target/release/lingopop.exe` as `LingoPop-<version>-windows-x64-portable.exe` plus `SHA256SUMS.txt` (lowercase SHA-256, two spaces, file name) and uploads them as an artifact. Job `publish-prerelease` (tag runs only, the only job with `contents: write`) runs `gh release create --prerelease` with notes from the matching CHANGELOG section. The exe is unsigned (SmartScreen warns) and needs the WebView2 runtime
 - `crates/lingopop-core/Cargo.toml`, `crates/lingopop-core/src/lib.rs` - the OS-agnostic core crate (`VERSION`)
 - `crates/lingopop-core/src/operation.rs` - `AIOperation` (frozen raw values, English names)
 - `crates/lingopop-core/src/provider.rs` - `ProviderType`, `ProviderField`, static `ProviderCapabilities`, `ProviderConnectionSettings` (hand-written `Debug`: `base_url` / `referer` go through `errors::debug_url`), `default_providers()`
@@ -152,6 +153,12 @@ bash scripts/check-core-deps.sh
 ```
 
 Windows is verified only by CI; the dev machine is a Mac.
+
+### Release
+
+1. Bump the version to the same value in `Cargo.toml` (`[workspace.package]`), `app/src-tauri/tauri.conf.json` and `app/package.json` (plus `app/package-lock.json` via `npm install --package-lock-only --prefix app`; `Cargo.lock` updates with `cargo check --workspace`).
+2. Move the CHANGELOG `Unreleased` entries into a `## [<version>] - <date>` section.
+3. Merge through a PR, then push the tag `v<version>` on `main`. The `Release` workflow checks the tag against the versions, builds the portable exe and publishes an unsigned pre-release.
 
 ### Mac fixtures
 

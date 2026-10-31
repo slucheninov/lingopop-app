@@ -58,7 +58,9 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 mod tests {
     #[test]
     fn version_is_semver_shaped() {
-        let parts: Vec<&str> = crate::VERSION.split('.').collect();
+        // MAJOR.MINOR.PATCH with an optional `-pre.release` suffix.
+        let core = crate::VERSION.split('-').next().unwrap_or_default();
+        let parts: Vec<&str> = core.split('.').collect();
         assert_eq!(
             parts.len(),
             3,
