@@ -337,6 +337,9 @@ git push
 
 ---
 
+
+**Desktop probe verdict (2026-10-31):** positive on `windows-latest` (`PROBE interactive=true clipboard=ok hotkey=ok sendinput=1`, WinSta0, 1 monitor 1024x768). All 15 `--ignored` desktop tests pass; the CI desktop step is REQUIRED (no `continue-on-error`) and the tests stay `#[ignore]`.
+
 ### Task 4: Monitors, popup clamping, screen capture
 
 **Files:**

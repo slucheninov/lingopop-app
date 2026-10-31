@@ -46,7 +46,6 @@ jobs:
         run: bash scripts/check-core-deps.sh
       - name: Windows desktop tests (diagnostic probe and desktop smoke)
         if: runner.os == 'Windows'
-        continue-on-error: true
         shell: bash
         run: cargo test -p lingopop-platform --locked --test desktop_probe --test windows_smoke -- --ignored --nocapture --test-threads=1
 
