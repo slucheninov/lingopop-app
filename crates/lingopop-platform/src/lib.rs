@@ -36,8 +36,8 @@ pub use crate::macos::{
 };
 #[cfg(windows)]
 pub use crate::windows::{
-    WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground, WindowsKeys,
-    WindowsMonitors, WindowsOcr, WindowsPopupWindow, WindowsProtector,
+    set_dismiss_log, WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground,
+    WindowsKeys, WindowsMonitors, WindowsOcr, WindowsPopupWindow, WindowsProtector,
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};

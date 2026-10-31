@@ -21,4 +21,4 @@ pub use ocr::WindowsOcr;
 mod popup_window;
 pub use popup_window::WindowsPopupWindow;
 mod dismiss;
-pub use dismiss::WindowsDismissWatcher;
+pub use dismiss::{set_dismiss_log, WindowsDismissWatcher};
