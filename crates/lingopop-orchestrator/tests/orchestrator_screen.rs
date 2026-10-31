@@ -722,3 +722,19 @@ async fn reposition_updates_dismiss_rect_instead_of_restarting() {
         ]
     );
 }
+
+#[tokio::test]
+async fn failed_reposition_hides_popup_and_stops_dismissal() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert!(lingopop_orchestrator::PopupView::is_visible(
+        r.popup.as_ref()
+    ));
+    r.popup.fail_show(true);
+    r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert!(!lingopop_orchestrator::PopupView::is_visible(
+        r.popup.as_ref()
+    ));
+    assert_eq!(r.dismiss.calls().last(), Some(&DismissCall::Stop));
+}

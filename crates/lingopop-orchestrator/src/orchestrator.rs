@@ -254,6 +254,12 @@ impl Orchestrator {
             let origin = popup_origin(size, cursor, monitors);
             if !popup.show_at(origin, size, model) {
                 self.log("popup show failed");
+                if was_visible {
+                    // A failed reposition: hide the old window and stop its dismissal so the
+                    // window, `is_visible` and the watcher agree.
+                    popup.hide();
+                    self.deps().platform.dismiss.stop();
+                }
                 return;
             }
             let rect = popup_rect(origin, size, monitors);
