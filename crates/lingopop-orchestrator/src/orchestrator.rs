@@ -27,7 +27,7 @@ use crate::placement::popup_origin;
 use crate::popup::{PopupView, INITIAL_POPUP_SIZE};
 use crate::providers::retry_providers;
 use crate::session::{Session, SessionState};
-use crate::view_model::PopupViewModel;
+use crate::view_model::{PopupPhase, PopupViewModel};
 
 /// Settings and the provider snapshot, read fresh for every run.
 pub trait ConfigSource: Send + Sync {
@@ -143,6 +143,12 @@ impl Orchestrator {
 
     // Caller holds the generation mutex through every synchronous side effect.
     pub(crate) fn present_locked(&self, st: &mut SessionState, model: &PopupViewModel) {
+        if let Some(session) = st.session.as_mut() {
+            session.last_result = match &model.phase {
+                PopupPhase::Result(result) => Some(result.text.clone()),
+                _ => None,
+            };
+        }
         let (cursor, monitors) = (st.cursor, &st.monitors);
         let popup = &self.deps().popup;
         if popup.is_visible() {
@@ -152,7 +158,11 @@ impl Orchestrator {
         }
     }
 
-    fn present_error(&self, generation: u64, message: crate::view_model::UserMessageView) {
+    pub(crate) fn present_error(
+        &self,
+        generation: u64,
+        message: crate::view_model::UserMessageView,
+    ) {
         self.present(generation, &PopupViewModel::error(message, Vec::new(), &[]));
     }
 
@@ -263,6 +273,7 @@ impl Orchestrator {
             st.session = Some(Session {
                 operation,
                 text: text.clone(),
+                last_result: None,
                 detected_source: detected_source.clone(),
                 target_language: target_language.clone(),
                 target_window: captured.target,

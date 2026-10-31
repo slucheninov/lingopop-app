@@ -3,6 +3,7 @@
 //! on `tauri` or on an OS crate; the app crate wires the real platform in.
 #![forbid(unsafe_code)]
 
+pub mod actions;
 pub mod fake;
 pub mod gate;
 pub mod messages;
