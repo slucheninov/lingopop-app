@@ -33,3 +33,4 @@ dist/
 .vscode/
 *.swp
 *~
+app/.svelte-check/
