@@ -1,0 +1,20 @@
+[package]
+name = "lingopop-orchestrator"
+description = "OS-agnostic app flow logic over the lingopop-platform traits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1.92"
+lingopop-core = { path = "../lingopop-core" }
+lingopop-platform = { path = "../lingopop-platform" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }

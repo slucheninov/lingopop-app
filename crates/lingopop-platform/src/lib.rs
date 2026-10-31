@@ -9,6 +9,7 @@ pub mod capture;
 pub mod clipboard;
 #[cfg(not(windows))]
 pub mod dev_protector;
+pub mod dismiss;
 pub mod error;
 pub mod fake;
 pub mod foreground;
@@ -21,6 +22,7 @@ mod macos;
 pub mod monitors;
 pub mod native;
 pub mod ocr;
+pub mod popup_window;
 pub mod selection;
 pub mod sleeper;
 #[cfg(windows)]
@@ -28,11 +30,14 @@ pub mod sleeper;
 mod windows;
 
 #[cfg(target_os = "macos")]
-pub use crate::macos::{MacCapture, MacClipboard, MacForeground, MacKeys, MacMonitors, MacOcr};
+pub use crate::macos::{
+    MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacMonitors, MacOcr,
+    MacPopupWindow,
+};
 #[cfg(windows)]
 pub use crate::windows::{
-    WindowsCapture, WindowsClipboard, WindowsForeground, WindowsKeys, WindowsMonitors, WindowsOcr,
-    WindowsProtector,
+    WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground, WindowsKeys,
+    WindowsMonitors, WindowsOcr, WindowsPopupWindow, WindowsProtector,
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
@@ -55,3 +60,6 @@ pub use native::Platform;
 pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
 pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};
+
+pub use dismiss::{classify_click, DismissEvent, DismissWatcher};
+pub use popup_window::NoActivateWindow;

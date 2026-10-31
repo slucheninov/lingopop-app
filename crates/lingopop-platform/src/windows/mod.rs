@@ -17,3 +17,8 @@ pub use foreground::WindowsForeground;
 pub use keys::WindowsKeys;
 pub use monitors::WindowsMonitors;
 pub use ocr::WindowsOcr;
+
+mod popup_window;
+pub use popup_window::WindowsPopupWindow;
+mod dismiss;
+pub use dismiss::WindowsDismissWatcher;

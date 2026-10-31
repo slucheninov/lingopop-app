@@ -40,7 +40,8 @@ impl fmt::Debug for ClipboardEntry {
     }
 }
 
-/// What the clipboard held at one moment. `skipped` holds the NAMES of formats that could not be read.
+/// What the clipboard held at one moment. `skipped` holds known-format unreadable labels and
+/// numeric ids of enumerated formats that were not saved (never clipboard contents).
 #[derive(Clone, PartialEq, Eq)]
 pub struct ClipboardSnapshot {
     pub entries: Vec<ClipboardEntry>,

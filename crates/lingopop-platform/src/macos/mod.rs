@@ -15,3 +15,7 @@ pub use foreground::MacForeground;
 pub use keys::MacKeys;
 pub use monitors::MacMonitors;
 pub use ocr::MacOcr;
+
+mod popup_window;
+pub use popup_window::MacDismissWatcher;
+pub use popup_window::MacPopupWindow;

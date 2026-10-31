@@ -16,6 +16,8 @@ use crate::sleeper::Sleeper;
 /// Windows and must be created on the event-loop thread with `GlobalHotkeyService::new()`.
 #[derive(Clone)]
 pub struct Platform {
+    pub popup_window: Arc<dyn crate::NoActivateWindow>,
+    pub dismiss: Arc<dyn crate::DismissWatcher>,
     pub clipboard: Arc<dyn Clipboard>,
     pub keys: Arc<dyn KeySynth>,
     pub foreground: Arc<dyn ForegroundWindow>,
@@ -37,6 +39,8 @@ pub fn native() -> Platform {
 
     let sleeper: Arc<dyn Sleeper> = Arc::new(SystemSleeper::new());
     Platform {
+        popup_window: Arc::new(crate::WindowsPopupWindow),
+        dismiss: Arc::new(crate::WindowsDismissWatcher::new()),
         clipboard: Arc::new(WindowsClipboard::new(sleeper.clone())),
         keys: Arc::new(WindowsKeys::new()),
         foreground: Arc::new(WindowsForeground::new()),
@@ -57,6 +61,8 @@ pub fn native() -> Platform {
     use crate::sleeper::SystemSleeper;
 
     Platform {
+        popup_window: Arc::new(crate::MacPopupWindow),
+        dismiss: Arc::new(crate::MacDismissWatcher::default()),
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),
         foreground: Arc::new(MacForeground::new()),
