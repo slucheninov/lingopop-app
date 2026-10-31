@@ -197,7 +197,7 @@ fn models(r: &Rig) -> Vec<PopupViewModel> {
         .into_iter()
         .filter_map(|c| match c {
             PopupCall::ShowAt(_, m) | PopupCall::Update(m) => Some(m),
-            PopupCall::Hide => None,
+            PopupCall::Hide | PopupCall::Resize(_) => None,
         })
         .collect()
 }
@@ -667,8 +667,10 @@ async fn reposition_updates_dismiss_rect_instead_of_restarting() {
     r.orch.trigger(AIOperation::ScreenTranslate).await;
     let initial_calls = r.dismiss.calls();
     assert!(matches!(initial_calls.as_slice(), [DismissCall::Start(_)]));
-    let resized = Rect::new(10, 20, 700, 400);
-    r.orch.popup_resized(resized);
+    r.orch.popup_resized((700.0, 400.0));
+    let Some(DismissCall::UpdateRect(resized)) = r.dismiss.calls().last().cloned() else {
+        panic!("expected UpdateRect");
+    };
     r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
     r.orch.trigger(AIOperation::ScreenTranslate).await;
     let origin = popup_origin(

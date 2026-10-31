@@ -98,11 +98,19 @@ impl Orchestrator {
         .await;
     }
 
-    /// The shell reports the actual physical popup rect after layout. This is geometry
-    /// only: it never bumps the generation or cancels the current translation.
-    pub fn popup_resized(&self, rect: Rect) {
+    /// The shell reports the measured LOGICAL popup size after layout. The re-placement and
+    /// the dismiss geometry update happen under the commit lock and only while the popup is
+    /// visible, so a resize racing a Close can never resurrect the popup. Geometry only: it
+    /// never bumps the generation or cancels the current translation.
+    pub fn popup_resized(&self, size_logical: (f64, f64)) {
         let _commit = self.state();
-        self.deps().platform.dismiss.update_rect(rect);
+        let popup = &self.deps().popup;
+        if !popup.is_visible() {
+            return;
+        }
+        if let Some(rect) = popup.resize(size_logical) {
+            self.deps().platform.dismiss.update_rect(rect);
+        }
     }
 
     /// Called by the shell's dismiss-event forwarder (the shell owns the async runtime).
@@ -517,6 +525,9 @@ mod commit_tests {
                 .is_err());
             self.view.update(model);
         }
+        fn resize(&self, size: (f64, f64)) -> Option<lingopop_platform::Rect> {
+            self.view.resize(size)
+        }
         fn hide(&self) {
             self.view.hide();
         }
@@ -582,7 +593,7 @@ mod commit_tests {
         stores.inner.set(Arc::downgrade(&me.inner)).unwrap();
         popup.inner.set(Arc::downgrade(&me.inner)).unwrap();
         me.state().generation = 2;
-        me.popup_resized(Rect::new(1, 2, 300, 200));
+        me.popup_resized((300.0, 200.0));
         assert_eq!(me.state().generation, 2, "resize must not cancel a run");
         let request = || RunRequest {
             operation: AIOperation::Translate,

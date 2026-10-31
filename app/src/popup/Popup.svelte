@@ -19,12 +19,18 @@
   });
 
   onMount(() => {
-    const unlisten = listen<Record<string, unknown>>('popup://model', (event) => {
+    let disposed = false;
+    const registration = listen<Record<string, unknown>>('popup://model', (event) => {
       model = event.payload;
     });
-    void invoke('popup_ready');
+    // Only tell the shell we are ready once the listener is registered, or the re-emitted
+    // model could be lost.
+    void registration.then(() => {
+      if (!disposed) void invoke('popup_ready');
+    });
     return () => {
-      void unlisten.then((fn) => fn());
+      disposed = true;
+      void registration.then((unlisten) => unlisten());
     };
   });
 </script>

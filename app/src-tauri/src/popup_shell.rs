@@ -11,10 +11,16 @@
 //!   does a cross-thread `SetWindowPos`.
 //! - The model JSON is the only place user text leaves Rust; failures log fixed text only.
 //!
+//! - The native window handle is cached ONCE in `setup` (on the main thread, when the window is
+//!   built) and passed to `ShellPopup::new`. `WebviewWindow::hwnd()` synchronously dispatches
+//!   to the main thread on Windows, so no `PopupView` method may ever call it.
+//!
 //! The window size is kept in LOGICAL pixels (what the frontend measures) and converted with
 //! the scale of the monitor under the popup's origin on every show, so it survives a move to
 //! another monitor. The orchestrator starts its dismiss watcher with the initial size; the
-//! frontend reports the measured size after every render (`popup_resized`), which corrects it.
+//! frontend reports the measured size after every render (`popup_resized`), which corrects it
+//! through `PopupView::resize`, called by the orchestrator under its commit mutex and only while
+//! the popup is visible (a resize never re-shows a popup that Close just hid).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -39,12 +45,16 @@ struct Geometry {
 pub struct ShellPopup {
     app: AppHandle,
     platform: Platform,
+    /// Native handle cached at construction (see the module docs); `None` = unavailable.
+    handle: Option<WindowHandle>,
     visible: AtomicBool,
     geometry: Mutex<Geometry>,
 }
 
+/// Reads the native handle. On Windows this blocks on the main thread: call it only from
+/// `setup` (main thread), never from `PopupView` methods.
 #[cfg(windows)]
-fn native_handle(window: &WebviewWindow) -> Option<WindowHandle> {
+pub fn native_handle(window: &WebviewWindow) -> Option<WindowHandle> {
     window
         .hwnd()
         .ok()
@@ -52,15 +62,16 @@ fn native_handle(window: &WebviewWindow) -> Option<WindowHandle> {
 }
 
 #[cfg(not(windows))]
-fn native_handle(_window: &WebviewWindow) -> Option<WindowHandle> {
+pub fn native_handle(_window: &WebviewWindow) -> Option<WindowHandle> {
     Some(WindowHandle(0))
 }
 
 impl ShellPopup {
-    pub fn new(app: AppHandle, platform: Platform) -> Self {
+    pub fn new(app: AppHandle, platform: Platform, handle: Option<WindowHandle>) -> Self {
         Self {
             app,
             platform,
+            handle,
             visible: AtomicBool::new(false),
             geometry: Mutex::new(Geometry {
                 origin: None,
@@ -77,6 +88,7 @@ impl ShellPopup {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    #[cfg(not(windows))]
     fn window(&self) -> Option<WebviewWindow> {
         let window = self.app.get_webview_window(POPUP_LABEL);
         if window.is_none() {
@@ -100,8 +112,7 @@ impl ShellPopup {
 
     /// Shows or moves the window to `rect` without activating it.
     fn place(&self, rect: Rect) {
-        let Some(window) = self.window() else { return };
-        let Some(handle) = native_handle(&window) else {
+        let Some(handle) = self.handle else {
             log::warn!("popup window handle is unavailable");
             return;
         };
@@ -110,6 +121,7 @@ impl ShellPopup {
             // macOS dev only: the platform has no no-activate show; Tauri `show()` may activate.
             #[cfg(not(windows))]
             Err(lingopop_platform::PlatformError::Unsupported(_)) => {
+                let Some(window) = self.window() else { return };
                 let _ = window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
                 let _ = window.set_size(tauri::PhysicalSize::new(
                     rect.width.max(1) as u32,
@@ -131,27 +143,6 @@ impl ShellPopup {
         if let Some(model) = pending {
             self.emit_model(&model);
         }
-    }
-
-    /// The measured content size in logical pixels. Returns the new physical rect when the
-    /// popup is visible (already re-applied to the window) so the caller can tell the
-    /// orchestrator; `None` when hidden or the size is unusable.
-    pub fn resized(&self, width: f64, height: f64) -> Option<Rect> {
-        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
-            return None;
-        }
-        let logical = (width.min(MAX_LOGICAL_SIDE), height.min(MAX_LOGICAL_SIDE));
-        let origin = {
-            let mut geometry = self.geometry();
-            geometry.logical = logical;
-            geometry.origin
-        };
-        if !self.is_visible() {
-            return None;
-        }
-        let rect = self.rect_for(origin?, logical);
-        self.place(rect);
-        Some(rect)
     }
 }
 
@@ -181,17 +172,35 @@ impl PopupView for ShellPopup {
         self.emit_model(&value);
     }
 
+    fn resize(&self, size_logical: (f64, f64)) -> Option<Rect> {
+        let (width, height) = size_logical;
+        if !(width.is_finite() && height.is_finite() && width >= 1.0 && height >= 1.0) {
+            return None;
+        }
+        let logical = (width.min(MAX_LOGICAL_SIDE), height.min(MAX_LOGICAL_SIDE));
+        let origin = {
+            let mut geometry = self.geometry();
+            geometry.logical = logical;
+            geometry.origin
+        };
+        if !self.is_visible() {
+            return None;
+        }
+        let rect = self.rect_for(origin?, logical);
+        self.place(rect);
+        Some(rect)
+    }
+
     fn hide(&self) {
         self.visible.store(false, Ordering::Release);
-        let Some(window) = self.window() else { return };
-        let Some(handle) = native_handle(&window) else {
-            return;
-        };
+        let Some(handle) = self.handle else { return };
         match self.platform.popup_window.hide(handle) {
             Ok(()) => {}
             #[cfg(not(windows))]
             Err(lingopop_platform::PlatformError::Unsupported(_)) => {
-                let _ = window.hide();
+                if let Some(window) = self.window() {
+                    let _ = window.hide();
+                }
             }
             Err(e) => log::warn!("popup hide failed: {e}"),
         }

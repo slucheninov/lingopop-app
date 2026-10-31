@@ -22,6 +22,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub enum PopupCall {
     ShowAt(Point, PopupViewModel),
     Update(PopupViewModel),
+    /// A visible popup re-placed at its origin with the given logical size.
+    Resize((f64, f64)),
     Hide,
 }
 
@@ -30,6 +32,7 @@ pub enum PopupCall {
 pub struct FakePopup {
     calls: Mutex<Vec<PopupCall>>,
     visible: AtomicBool,
+    origin: Mutex<Option<Point>>,
 }
 
 impl FakePopup {
@@ -45,11 +48,28 @@ impl FakePopup {
 impl PopupView for FakePopup {
     fn show_at(&self, origin: Point, model: &PopupViewModel) {
         lock(&self.calls).push(PopupCall::ShowAt(origin, model.clone()));
+        *lock(&self.origin) = Some(origin);
         self.visible.store(true, Ordering::SeqCst);
     }
 
     fn update(&self, model: &PopupViewModel) {
         lock(&self.calls).push(PopupCall::Update(model.clone()));
+    }
+
+    /// Visible: records `Resize` and returns the rect at the last origin with the size rounded
+    /// up (scale 1). Hidden: `None`, nothing recorded.
+    fn resize(&self, size: (f64, f64)) -> Option<Rect> {
+        if !self.is_visible() {
+            return None;
+        }
+        let origin = (*lock(&self.origin))?;
+        lock(&self.calls).push(PopupCall::Resize(size));
+        Some(Rect::new(
+            origin.x,
+            origin.y,
+            size.0.ceil() as i32,
+            size.1.ceil() as i32,
+        ))
     }
 
     fn hide(&self) {

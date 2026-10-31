@@ -231,7 +231,7 @@ fn result_text(m: &PopupViewModel) -> Option<&str> {
 fn last_model(r: &Rig) -> PopupViewModel {
     match r.popup.calls().last().cloned().expect("a popup call") {
         PopupCall::ShowAt(_, m) | PopupCall::Update(m) => m,
-        PopupCall::Hide => panic!("popup was hidden"),
+        PopupCall::Hide | PopupCall::Resize(_) => panic!("popup was hidden or resized"),
     }
 }
 

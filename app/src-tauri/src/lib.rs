@@ -34,7 +34,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     // Created hidden at startup so WebView2's first navigation (which can take focus) happens
     // long before the first hotkey.
     let (width, height) = lingopop_orchestrator::INITIAL_POPUP_SIZE;
-    WebviewWindowBuilder::new(app, POPUP_LABEL, WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(app, POPUP_LABEL, WebviewUrl::App("index.html".into()))
         .visible(false)
         .focused(false)
         .focusable(false)
@@ -46,7 +46,13 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         .inner_size(width, height)
         .build()?;
 
-    let popup = Arc::new(ShellPopup::new(app.handle().clone(), platform.clone()));
+    // Cached once, here on the main thread: `hwnd()` blocks on the main thread on Windows.
+    let handle = popup_shell::native_handle(&window);
+    let popup = Arc::new(ShellPopup::new(
+        app.handle().clone(),
+        platform.clone(),
+        handle,
+    ));
 
     let registry = Arc::new(ProviderRegistry::standard());
     let runner = OperationRunner::new(

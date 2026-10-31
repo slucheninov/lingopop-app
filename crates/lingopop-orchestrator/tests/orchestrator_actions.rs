@@ -40,6 +40,9 @@ impl PopupView for Popup {
     fn update(&self, m: &PopupViewModel) {
         self.view.update(m);
     }
+    fn resize(&self, s: (f64, f64)) -> Option<Rect> {
+        self.view.resize(s)
+    }
     fn hide(&self) {
         self.hidden_at.lock().unwrap().push(self.log.events().len());
         self.view.hide();
@@ -467,11 +470,26 @@ async fn popup_resized_updates_dismiss_rect() {
     let (r, _) = ready_rig();
     ready(&r).await;
     let popup_calls = r.popup.view.calls().len();
-    let rect = Rect::new(-40, 20, 700, 400);
-    r.orch.popup_resized(rect);
-    assert_eq!(
+    r.orch.popup_resized((700.0, 400.0));
+    let Some(PopupCall::Resize(size)) = r.popup.view.calls().last().cloned() else {
+        panic!("expected a Resize call");
+    };
+    assert_eq!(size, (700.0, 400.0));
+    assert_eq!(r.popup.view.calls().len(), popup_calls + 1);
+    assert!(matches!(
         r.dismiss.calls().last(),
-        Some(&DismissCall::UpdateRect(rect))
-    );
-    assert_eq!(r.popup.view.calls().len(), popup_calls);
+        Some(DismissCall::UpdateRect(rect)) if (rect.width, rect.height) == (700, 400)
+    ));
+}
+#[tokio::test]
+async fn popup_resized_after_close_does_nothing() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.orch.close().await;
+    let popup_calls = r.popup.view.calls();
+    let dismiss_calls = r.dismiss.calls();
+    r.orch.popup_resized((700.0, 400.0));
+    assert_eq!(r.popup.view.calls(), popup_calls, "no show or resize");
+    assert!(!r.popup.view.is_visible());
+    assert_eq!(r.dismiss.calls(), dismiss_calls, "no update_rect");
 }

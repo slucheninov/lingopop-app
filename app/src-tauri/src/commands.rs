@@ -58,9 +58,7 @@ pub async fn popup_resized(
     width: f64,
     height: f64,
 ) -> Result<(), String> {
-    if let Some(rect) = state.popup.resized(width, height) {
-        state.orchestrator.popup_resized(rect);
-    }
+    state.orchestrator.popup_resized((width, height));
     Ok(())
 }
 

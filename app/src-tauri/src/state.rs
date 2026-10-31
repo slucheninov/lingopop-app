@@ -3,9 +3,10 @@
 //! Startup never crashes on a bad store:
 //! - settings: a corrupt file is quarantined by `Settings::load` and defaults are used; an I/O
 //!   error also falls back to defaults (nothing is written in Phase 4a);
-//! - secrets: when `SecretStore::open` fails (I/O or protector error) the app starts with an
-//!   EMPTY store opened on a path that never exists (`secrets.unavailable`), so the real file
-//!   is not touched and no key is available; Phase 4a never writes secrets;
+//! - secrets: when `SecretStore::open` fails (I/O or protector error) the store is `None` in
+//!   memory: the snapshot is built with no keys and `ProviderSettingsState::Absent`, no second
+//!   file is opened, the real file is untouched and nothing can panic; Phase 4a never writes
+//!   secrets;
 //! - history / usage: on an open error the store is `None` and persistence is skipped (the real
 //!   file is left alone rather than overwritten by a fresh envelope).
 //!
@@ -42,7 +43,7 @@ fn describe(outcome: &LoadOutcome) -> &'static str {
 
 pub struct ShellConfig {
     settings: Mutex<Settings>,
-    secrets: Mutex<SecretStore>,
+    secrets: Option<Mutex<SecretStore>>,
 }
 
 impl ConfigSource for ShellConfig {
@@ -52,8 +53,13 @@ impl ConfigSource for ShellConfig {
 
     fn snapshot(&self) -> ConfigSnapshot {
         let settings = lock(&self.settings);
-        let secrets = lock(&self.secrets);
-        ConfigSnapshot::from_parts(&settings, &secrets.provider_settings(), &secrets)
+        match &self.secrets {
+            Some(secrets) => {
+                let secrets = lock(secrets);
+                ConfigSnapshot::from_parts(&settings, &secrets.provider_settings(), &secrets)
+            }
+            None => ConfigSnapshot::without_keys(&settings),
+        }
     }
 }
 
@@ -104,14 +110,11 @@ pub fn load(
     ) {
         Ok((store, outcome)) => {
             log::info!("secrets: {}", describe(&outcome));
-            store
+            Some(store)
         }
         Err(e) => {
             log::error!("secrets could not be opened, starting without API keys: {e}");
-            let unavailable = paths.secrets_dat().with_file_name("secrets.unavailable");
-            SecretStore::open(unavailable, platform.protector.clone(), clock.clone())
-                .map(|(store, _)| store)
-                .expect("opening a missing secrets file cannot fail")
+            None
         }
     };
 
@@ -139,7 +142,7 @@ pub fn load(
     (
         Arc::new(ShellConfig {
             settings: Mutex::new(settings),
-            secrets: Mutex::new(secrets),
+            secrets: secrets.map(Mutex::new),
         }),
         Arc::new(ShellStores {
             history: Mutex::new(history),

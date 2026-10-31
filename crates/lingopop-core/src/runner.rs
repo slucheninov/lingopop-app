@@ -73,6 +73,17 @@ impl ConfigSnapshot {
         }
     }
 
+    /// A snapshot with the default connections and no API keys, for an app whose secrets
+    /// store could not be opened.
+    pub fn without_keys(settings: &Settings) -> Self {
+        Self {
+            magic_prompt: sanitize_magic_prompt(&settings.magic_prompt),
+            fallbacks: settings.fallbacks.0.clone(),
+            connections: default_providers(),
+            api_keys: BTreeMap::new(),
+        }
+    }
+
     /// Port of `SettingsStore.config(for:overrideTargetLanguage:)`: a provider without a
     /// connection gets an empty base URL and model, one without a key an empty key.
     pub fn config(&self, provider: ProviderType, target_language: &str) -> ProviderConfig {

@@ -1,6 +1,6 @@
 //! The popup as the orchestrator sees it: a view that shows, updates and hides, never focuses.
 
-use lingopop_platform::Point;
+use lingopop_platform::{Point, Rect};
 
 use crate::view_model::PopupViewModel;
 
@@ -19,6 +19,11 @@ pub trait PopupView: Send + Sync {
     fn show_at(&self, origin: Point, model: &PopupViewModel);
     /// Replaces the content of the visible popup.
     fn update(&self, model: &PopupViewModel);
+    /// The measured content size in LOGICAL pixels. Stores it; when the popup is visible,
+    /// re-places it at its current origin and returns the new physical rect, else returns
+    /// `None` and shows nothing (a resize must never resurrect a hidden popup). The
+    /// orchestrator calls this under the commit lock, only while the popup is visible.
+    fn resize(&self, size_logical: (f64, f64)) -> Option<Rect>;
     fn hide(&self);
     fn is_visible(&self) -> bool;
 }
