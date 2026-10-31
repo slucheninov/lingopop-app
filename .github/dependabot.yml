@@ -28,6 +28,11 @@ updates:
     ignore:
       - dependency-name: "@tauri-apps/*"
         versions: [">=3.0.0-0"]
+      # `typescript` stays on 6: svelte-check needs it as the language-service
+      # host (peer ^5 || ^6). TypeScript 7 itself is used through the
+      # `@typescript/native` alias (`svelte-check --tsgo`) and updated there.
+      - dependency-name: "typescript"
+        versions: [">=7.0.0-0"]
     groups:
       npm:
         patterns: ["*"]
