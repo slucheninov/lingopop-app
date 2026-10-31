@@ -44,6 +44,9 @@ jobs:
       - name: Build frontend
         shell: bash
         run: npm run build --prefix app
+      - name: Test frontend
+        shell: bash
+        run: npm test --prefix app
       - name: Check frontend
         shell: bash
         run: npm run check --prefix app
