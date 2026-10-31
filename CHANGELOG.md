@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.2] - 2026-10-31
+
+### Fixed
+
+- The portable exe loaded the dev server URL (the popup showed "can't reach this page"); release builds now enable the `custom-protocol` feature and embed the frontend
+
 ## [0.2.0-alpha.1] - 2026-10-31
 
 - Repository bootstrap and core foundations (not user-visible)
