@@ -802,6 +802,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lingopop-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "lingopop-core",
+ "lingopop-platform",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "lingopop-platform"
 version = "0.1.0"
 dependencies = [
