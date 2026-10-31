@@ -44,6 +44,10 @@ jobs:
       - name: Check core dependencies
         shell: bash
         run: bash scripts/check-core-deps.sh
+      - name: Windows desktop tests (diagnostic probe and desktop smoke)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cargo test -p lingopop-platform --locked --test desktop_probe --test windows_smoke -- --ignored --nocapture --test-threads=1
 
   build-and-test:
     name: build-and-test
