@@ -280,7 +280,7 @@ fn capture_does_not_clobber_a_foreign_write_after_copy() {
     // Another app writes right after our copy settled, before we restore.
     r.clip
         .on_read_text(Box::new(|c| c.set_external_text("FOREIGN")));
-    let _ = capture(&r);
+    assert_eq!(capture(&r), Ok(Some("FOREIGN".into())));
     assert!(!r.clip.calls().contains(&ClipboardCall::Restore));
     assert_eq!(r.clip.text().as_deref(), Some("FOREIGN"));
 }
