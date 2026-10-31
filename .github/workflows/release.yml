@@ -71,7 +71,7 @@ jobs:
         run: npm test --prefix app
       - name: Build release binary
         shell: bash
-        run: cargo build -p lingopop-app --release --locked
+        run: cargo build -p lingopop-app --release --locked --features custom-protocol
       - name: Stage portable exe and checksums
         shell: pwsh
         env:
