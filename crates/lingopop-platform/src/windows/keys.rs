@@ -29,12 +29,13 @@ fn is_down(vk: u16) -> bool {
 }
 
 fn to_input(e: VkEvent) -> INPUT {
+    // Every event carries its scan code (apps and remote sessions that read scan codes see a
+    // real key); the virtual key stays authoritative (no KEYEVENTF_SCANCODE).
+    // SAFETY: a pure table lookup.
+    let scan = unsafe { MapVirtualKeyW(u32::from(e.vk), MAPVK_VK_TO_VSC) } as u16;
     let mut flags = KEYBD_EVENT_FLAGS(0);
-    let mut scan = 0u16;
     if e.extended {
         flags |= KEYEVENTF_EXTENDEDKEY;
-        // SAFETY: a pure table lookup.
-        scan = unsafe { MapVirtualKeyW(u32::from(e.vk), MAPVK_VK_TO_VSC) } as u16;
     }
     if e.up {
         flags |= KEYEVENTF_KEYUP;

@@ -2,7 +2,7 @@
 
 use std::ffi::c_void;
 
-use ::windows::Win32::Foundation::{CloseHandle, ERROR_ACCESS_DENIED, HANDLE, HWND};
+use ::windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use ::windows::Win32::Security::{
     GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
 };
@@ -17,7 +17,7 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 
 use super::util::{last_error, os_err, win32_code};
 use crate::error::PlatformError;
-use crate::foreground::{integrity_blocks, ForegroundWindow, WindowHandle};
+use crate::foreground::{elevation_blocks, ForegroundWindow, WindowHandle};
 
 /// `ERROR_INVALID_WINDOW_HANDLE`.
 const INVALID_WINDOW_HANDLE: i32 = 1400;
@@ -36,12 +36,13 @@ fn hwnd(w: WindowHandle) -> HWND {
     HWND(w.0 as usize as *mut c_void)
 }
 
-/// `TokenIsElevated` of a process token; `None` when the token cannot be opened or queried.
-fn process_elevated(process: HANDLE) -> Option<bool> {
+/// `TokenIsElevated` of a process token: `Err(code)` when `OpenProcessToken` fails, `Ok(None)`
+/// when the token cannot be queried.
+fn process_elevated(process: HANDLE) -> Result<Option<bool>, i32> {
     let mut token = HANDLE::default();
     // SAFETY: `process` is a valid process handle with query rights; `token` receives a handle
     // that is closed below.
-    unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.ok()?;
+    unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.map_err(|e| win32_code(&e))?;
     let mut elevation = TOKEN_ELEVATION::default();
     let mut len = 0u32;
     // SAFETY: the buffer is a TOKEN_ELEVATION of exactly the size passed; `len` is writable.
@@ -56,8 +57,7 @@ fn process_elevated(process: HANDLE) -> Option<bool> {
     };
     // SAFETY: `token` was opened above and is closed exactly once.
     let _ = unsafe { CloseHandle(token) };
-    queried.ok()?;
-    Some(elevation.TokenIsElevated != 0)
+    Ok(queried.ok().map(|()| elevation.TokenIsElevated != 0))
 }
 
 impl ForegroundWindow for WindowsForeground {
@@ -113,18 +113,17 @@ impl ForegroundWindow for WindowsForeground {
             return false;
         }
         // SAFETY: the pseudo handle of our own process needs no closing.
-        let self_elevated = process_elevated(unsafe { GetCurrentProcess() }).unwrap_or(false);
+        let current = unsafe { GetCurrentProcess() };
+        let self_elevated = matches!(process_elevated(current), Ok(Some(true)));
         // SAFETY: a plain open; the handle is closed below.
         match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
             Ok(process) => {
-                let target = process_elevated(process);
+                let token = process_elevated(process);
                 // SAFETY: `process` was opened above and is closed exactly once.
                 let _ = unsafe { CloseHandle(process) };
-                // Never block on a guess: an unreadable token counts as not elevated.
-                target.is_some_and(|t| integrity_blocks(t, self_elevated))
+                elevation_blocks(Ok(()), token, self_elevated)
             }
-            // A process we may not even open while we are not elevated runs above us.
-            Err(e) => win32_code(&e) == ERROR_ACCESS_DENIED.0 as i32 && !self_elevated,
+            Err(e) => elevation_blocks(Err(win32_code(&e)), Ok(None), self_elevated),
         }
     }
 }
