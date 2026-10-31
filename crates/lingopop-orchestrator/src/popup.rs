@@ -10,6 +10,8 @@ pub const INITIAL_POPUP_SIZE: (f64, f64) = (360.0, 100.0);
 
 /// Implemented by the app shell (and by `fake::FakePopup`). There is deliberately no focus
 /// method: the popup must never take focus from the user's app.
+/// Calls run under the generation commit lock: implementations must not synchronously call
+/// back into `Orchestrator`. The Tauri shell emits events / IPC asynchronously.
 pub trait PopupView: Send + Sync {
     /// Shows the popup at `origin` (physical px, top-left). Called only when not visible, like
     /// mac `show` not repositioning a visible popup.

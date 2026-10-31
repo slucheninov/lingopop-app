@@ -36,7 +36,7 @@ pub trait ConfigSource: Send + Sync {
 }
 
 /// History and usage writes. The shell implements it over the stores, logs store errors and
-/// never fails the flow.
+/// never fails the flow. Implementations must not synchronously call back into Orchestrator.
 pub trait Persist: Send + Sync {
     fn add_history(&self, entry: HistoryEntry, max_count: u32);
     fn append_usage(&self, record: UsageRecord);
@@ -134,18 +134,21 @@ impl Orchestrator {
     /// Shows or updates the popup unless `generation` is stale. A hidden popup is placed near
     /// the last known cursor.
     pub(crate) fn present(&self, generation: u64, model: &PopupViewModel) {
-        let (cursor, monitors) = {
-            let st = self.state();
-            if st.generation != generation {
-                return;
-            }
-            (st.cursor, st.monitors.clone())
-        };
+        let mut st = self.state();
+        if st.generation != generation {
+            return;
+        }
+        self.present_locked(&mut st, model);
+    }
+
+    // Caller holds the generation mutex through every synchronous side effect.
+    pub(crate) fn present_locked(&self, st: &mut SessionState, model: &PopupViewModel) {
+        let (cursor, monitors) = (st.cursor, &st.monitors);
         let popup = &self.deps().popup;
         if popup.is_visible() {
             popup.update(model);
         } else {
-            popup.show_at(popup_origin(INITIAL_POPUP_SIZE, cursor, &monitors), model);
+            popup.show_at(popup_origin(INITIAL_POPUP_SIZE, cursor, monitors), model);
         }
     }
 
@@ -297,7 +300,8 @@ impl Orchestrator {
         let primary = request.primary;
         let registry_has = |p: ProviderType| (d.registry_has)(p);
         let outcome = d.runner.run(request, snapshot).await;
-        if !self.is_current(generation) {
+        let mut st = self.state();
+        if st.generation != generation {
             return;
         }
         match outcome {
@@ -309,7 +313,7 @@ impl Orchestrator {
                     d.stores.append_usage(usage);
                 }
                 let retry = retry_providers(result.provider, operation, snapshot, registry_has);
-                self.present(generation, &PopupViewModel::result(&result, &retry));
+                self.present_locked(&mut st, &PopupViewModel::result(&result, &retry));
             }
             Err(error) => {
                 let (message, details) = match &error {
@@ -317,8 +321,152 @@ impl Orchestrator {
                     other => translation_error_view(other),
                 };
                 let retry = retry_providers(primary, operation, snapshot, registry_has);
-                self.present(generation, &PopupViewModel::error(message, details, &retry));
+                self.present_locked(&mut st, &PopupViewModel::error(message, details, &retry));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::*;
+    use crate::fake::{FakeConfig, FakePersist, FakePopup};
+    use lingopop_core::{http::FakeTransport, providers::ProviderRegistry, time::SystemClock};
+    use std::sync::OnceLock;
+
+    fn test_platform() -> Platform {
+        use lingopop_platform::fake::*;
+        struct Protector;
+        impl lingopop_core::secrets::SecretProtector for Protector {
+            fn protect(&self, _: &[u8]) -> Result<Vec<u8>, lingopop_core::secrets::ProtectError> {
+                Ok(vec![])
+            }
+            fn unprotect(&self, _: &[u8]) -> Result<Vec<u8>, lingopop_core::secrets::ProtectError> {
+                Ok(vec![])
+            }
+        }
+        let sleeper = Arc::new(FakeSleeper::new());
+        let clipboard = FakeClipboard::new(sleeper.clone());
+        Platform {
+            keys: FakeKeys::new(clipboard.clone(), sleeper.clone()),
+            clipboard,
+            foreground: FakeForeground::new(None),
+            monitors: Arc::new(FakeMonitors::new(Point { x: 0, y: 0 }, vec![])),
+            capture: Arc::new(FakeCapture::new([0; 4])),
+            ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
+            protector: Arc::new(Protector),
+            sleeper,
+        }
+    }
+
+    struct CheckedPopup {
+        inner: OnceLock<std::sync::Weak<Inner>>,
+        view: FakePopup,
+    }
+    impl PopupView for CheckedPopup {
+        fn show_at(&self, origin: Point, model: &PopupViewModel) {
+            assert!(self
+                .inner
+                .get()
+                .unwrap()
+                .upgrade()
+                .unwrap()
+                .state
+                .try_lock()
+                .is_err());
+            self.view.show_at(origin, model);
+        }
+        fn update(&self, model: &PopupViewModel) {
+            assert!(self
+                .inner
+                .get()
+                .unwrap()
+                .upgrade()
+                .unwrap()
+                .state
+                .try_lock()
+                .is_err());
+            self.view.update(model);
+        }
+        fn hide(&self) {
+            self.view.hide();
+        }
+        fn is_visible(&self) -> bool {
+            self.view.is_visible()
+        }
+    }
+
+    struct CheckedPersist {
+        inner: OnceLock<std::sync::Weak<Inner>>,
+        records: FakePersist,
+    }
+    impl Persist for CheckedPersist {
+        fn add_history(&self, entry: HistoryEntry, max: u32) {
+            // Deterministically pin the check/commit boundary: a newer start cannot bump
+            // generation while persistence is in progress. No scheduling or timeout needed.
+            let inner = self.inner.get().unwrap().upgrade().unwrap();
+            assert!(
+                inner.state.try_lock().is_err(),
+                "generation bump must be excluded during persistence"
+            );
+            self.records.add_history(entry, max);
+        }
+        fn append_usage(&self, record: UsageRecord) {
+            let inner = self.inner.get().unwrap().upgrade().unwrap();
+            assert!(inner.state.try_lock().is_err());
+            self.records.append_usage(record);
+        }
+    }
+
+    #[tokio::test]
+    async fn superseded_run_after_check_never_presents_or_persists() {
+        let stores = Arc::new(CheckedPersist {
+            inner: OnceLock::new(),
+            records: FakePersist::new(),
+        });
+        let popup = Arc::new(CheckedPopup {
+            inner: OnceLock::new(),
+            view: FakePopup::new(),
+        });
+        let settings = Settings::default();
+        let snapshot = ConfigSnapshot {
+            magic_prompt: String::new(),
+            fallbacks: Default::default(),
+            connections: Default::default(),
+            api_keys: Default::default(),
+        };
+        let me = Orchestrator::new(Deps {
+            platform: test_platform(),
+            runner: Arc::new(OperationRunner::new(
+                ProviderRegistry::standard(),
+                Arc::new(FakeTransport::json(200, r#"[[["B"]]]"#)),
+            )),
+            registry_has: Arc::new(|_| true),
+            config: Arc::new(FakeConfig::new(settings.clone(), snapshot.clone())),
+            stores: stores.clone(),
+            popup: popup.clone(),
+            gate: PlatformGate::new(Default::default()),
+            clock: Arc::new(SystemClock),
+            log: None,
+        });
+        stores.inner.set(Arc::downgrade(&me.inner)).unwrap();
+        popup.inner.set(Arc::downgrade(&me.inner)).unwrap();
+        me.state().generation = 2;
+        let request = || RunRequest {
+            operation: AIOperation::Translate,
+            text: "original".into(),
+            detected_source: None,
+            target_language: "German".into(),
+            primary: ProviderType::GoogleFree,
+            allow_fallback: false,
+        };
+        me.run_and_present(1, &settings, &snapshot, request()).await;
+        assert!(stores.records.history().is_empty());
+        assert!(popup.view.calls().is_empty());
+        me.run_and_present(2, &settings, &snapshot, request()).await;
+        assert_eq!(stores.records.history().len(), 1);
+        assert!(
+            matches!(&popup.view.calls()[0], crate::fake::PopupCall::ShowAt(_, m) if matches!(&m.phase, crate::view_model::PopupPhase::Result(r) if r.text == "B"))
+        );
     }
 }

@@ -39,29 +39,33 @@ pub fn retry_providers(
         .collect()
 }
 
-/// Vision-capable providers that are usable now (key present when required), optionally
-/// without `excluding`. Registration is not checked, like the mac `visionCapableProviders`
-/// only consults its provider table; the caller filters with the registry if it needs to.
+/// Registered vision-capable providers with a key when required, optionally excluding one.
 pub fn vision_providers(
     excluding: Option<ProviderType>,
     configs: &ConfigSnapshot,
+    registry_has: impl Fn(ProviderType) -> bool,
 ) -> Vec<ProviderType> {
     ProviderType::ALL
         .into_iter()
         .filter(|&p| Some(p) != excluding)
         .filter(|&p| {
             let caps = p.capabilities();
-            caps.supports_vision && (!caps.requires_api_key || has_key(configs, p))
+            registry_has(p)
+                && caps.supports_vision
+                && (!caps.requires_api_key || has_key(configs, p))
         })
         .collect()
 }
 
 /// Providers that can translate recognized OCR text (ready for Screen Translate: supports the
 /// operation and has its key). Mac `translateProviders` = `isProviderReady(_, .screenTranslate)`.
-pub fn ocr_translate_providers(configs: &ConfigSnapshot) -> Vec<ProviderType> {
+pub fn ocr_translate_providers(
+    configs: &ConfigSnapshot,
+    registry_has: impl Fn(ProviderType) -> bool,
+) -> Vec<ProviderType> {
     ProviderType::ALL
         .into_iter()
-        .filter(|&p| ready(p, AIOperation::ScreenTranslate, configs, &|_| true))
+        .filter(|&p| ready(p, AIOperation::ScreenTranslate, configs, &registry_has))
         .collect()
 }
 
@@ -113,8 +117,8 @@ mod tests {
     #[test]
     fn google_free_needs_no_key() {
         let c = snapshot(&[]);
-        assert!(ocr_translate_providers(&c).contains(&ProviderType::GoogleFree));
-        assert!(!ocr_translate_providers(&c).contains(&ProviderType::Claude));
+        assert!(ocr_translate_providers(&c, |_| true).contains(&ProviderType::GoogleFree));
+        assert!(!ocr_translate_providers(&c, |_| true).contains(&ProviderType::Claude));
         assert_eq!(
             retry_providers(ProviderType::Claude, AIOperation::Translate, &c, |_| true),
             vec![ProviderType::GoogleFree]
@@ -124,8 +128,27 @@ mod tests {
     #[test]
     fn vision_providers_need_vision_and_key() {
         let c = snapshot(&[ProviderType::Claude, ProviderType::DeepL]);
-        let list = vision_providers(None, &c);
+        let list = vision_providers(None, &c, |_| true);
         assert_eq!(list, vec![ProviderType::Claude]);
-        assert!(vision_providers(Some(ProviderType::Claude), &c).is_empty());
+        assert!(vision_providers(Some(ProviderType::Claude), &c, |_| true).is_empty());
+    }
+    #[test]
+    fn vision_providers_skip_unregistered() {
+        let c = snapshot(&ProviderType::ALL);
+        assert!(vision_providers(None, &c, |_| false).is_empty());
+        assert_eq!(
+            vision_providers(None, &c, |p| p == ProviderType::Claude),
+            vec![ProviderType::Claude]
+        );
+    }
+
+    #[test]
+    fn ocr_translate_providers_skip_unregistered() {
+        let c = snapshot(&ProviderType::ALL);
+        assert!(ocr_translate_providers(&c, |_| false).is_empty());
+        assert_eq!(
+            ocr_translate_providers(&c, |p| p == ProviderType::GoogleFree),
+            vec![ProviderType::GoogleFree]
+        );
     }
 }
