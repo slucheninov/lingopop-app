@@ -10,7 +10,7 @@ LingoPop for Windows: a tray AI translator (translate, fix grammar, rewrite, exp
 
 Each task appends its own modules here in the same commit.
 
-- `Cargo.toml` - workspace (`resolver = "2"`, members `crates/*` and `app/src-tauri`, shared package fields, version `0.1.0`)
+- `Cargo.toml` - workspace (`resolver = "2"`, members `crates/*` and `app/src-tauri`, shared package fields, version shared by every crate and the app, see "Release")
 - `rust-toolchain.toml`, `rustfmt.toml` - toolchain (honoured only by CI locally, no `rustup` on the dev machine) and formatting
 - `.gitignore`, `.gitattributes` (`eol=lf`), `LICENSE`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 - `scripts/check-core-deps.sh` - guard: `lingopop-core` must not depend on OS or UI crates, nor on a platform TLS stack (`native-tls`, `openssl*`, `aws-lc-*`, `rustls-native-certs`, `rustls-platform-verifier`, `system-configuration*`) and must not have `tokio` as a direct normal dependency (dev-dependency or transitive via reqwest is fine); a second guard fails when `lingopop-orchestrator` has a direct normal dependency on `tauri*`, `windows*`, `winapi`, `objc*`, `cocoa`, `core-foundation*` or `core-graphics`
