@@ -119,15 +119,38 @@ fn capture_final_recheck_catches_copy_landing_at_deadline() {
 
 #[test]
 fn capture_waits_for_double_sequence_bump() {
-    // First bump (the clear) is seen at the 30 ms poll; the set follows 15 ms later, inside the
-    // settle window. Never Some("").
+    // The set follows the clear by 30 ms, past the point where the sequence looks stable.
     let r = rig();
     r.keys.on_copy(CopyBehavior::ClearThenSetLate {
-        first: ms(25),
-        second: ms(40),
+        first: ms(20),
+        second: ms(50),
         text: "x".into(),
     });
     assert_eq!(capture(&r).unwrap().as_deref(), Some("x"));
+    assert_eq!(r.clip.text(), original());
+}
+
+#[test]
+fn capture_empty_then_set_within_settle_budget_returns_text() {
+    let r = rig();
+    r.keys.on_copy(CopyBehavior::ClearThenSetLate {
+        first: ms(20),
+        second: ms(60),
+        text: "x".into(),
+    });
+    assert_eq!(capture(&r).unwrap().as_deref(), Some("x"));
+    assert_eq!(r.clip.text(), original());
+}
+
+#[test]
+fn capture_empty_then_set_after_settle_budget_is_none() {
+    let r = rig();
+    r.keys.on_copy(CopyBehavior::ClearThenSetLate {
+        first: ms(20),
+        second: ms(200),
+        text: "x".into(),
+    });
+    assert_eq!(capture(&r).unwrap(), None);
     assert_eq!(r.clip.text(), original());
 }
 
@@ -137,6 +160,8 @@ fn capture_non_text_copy_returns_none_and_restores() {
     let before = r.clip.entries();
     r.keys.on_copy(CopyBehavior::ImageOnly);
     assert_eq!(capture(&r).unwrap(), None);
+    // Gave up only after the settle budget (100 ms) was spent.
+    assert!(r.sleeper.now() >= ms(100), "{:?}", r.sleeper.now());
     assert_eq!(r.clip.entries(), before);
 }
 

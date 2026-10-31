@@ -112,7 +112,21 @@ fn capture_inner(
         guard.observe(last);
     }
 
-    Ok(clip.read_text()?.filter(|t| !t.trim().is_empty()))
+    // Still empty (an app between "empty" and "set") while budget remains: keep polling.
+    loop {
+        if let Some(text) = clip.read_text()?.filter(|t| !t.trim().is_empty()) {
+            return Ok(Some(text));
+        }
+        if sleeper.now().saturating_sub(settle_start) >= opts.settle_cap {
+            return Ok(None);
+        }
+        sleeper.sleep(opts.poll_interval);
+        let cur = clip.sequence_number();
+        if cur != last {
+            last = cur;
+            guard.observe(last);
+        }
+    }
 }
 
 fn wait_for_modifiers(
