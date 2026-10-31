@@ -10,8 +10,10 @@ rust-version.workspace = true
 [dependencies]
 lingopop-core = { path = "../lingopop-core" }
 lingopop-platform = { path = "../lingopop-platform" }
+serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 
 [dev-dependencies]
+serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
