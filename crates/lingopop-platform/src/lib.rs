@@ -13,6 +13,7 @@ pub mod foreground;
 pub mod inject;
 pub mod keys;
 pub mod monitors;
+pub mod ocr;
 pub mod selection;
 pub mod sleeper;
 #[cfg(windows)]
@@ -21,7 +22,7 @@ mod windows;
 
 #[cfg(windows)]
 pub use crate::windows::{
-    WindowsCapture, WindowsClipboard, WindowsForeground, WindowsKeys, WindowsMonitors,
+    WindowsCapture, WindowsClipboard, WindowsForeground, WindowsKeys, WindowsMonitors, WindowsOcr,
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
@@ -33,5 +34,6 @@ pub use monitors::{
     clamp_to_work_area, monitor_at, physical_size, validate_region, virtual_screen, MonitorInfo,
     Monitors, Point, Rect, Size,
 };
+pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
 pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};

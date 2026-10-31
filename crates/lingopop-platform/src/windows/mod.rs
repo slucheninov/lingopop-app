@@ -6,6 +6,7 @@ mod clipboard;
 mod foreground;
 mod keys;
 mod monitors;
+mod ocr;
 mod util;
 
 pub use capture::WindowsCapture;
@@ -13,3 +14,4 @@ pub use clipboard::WindowsClipboard;
 pub use foreground::WindowsForeground;
 pub use keys::WindowsKeys;
 pub use monitors::WindowsMonitors;
+pub use ocr::WindowsOcr;

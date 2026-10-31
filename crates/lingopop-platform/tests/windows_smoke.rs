@@ -1,5 +1,6 @@
-//! Windows smoke tests against the real clipboard, keyboard and windows. They need an interactive
-//! desktop, so they are `#[ignore]` and run in the dedicated CI step (or by hand on a Windows box).
+//! Windows smoke tests against the real clipboard, keyboard, windows and OCR. The tests that need
+//! an interactive desktop are `#[ignore]` and run in the dedicated CI step (or by hand on a Windows
+//! box); the OCR tests need no desktop and run by default (no language pack = a printed skip).
 //! The clipboard is global: every test serializes on `CLIP_LOCK`.
 #![cfg(windows)]
 
@@ -10,12 +11,13 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use lingopop_platform::{
-    capture_selection, virtual_screen, CaptureOptions, Clipboard, ClipboardFormat,
-    ClipboardSnapshot, ForegroundWindow, KeySynth, Monitors, PlatformError, Rect, ScreenCapture,
-    SystemSleeper, WindowHandle, WindowsCapture, WindowsClipboard, WindowsForeground, WindowsKeys,
-    WindowsMonitors,
+    capture_selection, virtual_screen, CaptureOptions, CapturedImage, Clipboard, ClipboardFormat,
+    ClipboardSnapshot, ForegroundWindow, KeySynth, Monitors, Ocr, OcrText, PlatformError, Rect,
+    ScreenCapture, SystemSleeper, WindowHandle, WindowsCapture, WindowsClipboard,
+    WindowsForeground, WindowsKeys, WindowsMonitors, WindowsOcr,
 };
 use windows::core::PCWSTR;
+use windows::Media::Ocr::OcrEngine;
 use windows::Win32::Foundation::{
     GlobalFree, COLORREF, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
 };
@@ -507,5 +509,64 @@ fn capture_region_out_of_screen_is_invalid_region() {
     assert_eq!(
         capture.capture_region(Rect::new(10, 10, 0, 50)),
         Err(PlatformError::InvalidRegion)
+    );
+}
+
+/// The OCR fixture ("Hello world", black on white) as an RGBA image.
+fn hello_image() -> CapturedImage {
+    let bytes = include_bytes!("fixtures/ocr/hello.png");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(&bytes[..]))
+        .read_info()
+        .expect("png header");
+    let mut buf = vec![0; reader.output_buffer_size().expect("buffer size")];
+    let info = reader.next_frame(&mut buf).expect("png frame");
+    assert_eq!(info.color_type, png::ColorType::Rgba);
+    assert_eq!(info.bit_depth, png::BitDepth::Eight);
+    buf.truncate(info.buffer_size());
+    CapturedImage::new(info.width, info.height, buf).expect("rgba image")
+}
+
+/// `None` (after printing the skip line) when the runner has no OCR language pack.
+fn ocr_or_skip(result: Result<OcrText, PlatformError>) -> Option<OcrText> {
+    match result {
+        Err(PlatformError::OcrUnavailable) => {
+            eprintln!("skipped: OcrUnavailable (no OCR language pack installed on this runner)");
+            None
+        }
+        other => Some(other.expect("recognize")),
+    }
+}
+
+#[test]
+fn ocr_recognizes_fixture_png() {
+    let Some(text) = ocr_or_skip(WindowsOcr::new().recognize(&hello_image())) else {
+        return;
+    };
+    eprintln!("ocr result: {text:?}");
+    assert!(text.text.to_lowercase().contains("hello"), "{text:?}");
+}
+
+#[test]
+fn ocr_without_language_packs_is_ocr_unavailable_or_text() {
+    let blank = CapturedImage::new(64, 32, [255u8; 4].repeat(64 * 32)).expect("image");
+    match WindowsOcr::new().recognize(&blank) {
+        Ok(text) => eprintln!("ocr of a blank image: {text:?}"),
+        Err(e) => assert_eq!(e, PlatformError::OcrUnavailable),
+    }
+}
+
+#[test]
+fn ocr_image_larger_than_max_dimension_is_unsupported() {
+    let max = OcrEngine::MaxImageDimension().expect("MaxImageDimension");
+    let ocr = WindowsOcr::new();
+    let wide = CapturedImage::new(max + 1, 1, vec![255; (max as usize + 1) * 4]).expect("image");
+    assert_eq!(
+        ocr.recognize(&wide),
+        Err(PlatformError::Unsupported("image too large for OCR"))
+    );
+    let tall = CapturedImage::new(1, max + 1, vec![255; (max as usize + 1) * 4]).expect("image");
+    assert_eq!(
+        ocr.recognize(&tall),
+        Err(PlatformError::Unsupported("image too large for OCR"))
     );
 }

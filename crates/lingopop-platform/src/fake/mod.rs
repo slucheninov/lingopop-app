@@ -6,6 +6,7 @@ mod foreground;
 mod keys;
 mod log;
 mod monitors;
+mod ocr;
 mod sleeper;
 
 pub use capture::FakeCapture;
@@ -14,4 +15,5 @@ pub use foreground::FakeForeground;
 pub use keys::{CopyBehavior, FakeKeys, KeyCall};
 pub use log::{Event, EventLog, LoggedEvent};
 pub use monitors::FakeMonitors;
+pub use ocr::FakeOcr;
 pub use sleeper::FakeSleeper;
