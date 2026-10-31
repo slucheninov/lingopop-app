@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use ::windows::core::PCWSTR;
 use ::windows::Win32::System::DataExchange::{
-    EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable,
-    RegisterClipboardFormatW,
+    EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber,
+    IsClipboardFormatAvailable, RegisterClipboardFormatW,
 };
 use ::windows::Win32::System::Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT};
 
@@ -233,6 +233,17 @@ impl Clipboard for WindowsClipboard {
         let _guard = ClipboardGuard::open(None, self.sleeper.as_ref())?;
         let mut entries = Vec::new();
         let mut skipped = Vec::new();
+        let mut id = 0;
+        loop {
+            // SAFETY: the clipboard is held open; zero begins enumeration and ends it.
+            id = unsafe { EnumClipboardFormats(id) };
+            if id == 0 {
+                break;
+            }
+            if !ids.iter().any(|(_, saved)| *saved == id) {
+                skipped.push(format!("clipboard: skipped format id {id}"));
+            }
+        }
         for (format, id) in ids {
             match read_format(id) {
                 Ok(Some(data)) => entries.push(ClipboardEntry { format, data }),

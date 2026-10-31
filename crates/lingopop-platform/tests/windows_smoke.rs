@@ -613,19 +613,22 @@ fn ocr_without_language_packs_is_ocr_unavailable_or_text() {
 }
 
 #[test]
-fn ocr_image_larger_than_max_dimension_is_unsupported() {
-    let max = OcrEngine::MaxImageDimension().expect("MaxImageDimension");
-    let ocr = WindowsOcr::new();
-    let wide = CapturedImage::new(max + 1, 1, vec![255; (max as usize + 1) * 4]).expect("image");
-    assert_eq!(
-        ocr.recognize(&wide),
-        Err(PlatformError::Unsupported("image too large for OCR"))
-    );
-    let tall = CapturedImage::new(1, max + 1, vec![255; (max as usize + 1) * 4]).expect("image");
-    assert_eq!(
-        ocr.recognize(&tall),
-        Err(PlatformError::Unsupported("image too large for OCR"))
-    );
+fn ocr_image_larger_than_max_dimension_is_downscaled() {
+    let Ok(max) = OcrEngine::MaxImageDimension() else {
+        assert_eq!(
+            WindowsOcr::new().recognize(&hello_image()),
+            Err(PlatformError::OcrUnavailable)
+        );
+        return;
+    };
+    for (width, height) in [(max + 1, 1), (1, max + 1)] {
+        let image =
+            CapturedImage::new(width, height, vec![255; (max as usize + 1) * 4]).expect("image");
+        match WindowsOcr::new().recognize(&image) {
+            Ok(_) | Err(PlatformError::OcrUnavailable) => {}
+            Err(e) => panic!("downscaled OCR failed: {e}"),
+        }
+    }
 }
 
 /// Ctrl+Alt+F9: the chord the hotkey tests register (F9 is rarely bound globally).
