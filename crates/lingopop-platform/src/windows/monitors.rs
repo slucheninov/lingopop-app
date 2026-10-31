@@ -48,8 +48,9 @@ fn describe(handle: HMONITOR) -> Result<MonitorInfo, PlatformError> {
     }
     let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
     // SAFETY: both out-pointers are valid for the call.
-    unsafe { GetDpiForMonitor(handle, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }
-        .map_err(map_err("GetDpiForMonitor"))?;
+    if unsafe { GetDpiForMonitor(handle, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.is_err() {
+        dpi_x = 96;
+    }
     Ok(MonitorInfo {
         bounds: rect(info.rcMonitor),
         work_area: rect(info.rcWork),

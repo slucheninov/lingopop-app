@@ -55,4 +55,21 @@ if printf '%s\n' "$with_dev" | awk '{ if ($1 == "lingopop-platform") found = 1 }
   status=1
 fi
 
+# (d) lingopop-orchestrator: the flow crate stays OS- and UI-agnostic, so none of its DIRECT
+# normal dependencies may be tauri*, an OS crate or an Apple binding.
+orch_direct=$(
+  for target in x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-unknown-linux-gnu; do
+    cargo tree -p lingopop-orchestrator --target "$target" --all-features -e normal --depth 1 --prefix none || exit $?
+  done
+)
+bad_orch=$(printf '%s\n' "$orch_direct" | awk '
+  { name = $1 }
+  name ~ /^(tauri|windows|objc|core-foundation)/ || name == "winapi" || name == "cocoa" || name == "core-graphics" { print }
+')
+if [ -n "$bad_orch" ]; then
+  echo "error: lingopop-orchestrator has forbidden direct dependencies:" >&2
+  printf '%s\n' "$bad_orch" >&2
+  status=1
+fi
+
 exit "$status"

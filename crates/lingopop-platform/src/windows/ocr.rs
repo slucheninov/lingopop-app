@@ -15,7 +15,7 @@ use ::windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use ::windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 
 use super::util::{map_err, os_err, win32_code};
-use crate::capture::CapturedImage;
+use crate::capture::{downscale_to_fit, CapturedImage};
 use crate::error::PlatformError;
 use crate::ocr::{select_best, Ocr, OcrCandidate, OcrText};
 
@@ -126,13 +126,8 @@ fn recognize_with(engine: &OcrEngine, bitmap: &SoftwareBitmap) -> Result<OcrCand
 impl Ocr for WindowsOcr {
     fn recognize(&self, image: &CapturedImage) -> Result<OcrText, PlatformError> {
         ensure_ro_initialized()?;
-        // Checked before any engine exists, so an oversized image is reported even on a system
-        // without recognizer languages.
-        let max =
-            OcrEngine::MaxImageDimension().map_err(map_err("OcrEngine::MaxImageDimension"))?;
-        if image.width > max || image.height > max {
-            return Err(PlatformError::Unsupported("image too large for OCR"));
-        }
+        let max = OcrEngine::MaxImageDimension().map_err(|_| PlatformError::OcrUnavailable)?;
+        let image = downscale_to_fit(image, max);
         if image.width == 0 || image.height == 0 {
             return Err(PlatformError::InvalidRegion);
         }
@@ -140,7 +135,7 @@ impl Ocr for WindowsOcr {
         if engines.is_empty() {
             return Err(PlatformError::OcrUnavailable);
         }
-        let bitmap = bitmap(image)?;
+        let bitmap = bitmap(&image)?;
         let mut candidates = Vec::new();
         let mut last_error = None;
         for engine in &engines {

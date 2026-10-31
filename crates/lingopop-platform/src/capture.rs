@@ -50,3 +50,43 @@ pub trait ScreenCapture: Send + Sync {
     /// Captures `region` (physical virtual-screen pixels). A partly outside region is clipped.
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError>;
 }
+
+/// Box-filter downsampling for OCR. A zero limit is treated as one pixel.
+/// Empty images are left unchanged (the OCR boundary rejects them).
+pub fn downscale_to_fit(image: &CapturedImage, max_dim: u32) -> CapturedImage {
+    let limit = max_dim.max(1);
+    let longest = image.width.max(image.height);
+    if longest <= limit || image.width == 0 || image.height == 0 {
+        return image.clone();
+    }
+    let width = ((u64::from(image.width) * u64::from(limit)) / u64::from(longest)).max(1) as u32;
+    let height = ((u64::from(image.height) * u64::from(limit)) / u64::from(longest)).max(1) as u32;
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    let sx = f64::from(image.width) / f64::from(width);
+    let sy = f64::from(image.height) / f64::from(height);
+    for y in 0..height {
+        let (top, bottom) = (f64::from(y) * sy, f64::from(y + 1) * sy);
+        for x in 0..width {
+            let (left, right) = (f64::from(x) * sx, f64::from(x + 1) * sx);
+            let mut sums = [0.0; 4];
+            let mut area = 0.0;
+            for iy in top.floor() as u32..(bottom.ceil() as u32).min(image.height) {
+                for ix in left.floor() as u32..(right.ceil() as u32).min(image.width) {
+                    let weight = (right.min(f64::from(ix + 1)) - left.max(f64::from(ix)))
+                        * (bottom.min(f64::from(iy + 1)) - top.max(f64::from(iy)));
+                    let offset = (iy as usize * image.width as usize + ix as usize) * 4;
+                    for (channel, sum) in sums.iter_mut().enumerate() {
+                        *sum += f64::from(image.rgba[offset + channel]) * weight;
+                    }
+                    area += weight;
+                }
+            }
+            rgba.extend(sums.map(|sum| (sum / area).round() as u8));
+        }
+    }
+    CapturedImage {
+        width,
+        height,
+        rgba,
+    }
+}

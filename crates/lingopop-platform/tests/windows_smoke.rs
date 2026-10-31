@@ -35,7 +35,7 @@ use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW, RegisterClassW,
     SendMessageW, TranslateMessage, HWND_MESSAGE, MSG, PM_REMOVE, WM_SETTEXT, WNDCLASSW,
-    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
 const PROTECTION_NAMES: [&str; 3] = [
@@ -183,20 +183,46 @@ impl Drop for TestWindow {
 }
 
 fn desktop_test_window(x: i32) -> TestWindow {
+    test_window(x, false, false)
+}
+fn test_window(x: i32, no_activate: bool, probe: bool) -> TestWindow {
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
     let thread_stop = stop.clone();
     let thread = std::thread::spawn(move || {
-        let class = wide("EDIT");
+        let class = wide(if probe {
+            "LingoPopEscapeProbe"
+        } else if no_activate {
+            "STATIC"
+        } else {
+            "EDIT"
+        });
         // SAFETY: the window is created, pumped and destroyed on this thread only; `msg` is a
         // valid MSG buffer for PeekMessageW.
         unsafe {
             let module = GetModuleHandleW(PCWSTR::null()).expect("GetModuleHandleW");
+            if probe {
+                let wc = WNDCLASSW {
+                    lpfnWndProc: Some(escape_probe_proc),
+                    hInstance: HINSTANCE::from(module),
+                    lpszClassName: PCWSTR(class.as_ptr()),
+                    ..Default::default()
+                };
+                RegisterClassW(&wc);
+            }
             let hwnd = CreateWindowExW(
-                WS_EX_TOPMOST,
+                if no_activate {
+                    WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+                } else {
+                    WS_EX_TOPMOST
+                },
                 PCWSTR(class.as_ptr()),
                 PCWSTR::null(),
-                WS_POPUP | WS_VISIBLE,
+                if no_activate {
+                    WS_POPUP
+                } else {
+                    WS_POPUP | WS_VISIBLE
+                },
                 x,
                 100,
                 300,
@@ -613,19 +639,26 @@ fn ocr_without_language_packs_is_ocr_unavailable_or_text() {
 }
 
 #[test]
-fn ocr_image_larger_than_max_dimension_is_unsupported() {
-    let max = OcrEngine::MaxImageDimension().expect("MaxImageDimension");
-    let ocr = WindowsOcr::new();
-    let wide = CapturedImage::new(max + 1, 1, vec![255; (max as usize + 1) * 4]).expect("image");
-    assert_eq!(
-        ocr.recognize(&wide),
-        Err(PlatformError::Unsupported("image too large for OCR"))
-    );
-    let tall = CapturedImage::new(1, max + 1, vec![255; (max as usize + 1) * 4]).expect("image");
-    assert_eq!(
-        ocr.recognize(&tall),
-        Err(PlatformError::Unsupported("image too large for OCR"))
-    );
+fn ocr_image_larger_than_max_dimension_is_downscaled() {
+    let Ok(max) = OcrEngine::MaxImageDimension() else {
+        assert_eq!(
+            WindowsOcr::new().recognize(&hello_image()),
+            Err(PlatformError::OcrUnavailable)
+        );
+        return;
+    };
+    for (width, height) in [(max + 1, 32), (32, max + 1)] {
+        let image = CapturedImage::new(
+            width,
+            height,
+            vec![255; width as usize * height as usize * 4],
+        )
+        .expect("image");
+        match WindowsOcr::new().recognize(&image) {
+            Ok(_) | Err(PlatformError::OcrUnavailable | PlatformError::Os { .. }) => {}
+            Err(e) => panic!("downscaled OCR failed: {e}"),
+        }
+    }
 }
 
 /// Ctrl+Alt+F9: the chord the hotkey tests register (F9 is rarely bound globally).
@@ -835,4 +868,108 @@ fn native_bundle_constructs() {
         platform.protector.unprotect(&sealed).expect("unprotect"),
         b"bundle"
     );
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn show_at_does_not_change_foreground() {
+    use lingopop_platform::{NoActivateWindow, WindowsPopupWindow};
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindowVisible};
+    let _lock = clip_lock();
+    let target = desktop_test_window(100);
+    let fg = WindowsForeground::new();
+    fg.restore(target.handle()).expect("foreground");
+    assert!(wait_for_foreground(&fg, target.handle()));
+    let popup = test_window(500, true, false);
+    // SAFETY: pure foreground query; both test windows remain alive.
+    let before = unsafe { GetForegroundWindow() };
+    let native = WindowsPopupWindow;
+    native
+        .show_at(popup.handle(), Rect::new(500, 100, 200, 80))
+        .expect("show");
+    // SAFETY: queries of the live popup and current foreground.
+    unsafe {
+        assert_eq!(GetForegroundWindow(), before);
+        assert!(IsWindowVisible(popup.hwnd()).as_bool());
+    }
+    native.hide(popup.handle()).expect("hide");
+    // SAFETY: popup is still alive.
+    assert!(!unsafe { IsWindowVisible(popup.hwnd()) }.as_bool());
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn dismiss_watcher_stops_on_hide() {
+    use lingopop_platform::{DismissWatcher, WindowsDismissWatcher};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VK_ESCAPE,
+    };
+    fn wait_hooks(w: &WindowsDismissWatcher, expected: bool) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while w.hooks_installed() != expected && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(w.hooks_installed(), expected);
+    }
+    let _lock = clip_lock();
+    let target = test_window(100, false, true);
+    ESCAPES.store(0, Ordering::SeqCst);
+    let fg = WindowsForeground::new();
+    fg.restore(target.handle()).expect("foreground");
+    assert!(wait_for_foreground(&fg, target.handle()));
+    let watcher = WindowsDismissWatcher::new();
+    let events = watcher.events();
+    watcher.start(Rect::new(500, 100, 200, 80)).expect("start");
+    wait_hooks(&watcher, true);
+    let inputs = [false, true].map(|up| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_ESCAPE,
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                ..Default::default()
+            },
+        },
+    });
+    // SAFETY: valid keyboard INPUT slice and matching structure size.
+    assert_eq!(
+        unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) },
+        2
+    );
+    assert!(
+        events.recv_timeout(Duration::from_millis(150)).is_err(),
+        "injected Esc must be ignored"
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while ESCAPES.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        ESCAPES.load(Ordering::SeqCst) > 0,
+        "injected Esc must reach foreground"
+    );
+    watcher.stop();
+    wait_hooks(&watcher, false);
+    assert!(events.try_recv().is_err());
+    watcher
+        .start(Rect::new(500, 100, 200, 80))
+        .expect("restart");
+    wait_hooks(&watcher, true);
+    watcher.stop();
+    wait_hooks(&watcher, false);
+}
+
+static ESCAPES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+unsafe extern "system" fn escape_probe_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    use windows::Win32::UI::{Input::KeyboardAndMouse::VK_ESCAPE, WindowsAndMessaging::WM_KEYDOWN};
+    if msg == WM_KEYDOWN && w.0 == usize::from(VK_ESCAPE.0) {
+        ESCAPES.fetch_add(1, Ordering::SeqCst);
+    }
+    // SAFETY: forwards the original window-procedure arguments unchanged.
+    unsafe { DefWindowProcW(hwnd, msg, w, l) }
 }

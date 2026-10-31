@@ -5,10 +5,13 @@ use std::sync::Arc;
 
 use ::windows::core::PCWSTR;
 use ::windows::Win32::System::DataExchange::{
-    EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable,
-    RegisterClipboardFormatW,
+    EmptyClipboard, EnumClipboardFormats, GetClipboardData, GetClipboardSequenceNumber,
+    IsClipboardFormatAvailable, RegisterClipboardFormatW,
 };
-use ::windows::Win32::System::Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT};
+use ::windows::Win32::System::Ole::{
+    CF_BITMAP, CF_DIB, CF_DIBV5, CF_ENHMETAFILE, CF_HDROP, CF_LOCALE, CF_METAFILEPICT, CF_OEMTEXT,
+    CF_PALETTE, CF_TEXT, CF_UNICODETEXT,
+};
 
 use super::util::{
     map_err, os_err, read_hglobal, set_clipboard_bytes, wide, ClipboardGuard, MessageWindow,
@@ -38,6 +41,23 @@ const SNAPSHOT_ORDER: [ClipboardFormat; 9] = [
     ClipboardFormat::CanIncludeInHistory,
     ClipboardFormat::CanUploadToCloud,
 ];
+
+// Windows synthesizes these standard formats from other clipboard representations.
+// Do not report them as unsaved private formats (e.g. Office/Excel registered formats).
+fn is_synthesized_format(id: u32) -> bool {
+    [
+        CF_TEXT,
+        CF_BITMAP,
+        CF_METAFILEPICT,
+        CF_OEMTEXT,
+        CF_PALETTE,
+        CF_ENHMETAFILE,
+        CF_LOCALE,
+        CF_DIBV5,
+    ]
+    .iter()
+    .any(|format| u32::from(format.0) == id)
+}
 
 /// Registered format names that keep our temporary write out of clipboard history, cloud sync
 /// and clipboard monitors.
@@ -233,6 +253,17 @@ impl Clipboard for WindowsClipboard {
         let _guard = ClipboardGuard::open(None, self.sleeper.as_ref())?;
         let mut entries = Vec::new();
         let mut skipped = Vec::new();
+        let mut id = 0;
+        loop {
+            // SAFETY: the clipboard is held open; zero begins enumeration and ends it.
+            id = unsafe { EnumClipboardFormats(id) };
+            if id == 0 {
+                break;
+            }
+            if !is_synthesized_format(id) && !ids.iter().any(|(_, saved)| *saved == id) {
+                skipped.push(format!("clipboard: skipped format id {id}"));
+            }
+        }
         for (format, id) in ids {
             match read_format(id) {
                 Ok(Some(data)) => entries.push(ClipboardEntry { format, data }),
