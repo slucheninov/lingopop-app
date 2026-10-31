@@ -7,8 +7,25 @@ updates:
     ignore:
       - dependency-name: "reqwest"
         versions: [">=0.13.0"]
+      # Tauri 3.0 is alpha-only; stay on 2.x.
+      - dependency-name: "tauri"
+        versions: [">=3"]
+      - dependency-name: "tauri-build"
+        versions: [">=3"]
+      - dependency-name: "tauri-plugin-*"
+        versions: [">=3"]
     groups:
       cargo:
+        patterns: ["*"]
+  - package-ecosystem: "npm"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "@tauri-apps/*"
+        versions: [">=3"]
+    groups:
+      npm:
         patterns: ["*"]
   - package-ecosystem: "github-actions"
     directory: "/"
