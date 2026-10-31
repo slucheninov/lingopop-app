@@ -62,6 +62,11 @@ Each task appends its own modules here in the same commit.
 - `scripts/mac-fixtures/run.sh`, `scripts/mac-fixtures/main.swift` - compiles the real macOS model files with `swiftc` and generates / checks the compatibility fixtures (macOS only)
 - `crates/lingopop-core/tests/fixtures/mac/` - generated, committed fixtures and goldens (`history.json`, `history.legacy.json`, `usage.json`, `secrets.payload.json`, `languages.golden.json`, `prompts.golden.json`, `SOURCE.txt` with the mac commit); never hand-edited
 - `crates/lingopop-core/tests/mac_fixtures.rs` - checks the Rust types against those fixtures (history, usage, languages, prompts, secrets payload; plus the ignored writer for the Swift reverse check)
+- `crates/lingopop-platform/Cargo.toml` - the OS integration crate (traits, fakes, Windows / macOS impls; depends on core, never the other way: `scripts/check-core-deps.sh` part (c) rejects even a dev-dependency cycle)
+- `crates/lingopop-platform/src/lib.rs` - `#![deny(unsafe_code, unsafe_op_in_unsafe_fn)]`; `unsafe` is re-allowed only by the `windows` / `macos` modules added by later tasks
+- `crates/lingopop-platform/src/error.rs` - `PlatformError` (no variant carries user data; `Os { api, code }` displays `<api> failed (code N)`), `LogFn` (fixed text, format names and counts only)
+- `crates/lingopop-platform/src/sleeper.rs` - `Sleeper` (`now` monotonic, `sleep`) and `SystemSleeper`
+- `crates/lingopop-platform/src/fake/` - always-compiled fakes: `FakeSleeper` (virtual clock, records every sleep)
 
 ## Build / test
 
@@ -101,6 +106,7 @@ cargo test -p lingopop-core --test mac_fixtures -- --ignored write_rust_outputs_
 - Prompt texts are copied verbatim from the macOS `Core/PromptBuilder.swift` (token `{{targetLanguage}}`) and are never localized.
 - No external network in tests; loopback mock servers in `tests/` are allowed. Live tests are `#[ignore]` and never run in CI. See "Live provider checks".
 - No secrets or API keys in logs, fixtures or issues.
+- `unsafe` is allowed only under `crates/lingopop-platform/src/windows/` and `src/macos/` (crate-level `deny(unsafe_code)`, `// SAFETY:` on every block); core stays `forbid(unsafe_code)`.
 
 ## Live provider checks
 
