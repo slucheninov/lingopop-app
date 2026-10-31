@@ -1,6 +1,7 @@
 //! Windows smoke tests against the real clipboard, keyboard, windows and OCR. The tests that need
 //! an interactive desktop are `#[ignore]` and run in the dedicated CI step (or by hand on a Windows
-//! box); the OCR tests need no desktop and run by default (no language pack = a printed skip).
+//! box); the OCR tests (no language pack = a printed skip), the DPAPI tests and the `native()` bundle
+//! test need no desktop and run by default.
 //! The clipboard is global: every test serializes on `CLIP_LOCK`.
 #![cfg(windows)]
 
@@ -679,4 +680,103 @@ fn hotkey_service_drop_joins_forwarder_and_allows_recreate() {
         let again = GlobalHotkeyService::new().expect("recreated service");
         again.register(&f9_chord()).expect("chord is free again");
     });
+}
+
+// DPAPI: no desktop needed, these run in the default `cargo test`.
+
+const DPAPI_FIXTURE: &[u8] = "{\"apiKey.Claude\":\"sk-ant-FIXTURE\",\"n\":\"Привет\"}".as_bytes();
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+#[test]
+fn dpapi_roundtrip_ascii_unicode_and_empty_payload() {
+    use lingopop_core::secrets::SecretProtector;
+    let p = lingopop_platform::WindowsProtector::new();
+    for plain in [DPAPI_FIXTURE, b"".as_slice()] {
+        let sealed = p.protect(plain).expect("protect");
+        assert!(
+            !sealed.is_empty(),
+            "DPAPI output carries a header even for empty input"
+        );
+        assert_eq!(p.unprotect(&sealed).expect("unprotect"), plain);
+    }
+}
+
+#[test]
+fn dpapi_protected_bytes_do_not_contain_plaintext() {
+    use lingopop_core::secrets::SecretProtector;
+    let sealed = lingopop_platform::WindowsProtector::new()
+        .protect(DPAPI_FIXTURE)
+        .expect("protect");
+    assert!(!contains(&sealed, b"sk-ant-FIXTURE"));
+}
+
+#[test]
+fn dpapi_tampered_ciphertext_fails_to_unprotect() {
+    use lingopop_core::secrets::{ProtectError, SecretProtector};
+    let p = lingopop_platform::WindowsProtector::new();
+    let sealed = p.protect(DPAPI_FIXTURE).expect("protect");
+    let mut flipped = sealed.clone();
+    *flipped.last_mut().unwrap() ^= 0x01;
+    let truncated = &sealed[..sealed.len() - 1];
+    for bad in [flipped.as_slice(), truncated] {
+        match p.unprotect(bad) {
+            Err(ProtectError::Failed(message)) => {
+                assert!(
+                    message.starts_with("CryptUnprotectData failed (code "),
+                    "{message}"
+                );
+                assert!(!message.contains("sk-ant-FIXTURE"));
+            }
+            Ok(_) => panic!("tampered DPAPI data must not unprotect"),
+        }
+    }
+}
+
+#[test]
+fn dpapi_garbage_input_fails_to_unprotect() {
+    use lingopop_core::secrets::SecretProtector;
+    let p = lingopop_platform::WindowsProtector::new();
+    assert!(p.unprotect(b"not dpapi data").is_err());
+}
+
+#[test]
+fn dpapi_works_through_secret_store() {
+    use lingopop_core::fsio::LoadOutcome;
+    use lingopop_core::provider::ProviderType;
+    use lingopop_core::secrets::SecretStore;
+    use lingopop_core::time::SystemClock;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("secrets.dat");
+    let protector = Arc::new(lingopop_platform::WindowsProtector::new());
+    let (mut store, outcome) =
+        SecretStore::open(path.clone(), protector.clone(), Arc::new(SystemClock)).expect("open");
+    assert!(matches!(outcome, LoadOutcome::Missing));
+    store
+        .set_api_key(ProviderType::Claude, "sk-ant-FIXTURE")
+        .expect("set key");
+
+    let bytes = std::fs::read(&path).expect("read secrets.dat");
+    assert!(!contains(&bytes, b"sk-ant-FIXTURE"));
+
+    let (reloaded, outcome) =
+        SecretStore::open(path, protector, Arc::new(SystemClock)).expect("reopen");
+    assert!(matches!(outcome, LoadOutcome::Loaded));
+    assert_eq!(
+        reloaded.api_key(ProviderType::Claude),
+        Some("sk-ant-FIXTURE")
+    );
+}
+
+#[test]
+fn native_bundle_constructs() {
+    let platform = lingopop_platform::native();
+    let sealed = platform.protector.protect(b"bundle").expect("protect");
+    assert_eq!(
+        platform.protector.unprotect(&sealed).expect("unprotect"),
+        b"bundle"
+    );
 }

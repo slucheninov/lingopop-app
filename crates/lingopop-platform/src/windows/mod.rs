@@ -3,6 +3,7 @@
 
 mod capture;
 mod clipboard;
+mod dpapi;
 mod foreground;
 mod keys;
 mod monitors;
@@ -11,6 +12,7 @@ mod util;
 
 pub use capture::WindowsCapture;
 pub use clipboard::WindowsClipboard;
+pub use dpapi::WindowsProtector;
 pub use foreground::WindowsForeground;
 pub use keys::WindowsKeys;
 pub use monitors::WindowsMonitors;
