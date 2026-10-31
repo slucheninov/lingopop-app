@@ -126,20 +126,23 @@ impl ShellPopup {
     }
 
     /// The frontend mounted and listens: re-emits a model that arrived before that.
+    ///
+    /// The cache lock is held across the emit here and in `show_at` / `update`, so a re-emitted
+    /// older model can never be delivered after a newer one (`emit_to` only queues the event).
     pub fn ready(&self) {
-        let pending = { self.pending().last_model.clone() };
-        if let Some(model) = pending {
-            self.emit_model(&model);
+        let pending = self.pending();
+        if let Some(model) = &pending.last_model {
+            self.emit_model(model);
         }
     }
 }
 
 impl PopupView for ShellPopup {
     fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel) {
-        let value = serde_json::to_value(model).ok();
-        if let Some(value) = &value {
-            self.pending().last_model = Some(value.clone());
-            self.emit_model(value);
+        if let Ok(value) = serde_json::to_value(model) {
+            let mut pending = self.pending();
+            self.emit_model(&value);
+            pending.last_model = Some(value);
         }
         self.place(self.rect_for(origin, size_logical));
         self.visible.store(true, Ordering::Release);
@@ -149,8 +152,9 @@ impl PopupView for ShellPopup {
         let Ok(value) = serde_json::to_value(model) else {
             return;
         };
-        self.pending().last_model = Some(value.clone());
+        let mut pending = self.pending();
         self.emit_model(&value);
+        pending.last_model = Some(value);
     }
 
     fn resize(&self, origin: Point, size_logical: (f64, f64)) {
