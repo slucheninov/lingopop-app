@@ -17,6 +17,7 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 ## Popup focus and dismissal
 
 - [ ] In Notepad select a word and press the Translate hotkey. Expected: the popup appears near the cursor; the Notepad caret keeps blinking and typing continues in Notepad.
+- [ ] At 100% and 200% display scaling show the popup (short and long result). Expected: no scrollbars and the close button (top right) is fully visible.
 - [ ] Click Copy, Rewrite, the language menu and the Retry menu. Expected: the popup never takes focus (the Notepad title bar stays active).
 - [ ] With the popup visible press Esc. Expected: the popup closes and the Esc is not delivered to Notepad.
 - [ ] With the popup hidden press Esc in an app that reacts to it (a dialog, Chrome find bar). Expected: the app receives Esc normally.

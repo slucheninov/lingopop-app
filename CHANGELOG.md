@@ -6,6 +6,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Fixed
+
+- Popup scrollbars and a clipped close button on Windows: the window shadow shrank the client area below the size the frontend measured; the popup window no longer has a shadow
+- Dismiss-hook installation failures (and success) are now written to `lingopop.log` instead of the invisible stderr
+
 ## [0.2.0-alpha.2] - 2026-10-31
 
 ### Fixed
