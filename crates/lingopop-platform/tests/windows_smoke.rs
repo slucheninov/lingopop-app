@@ -570,3 +570,95 @@ fn ocr_image_larger_than_max_dimension_is_unsupported() {
         Err(PlatformError::Unsupported("image too large for OCR"))
     );
 }
+
+/// Ctrl+Alt+F9: the chord the hotkey tests register (F9 is rarely bound globally).
+fn f9_chord() -> lingopop_core::hotkey::Hotkey {
+    use lingopop_core::hotkey::{Hotkey, Modifier};
+    Hotkey::new("F9", [Modifier::Ctrl, Modifier::Alt])
+}
+
+/// Runs `f` on a fresh thread: the hotkey manager is `!Send` and owns a window that must be
+/// created and used on one thread.
+fn on_hotkey_thread<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::spawn(f).join().expect("hotkey thread")
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn hotkey_register_conflict_and_unregister() {
+    use lingopop_platform::{GlobalHotkeyService, HotkeyService};
+    on_hotkey_thread(|| {
+        let first = GlobalHotkeyService::new().expect("service");
+        let id = first.register(&f9_chord()).expect("first register");
+        let second = GlobalHotkeyService::new().expect("second service");
+        assert_eq!(
+            second.register(&f9_chord()),
+            Err(PlatformError::HotkeyConflict)
+        );
+        first.unregister(id).expect("unregister");
+        first.register(&f9_chord()).expect("register again");
+    });
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn hotkey_press_delivers_event() {
+    use lingopop_platform::{GlobalHotkeyService, HotkeyService};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY, VK_CONTROL, VK_F9, VK_MENU,
+    };
+
+    fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: if up {
+                        KEYEVENTF_KEYUP
+                    } else {
+                        KEYBD_EVENT_FLAGS(0)
+                    },
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    on_hotkey_thread(|| {
+        let service = GlobalHotkeyService::new().expect("service");
+        let id = service.register(&f9_chord()).expect("register");
+        let events = service.events();
+        let inputs = [
+            key(VK_CONTROL, false),
+            key(VK_MENU, false),
+            key(VK_F9, false),
+            key(VK_F9, true),
+            key(VK_MENU, true),
+            key(VK_CONTROL, true),
+        ];
+        // SAFETY: `inputs` is a valid slice of keyboard INPUTs and the size is that of one INPUT.
+        let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+        assert_eq!(sent as usize, inputs.len(), "SendInput inserted all events");
+        // The hotkey window lives on this thread: pump its messages for 500 ms.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut msg = MSG::default();
+        while Instant::now() < deadline {
+            // SAFETY: `msg` is a valid MSG buffer; messages of this thread's own windows only.
+            unsafe {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let event = events
+            .recv_timeout(Duration::from_secs(1))
+            .expect("hotkey event");
+        assert_eq!(event.id, id);
+    });
+}

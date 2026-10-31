@@ -10,6 +10,7 @@ pub mod clipboard;
 pub mod error;
 pub mod fake;
 pub mod foreground;
+pub mod hotkey;
 pub mod inject;
 pub mod keys;
 pub mod monitors;
@@ -28,6 +29,9 @@ pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
 pub use error::{LogFn, PlatformError};
 pub use foreground::{ForegroundWindow, WindowHandle};
+pub use hotkey::{to_chord, HotkeyEvent, HotkeyId, HotkeyService};
+#[cfg(any(windows, target_os = "macos"))]
+pub use hotkey::{to_global_hotkey, GlobalHotkeyService};
 pub use inject::{replace_selection, ReplaceOptions, ReplaceOutcome};
 pub use keys::KeySynth;
 pub use monitors::{
