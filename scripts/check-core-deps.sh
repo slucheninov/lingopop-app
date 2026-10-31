@@ -13,7 +13,7 @@ status=0
 core_tree() {
   local target
   for target in x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-unknown-linux-gnu; do
-    cargo tree -p lingopop-core --target "$target" --all-features "$@"
+    cargo tree -p lingopop-core --target "$target" --all-features "$@" || return $?
   done
 }
 
