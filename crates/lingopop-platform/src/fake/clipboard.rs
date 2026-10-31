@@ -248,7 +248,11 @@ impl Clipboard for FakeClipboard {
 
     fn write_text_transient(&self, text: &str) -> Result<(), PlatformError> {
         self.record(ClipboardCall::WriteTransient);
-        self.take_failure(ClipboardCall::WriteTransient)?;
+        if let Err(e) = self.take_failure(ClipboardCall::WriteTransient) {
+            // Partial failure like Windows: EmptyClipboard succeeded, SetClipboardData failed.
+            self.apply(&Mutation::Clear);
+            return Err(e);
+        }
         self.apply(&Mutation::SetText(text.to_owned()));
         Ok(())
     }

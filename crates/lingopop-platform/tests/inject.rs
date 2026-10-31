@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use lingopop_platform::fake::{
-    ClipboardCall, Event, FakeClipboard, FakeForeground, FakeKeys, FakeSleeper, KeyCall,
+    ClipboardCall, Event, FakeClipboard, FakeForeground, FakeKeys, FakeOp, FakeSleeper, KeyCall,
 };
 use lingopop_platform::{
     replace_selection, PlatformError, ReplaceOptions, ReplaceOutcome, Sleeper as _, WindowHandle,
@@ -162,4 +162,15 @@ fn replace_waits_restore_delay_after_paste() {
         .unwrap()
         .at;
     assert!(restore_at >= paste_at + Duration::from_millis(150));
+}
+
+#[test]
+fn replace_transient_write_failure_restores_emptied_clipboard() {
+    let r = rig();
+    r.clip
+        .fail_next(FakeOp::WriteTransient, PlatformError::ClipboardBusy);
+    assert_eq!(replace(&r), Err(PlatformError::ClipboardBusy));
+    assert!(r.clip.calls().contains(&ClipboardCall::Restore));
+    assert_eq!(r.clip.text(), some("ORIGINAL"));
+    assert!(r.keys.events().is_empty());
 }

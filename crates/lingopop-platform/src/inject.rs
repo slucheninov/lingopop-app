@@ -70,8 +70,10 @@ pub fn replace_selection(
 
     let snapshot = clip.snapshot()?;
     let guard = RestoreGuard::new(clip, snapshot, opts.log.clone());
-    clip.write_text_transient(text)?;
+    let written = clip.write_text_transient(text);
+    // Even a failed write may have emptied the clipboard: whatever it did is ours to undo.
     guard.observe(clip.sequence_number());
+    written?;
     keys.send_paste()?;
     sleeper.sleep(opts.restore_delay);
     drop(guard);
