@@ -2,6 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use crate::error::PlatformError;
+
 pub trait Sleeper: Send + Sync {
     /// Monotonic time since an arbitrary start.
     fn now(&self) -> Duration;
@@ -35,6 +37,27 @@ impl Sleeper for SystemSleeper {
 
     fn sleep(&self, d: Duration) {
         std::thread::sleep(d);
+    }
+}
+
+/// Runs `op` up to `attempts` times, retrying only on `ClipboardBusy` and sleeping `delay` between
+/// attempts (not after the last). Any other result is returned at once.
+pub fn retry_busy<T>(
+    attempts: u32,
+    delay: Duration,
+    sleeper: &dyn Sleeper,
+    mut op: impl FnMut() -> Result<T, PlatformError>,
+) -> Result<T, PlatformError> {
+    let attempts = attempts.max(1);
+    let mut attempt = 1;
+    loop {
+        match op() {
+            Err(PlatformError::ClipboardBusy) if attempt < attempts => {
+                sleeper.sleep(delay);
+                attempt += 1;
+            }
+            other => return other,
+        }
     }
 }
 
