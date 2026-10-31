@@ -27,7 +27,9 @@ use std::sync::{Mutex, MutexGuard};
 
 use lingopop_orchestrator::{PopupView, PopupViewModel};
 use lingopop_platform::{monitor_at, physical_size, Platform, Point, Rect, WindowHandle};
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+#[cfg(not(windows))]
+use tauri::Manager;
+use tauri::{AppHandle, Emitter, WebviewWindow};
 
 pub const POPUP_LABEL: &str = "popup";
 pub const MODEL_EVENT: &str = "popup://model";
