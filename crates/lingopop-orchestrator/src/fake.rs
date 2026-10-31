@@ -1,16 +1,17 @@
 //! Recording fakes of the orchestrator's UI and storage seams (always compiled so the app
 //! crate's tests can reuse them).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use lingopop_core::records::{HistoryEntry, UsageRecord};
 use lingopop_core::runner::ConfigSnapshot;
 use lingopop_core::settings::Settings;
-use lingopop_platform::Point;
+use lingopop_platform::{PlatformError, Point, Rect};
 
 use crate::orchestrator::{ConfigSource, Persist};
 use crate::popup::PopupView;
+use crate::screen::RegionPicker;
 use crate::view_model::PopupViewModel;
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -127,5 +128,36 @@ impl Persist for FakePersist {
 
     fn append_usage(&self, record: UsageRecord) {
         lock(&self.usage).push(record);
+    }
+}
+
+/// A picker that returns a preset result and counts its calls.
+pub struct FakePicker {
+    result: Mutex<Result<Option<Rect>, PlatformError>>,
+    calls: AtomicUsize,
+}
+
+impl FakePicker {
+    pub fn new(result: Result<Option<Rect>, PlatformError>) -> Self {
+        Self {
+            result: Mutex::new(result),
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn set_result(&self, result: Result<Option<Rect>, PlatformError>) {
+        *lock(&self.result) = result;
+    }
+
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl RegionPicker for FakePicker {
+    async fn pick(&self) -> Result<Option<Rect>, PlatformError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        lock(&self.result).clone()
     }
 }

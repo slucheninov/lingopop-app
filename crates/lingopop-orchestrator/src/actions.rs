@@ -45,6 +45,10 @@ impl Orchestrator {
                 let Some(session) = st.session.as_ref() else {
                     return;
                 };
+                // Screen Translate results never offer Replace.
+                if session.operation == AIOperation::ScreenTranslate {
+                    return;
+                }
                 let Some(text) = session.last_result.clone() else {
                     return;
                 };
@@ -98,17 +102,14 @@ impl Orchestrator {
 
     pub async fn retry(&self, provider: ProviderType) {
         self.start(move |me, generation| async move {
-            let screen_translate = {
+            let vision = {
                 let st = me.state();
-                st.session
-                    .as_ref()
-                    .is_some_and(|s| s.operation == AIOperation::ScreenTranslate)
+                st.session.as_ref().is_some_and(|s| {
+                    s.operation == AIOperation::ScreenTranslate && s.image.is_some()
+                })
             };
-            if screen_translate {
-                // Task 5: use vision retry when the session has a captured image.
-                // Currently ScreenTranslate uses the text path.
-                me.run_action(generation, None, Some(provider), None, false)
-                    .await;
+            if vision {
+                me.vision_retry(generation, provider).await;
                 return;
             }
             me.run_action(generation, None, Some(provider), None, false)
@@ -174,6 +175,8 @@ impl Orchestrator {
             }
             if let Some(op) = operation {
                 session.operation = op;
+                // Any explicit operation ends the Screen Translate session.
+                session.image = None;
             }
             if let Some(lang) = target {
                 session.target_language = lang;

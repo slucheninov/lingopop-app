@@ -15,7 +15,7 @@ use lingopop_core::runner::{ConfigSnapshot, OperationRunner};
 use lingopop_core::secrets::{ProtectError, SecretProtector};
 use lingopop_core::settings::Settings;
 use lingopop_core::time::{ManualClock, Timestamp};
-use lingopop_orchestrator::fake::{FakeConfig, FakePersist, FakePopup, PopupCall};
+use lingopop_orchestrator::fake::{FakeConfig, FakePersist, FakePicker, FakePopup, PopupCall};
 use lingopop_orchestrator::messages::{KEY_CLIPBOARD_TIMEOUT, KEY_NOTHING_SELECTED};
 use lingopop_orchestrator::{
     max_input, missing_key, nothing_selected, popup_origin, Deps, GateTimeouts, Orchestrator,
@@ -195,6 +195,7 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         gate: PlatformGate::new(opts.timeouts),
         clock: Arc::new(ManualClock::new(Timestamp::from_unix_seconds(1000.0))),
         log: opts.log,
+        picker: Arc::new(FakePicker::new(Ok(None))),
     };
     Rig {
         orch: Orchestrator::new(deps),

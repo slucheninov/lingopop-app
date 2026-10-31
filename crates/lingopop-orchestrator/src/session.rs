@@ -4,7 +4,9 @@
 
 use lingopop_core::operation::AIOperation;
 use lingopop_core::provider::ProviderType;
-use lingopop_platform::{MonitorInfo, Point, WindowHandle};
+use std::sync::Arc;
+
+use lingopop_platform::{CapturedImage, MonitorInfo, Point, WindowHandle};
 use tokio::task::AbortHandle;
 
 /// What the popup actions (Task 4) need about the running operation.
@@ -19,6 +21,9 @@ pub struct Session {
     /// The window that was in the foreground before the capture (Replace target).
     pub target_window: Option<WindowHandle>,
     pub primary: ProviderType,
+    /// The captured Screen Translate region, kept for the vision retry. Dropped on close and
+    /// whenever a non-ScreenTranslate operation starts.
+    pub image: Option<Arc<CapturedImage>>,
 }
 
 impl std::fmt::Debug for Session {
@@ -32,6 +37,7 @@ impl std::fmt::Debug for Session {
             )
             .field("target_window", &self.target_window)
             .field("primary", &self.primary)
+            .field("image", &self.image)
             .finish_non_exhaustive()
     }
 }
@@ -70,8 +76,17 @@ mod tests {
             target_language: "German".into(),
             target_window: None,
             primary: ProviderType::Claude,
+            image: None,
         };
         let debug = format!("{s:?}");
         assert!(!debug.contains("PRIVATE-"));
+        let with_image = Session {
+            image: Some(Arc::new(
+                CapturedImage::new(1, 1, vec![171, 205, 239, 255]).unwrap(),
+            )),
+            ..s
+        };
+        let debug = format!("{with_image:?}");
+        assert!(debug.contains("1x1") && !debug.contains("171"), "{debug}");
     }
 }

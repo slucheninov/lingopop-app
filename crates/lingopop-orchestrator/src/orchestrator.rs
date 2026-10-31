@@ -9,7 +9,7 @@ use lingopop_core::errors::TranslationError;
 use lingopop_core::operation::AIOperation;
 use lingopop_core::provider::ProviderType;
 use lingopop_core::records::{HistoryEntry, UsageRecord};
-use lingopop_core::runner::{ConfigSnapshot, OperationRunner, RunRequest};
+use lingopop_core::runner::{ConfigSnapshot, OperationRunner, RunRequest, TranslationResult};
 use lingopop_core::settings::Settings;
 use lingopop_core::target_language::{operation_uses_auto_detect, target_language_for};
 use lingopop_core::time::Clock;
@@ -26,6 +26,7 @@ use crate::messages::{
 use crate::placement::popup_origin;
 use crate::popup::{PopupView, INITIAL_POPUP_SIZE};
 use crate::providers::retry_providers;
+use crate::screen::RegionPicker;
 use crate::session::{Session, SessionState};
 use crate::view_model::{PopupPhase, PopupViewModel};
 
@@ -52,6 +53,8 @@ pub struct Deps {
     pub gate: PlatformGate,
     pub clock: Arc<dyn Clock>,
     pub log: Option<Arc<LogFn>>,
+    /// The interactive region picker of Screen Translate (async UI, not a gate job).
+    pub picker: Arc<dyn RegionPicker>,
 }
 
 pub(crate) struct Inner {
@@ -86,9 +89,21 @@ impl Orchestrator {
     /// one: the call then returns without having touched the popup or the stores.
     pub async fn trigger(&self, operation: AIOperation) {
         self.start(move |me, generation| async move {
-            me.text_flow(operation, generation).await;
+            if operation == AIOperation::ScreenTranslate {
+                me.screen_flow(generation).await;
+            } else {
+                me.text_flow(operation, generation).await;
+            }
         })
         .await;
+    }
+
+    /// True while the session holds the captured Screen Translate image (diagnostics / tests).
+    pub fn has_captured_image(&self) -> bool {
+        self.state()
+            .session
+            .as_ref()
+            .is_some_and(|s| s.image.is_some())
     }
 
     /// The cancellation primitive shared by `trigger` and the popup actions: bumps the
@@ -144,8 +159,10 @@ impl Orchestrator {
     // Caller holds the generation mutex through every synchronous side effect.
     pub(crate) fn present_locked(&self, st: &mut SessionState, model: &PopupViewModel) {
         if let Some(session) = st.session.as_mut() {
+            // The OCR phase's text is what Copy offers there.
             session.last_result = match &model.phase {
                 PopupPhase::Result(result) => Some(result.text.clone()),
+                PopupPhase::Ocr { text, .. } => Some(text.clone()),
                 _ => None,
             };
         }
@@ -167,6 +184,16 @@ impl Orchestrator {
     }
 
     async fn text_flow(&self, operation: AIOperation, generation: u64) {
+        {
+            // A text operation ends any Screen Translate session: drop the captured image.
+            let mut st = self.state();
+            if st.generation != generation {
+                return;
+            }
+            if let Some(session) = st.session.as_mut() {
+                session.image = None;
+            }
+        }
         let d = self.deps();
         let (clipboard, keys, foreground, sleeper, monitors, log) = (
             d.platform.clipboard.clone(),
@@ -278,6 +305,7 @@ impl Orchestrator {
                 target_language: target_language.clone(),
                 target_window: captured.target,
                 primary,
+                image: None,
             });
         }
         self.present(generation, &PopupViewModel::loading(operation, &text));
@@ -306,34 +334,77 @@ impl Orchestrator {
         snapshot: &ConfigSnapshot,
         request: RunRequest,
     ) {
-        let d = self.deps();
         let operation = request.operation;
         let primary = request.primary;
+        let outcome = self.deps().runner.run(request, snapshot).await;
+        self.finish(generation, settings, snapshot, operation, primary, outcome)
+            .await;
+    }
+
+    /// Commits a run outcome under the generation lock: persists a success and shows it or the
+    /// error. A stale generation persists, shows and copies nothing. A Screen Translate success
+    /// is then copied when `auto_copy_ocr` is on (mac `OperationPresenter.present`): the copy
+    /// runs after the commit, so a result that was displayed is also copied.
+    pub(crate) async fn finish(
+        &self,
+        generation: u64,
+        settings: &Settings,
+        snapshot: &ConfigSnapshot,
+        operation: AIOperation,
+        primary: ProviderType,
+        outcome: Result<TranslationResult, TranslationError>,
+    ) {
+        let d = self.deps();
         let registry_has = |p: ProviderType| (d.registry_has)(p);
-        let outcome = d.runner.run(request, snapshot).await;
-        let mut st = self.state();
-        if st.generation != generation {
+        let copy = {
+            let mut st = self.state();
+            if st.generation != generation {
+                return;
+            }
+            match outcome {
+                Ok(result) => {
+                    let now = d.clock.now();
+                    d.stores
+                        .add_history(result.history_entry(now), settings.max_history_count);
+                    if let Some(usage) = result.usage_record(now) {
+                        d.stores.append_usage(usage);
+                    }
+                    let retry = retry_providers(result.provider, operation, snapshot, registry_has);
+                    self.present_locked(&mut st, &PopupViewModel::result(&result, &retry));
+                    (operation == AIOperation::ScreenTranslate && settings.auto_copy_ocr)
+                        .then_some(result.translated)
+                }
+                Err(error) => {
+                    let (message, details) = match &error {
+                        TranslationError::MissingApiKey => (missing_key(primary), Vec::new()),
+                        other => translation_error_view(other),
+                    };
+                    let retry = retry_providers(primary, operation, snapshot, registry_has);
+                    self.present_locked(&mut st, &PopupViewModel::error(message, details, &retry));
+                    None
+                }
+            }
+        };
+        if let Some(text) = copy {
+            self.auto_copy(generation, text).await;
+        }
+    }
+
+    /// Writes `text` to the clipboard through the gate (autoCopyOCR). A failure is logged
+    /// without any text and not shown.
+    pub(crate) async fn auto_copy(&self, generation: u64, text: String) {
+        if !self.is_current(generation) {
             return;
         }
-        match outcome {
-            Ok(result) => {
-                let now = d.clock.now();
-                d.stores
-                    .add_history(result.history_entry(now), settings.max_history_count);
-                if let Some(usage) = result.usage_record(now) {
-                    d.stores.append_usage(usage);
-                }
-                let retry = retry_providers(result.provider, operation, snapshot, registry_has);
-                self.present_locked(&mut st, &PopupViewModel::result(&result, &retry));
-            }
-            Err(error) => {
-                let (message, details) = match &error {
-                    TranslationError::MissingApiKey => (missing_key(primary), Vec::new()),
-                    other => translation_error_view(other),
-                };
-                let retry = retry_providers(primary, operation, snapshot, registry_has);
-                self.present_locked(&mut st, &PopupViewModel::error(message, details, &retry));
-            }
+        let clipboard = self.deps().platform.clipboard.clone();
+        if self
+            .deps()
+            .gate
+            .run(move || clipboard.write_text(&text))
+            .await
+            .is_err()
+        {
+            self.log("auto-copy failed");
         }
     }
 }
@@ -459,6 +530,7 @@ mod commit_tests {
             gate: PlatformGate::new(Default::default()),
             clock: Arc::new(SystemClock),
             log: None,
+            picker: Arc::new(crate::fake::FakePicker::new(Ok(None))),
         });
         stores.inner.set(Arc::downgrade(&me.inner)).unwrap();
         popup.inner.set(Arc::downgrade(&me.inner)).unwrap();

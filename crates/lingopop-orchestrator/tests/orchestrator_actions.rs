@@ -10,7 +10,7 @@ use lingopop_core::{
     time::{ManualClock, Timestamp},
 };
 use lingopop_orchestrator::{
-    fake::{FakeConfig, FakePersist, FakePopup, PopupCall},
+    fake::{FakeConfig, FakePersist, FakePicker, FakePopup, PopupCall},
     messages::{KEY_CLIPBOARD_TIMEOUT, KEY_FOREGROUND_LOST, KEY_INPUT_BLOCKED},
     *,
 };
@@ -99,6 +99,7 @@ fn rig(t: Arc<dyn Transport>, target: Option<WindowHandle>) -> Rig {
         gate: PlatformGate::new(Default::default()),
         clock: Arc::new(ManualClock::new(Timestamp::from_unix_seconds(1000.))),
         log: None,
+        picker: Arc::new(FakePicker::new(Ok(None))),
     });
     Rig {
         orch,

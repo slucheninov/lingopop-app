@@ -11,6 +11,7 @@ pub mod orchestrator;
 pub mod placement;
 pub mod popup;
 pub mod providers;
+pub mod screen;
 pub mod session;
 pub mod view_model;
 
@@ -23,6 +24,7 @@ pub use orchestrator::{ConfigSource, Deps, Orchestrator, Persist};
 pub use placement::popup_origin;
 pub use popup::{PopupView, INITIAL_POPUP_SIZE};
 pub use providers::{ocr_translate_providers, retry_providers, vision_providers};
+pub use screen::RegionPicker;
 pub use view_model::{
     ActionRowView, ErrorView, FallbackView, PopupPhase, PopupViewModel, ResultView, RetryProvider,
     UserMessageView,
