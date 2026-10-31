@@ -10,12 +10,16 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use lingopop_platform::{
-    capture_selection, CaptureOptions, Clipboard, ClipboardFormat, ClipboardSnapshot,
-    ForegroundWindow, KeySynth, SystemSleeper, WindowHandle, WindowsClipboard, WindowsForeground,
-    WindowsKeys,
+    capture_selection, virtual_screen, CaptureOptions, Clipboard, ClipboardFormat,
+    ClipboardSnapshot, ForegroundWindow, KeySynth, Monitors, PlatformError, Rect, ScreenCapture,
+    SystemSleeper, WindowHandle, WindowsCapture, WindowsClipboard, WindowsForeground, WindowsKeys,
+    WindowsMonitors,
 };
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{
+    GlobalFree, COLORREF, HANDLE, HGLOBAL, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
+};
+use windows::Win32::Graphics::Gdi::CreateSolidBrush;
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
     RegisterClipboardFormatW, SetClipboardData,
@@ -26,8 +30,9 @@ use windows::Win32::System::Memory::{
 };
 use windows::Win32::System::Ole::{CF_DIB, CF_UNICODETEXT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, DispatchMessageW, PeekMessageW, SendMessageW, TranslateMessage,
-    HWND_MESSAGE, MSG, PM_REMOVE, WM_SETTEXT, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, PeekMessageW, RegisterClassW,
+    SendMessageW, TranslateMessage, HWND_MESSAGE, MSG, PM_REMOVE, WM_SETTEXT, WNDCLASSW,
+    WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
 static CLIP_LOCK: Mutex<()> = Mutex::new(());
@@ -384,4 +389,123 @@ fn foreground_current_and_restore_roundtrip() {
 #[ignore = "needs interactive desktop"]
 fn modifiers_down_is_empty_when_no_key_is_pressed() {
     assert!(WindowsKeys::new().modifiers_down().is_empty());
+}
+
+unsafe extern "system" fn magenta_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    // SAFETY: forwards the arguments of a window procedure call unchanged.
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+/// A topmost 200x100 popup at (100,100) painted solid magenta by its class background brush.
+fn magenta_window() -> TestWindow {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel();
+    let thread_stop = stop.clone();
+    let thread = std::thread::spawn(move || {
+        let class = wide("LingoPopMagenta");
+        // SAFETY: the class, brush and window are created, pumped and destroyed on this thread
+        // only; `msg` is a valid MSG buffer; the class brush is owned by the class
+        // for the life of the process (a one-off test leak).
+        unsafe {
+            let module = GetModuleHandleW(PCWSTR::null()).expect("GetModuleHandleW");
+            let brush = CreateSolidBrush(COLORREF(0x00FF_00FF));
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(magenta_proc),
+                hInstance: HINSTANCE::from(module),
+                lpszClassName: PCWSTR(class.as_ptr()),
+                hbrBackground: brush,
+                ..Default::default()
+            };
+            // Registration fails harmlessly when a previous test already registered the class.
+            RegisterClassW(&wc);
+            let hwnd = CreateWindowExW(
+                WS_EX_TOPMOST,
+                PCWSTR(class.as_ptr()),
+                PCWSTR::null(),
+                WS_POPUP | WS_VISIBLE,
+                100,
+                100,
+                200,
+                100,
+                None,
+                None,
+                Some(HINSTANCE::from(module)),
+                None,
+            )
+            .expect("CreateWindowExW(magenta)");
+            tx.send(hwnd.0 as usize).expect("send hwnd");
+            let mut msg = MSG::default();
+            while !thread_stop.load(Ordering::SeqCst) {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let _ = DestroyWindow(hwnd);
+        }
+    });
+    let hwnd = rx.recv().expect("window thread started");
+    // Give the compositor time to paint the window before it is captured.
+    std::thread::sleep(Duration::from_millis(300));
+    TestWindow {
+        hwnd,
+        stop,
+        thread: Some(thread),
+    }
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn monitors_report_at_least_one_primary_with_positive_scale() {
+    let monitors = WindowsMonitors::new().monitors().expect("monitors");
+    assert!(monitors.iter().any(|m| m.primary), "{monitors:?}");
+    for m in &monitors {
+        assert!(m.scale_factor >= 1.0, "{m:?}");
+        assert!(m.bounds.width > 0 && m.bounds.height > 0, "{m:?}");
+        assert_eq!(m.work_area.intersect(m.bounds), Some(m.work_area), "{m:?}");
+    }
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn cursor_position_is_inside_virtual_screen() {
+    let source = WindowsMonitors::new();
+    let screen = virtual_screen(&source.monitors().expect("monitors"));
+    let p = source.cursor_position().expect("cursor_position");
+    assert!(screen.contains(p), "{p:?} not in {screen:?}");
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn capture_region_returns_known_window_colour() {
+    let _window = magenta_window();
+    let image = WindowsCapture::new()
+        .capture_region(Rect::new(175, 125, 50, 50))
+        .expect("capture_region");
+    assert_eq!((image.width, image.height), (50, 50));
+    assert!(
+        image.rgba.chunks(4).all(|px| px == [255, 0, 255, 255]),
+        "first pixel {:?}",
+        &image.rgba[..4]
+    );
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn capture_region_out_of_screen_is_invalid_region() {
+    let capture = WindowsCapture::new();
+    assert_eq!(
+        capture.capture_region(Rect::new(-100_000, -100_000, 50, 50)),
+        Err(PlatformError::InvalidRegion)
+    );
+    assert_eq!(
+        capture.capture_region(Rect::new(10, 10, 0, 50)),
+        Err(PlatformError::InvalidRegion)
+    );
 }

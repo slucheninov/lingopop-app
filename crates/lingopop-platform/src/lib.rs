@@ -5,12 +5,14 @@
 #![deny(unsafe_code, unsafe_op_in_unsafe_fn)]
 #![warn(clippy::undocumented_unsafe_blocks)]
 
+pub mod capture;
 pub mod clipboard;
 pub mod error;
 pub mod fake;
 pub mod foreground;
 pub mod inject;
 pub mod keys;
+pub mod monitors;
 pub mod selection;
 pub mod sleeper;
 #[cfg(windows)]
@@ -18,11 +20,18 @@ pub mod sleeper;
 mod windows;
 
 #[cfg(windows)]
-pub use crate::windows::{WindowsClipboard, WindowsForeground, WindowsKeys};
+pub use crate::windows::{
+    WindowsCapture, WindowsClipboard, WindowsForeground, WindowsKeys, WindowsMonitors,
+};
+pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
 pub use error::{LogFn, PlatformError};
 pub use foreground::{ForegroundWindow, WindowHandle};
 pub use inject::{replace_selection, ReplaceOptions, ReplaceOutcome};
 pub use keys::KeySynth;
+pub use monitors::{
+    clamp_to_work_area, monitor_at, physical_size, validate_region, virtual_screen, MonitorInfo,
+    Monitors, Point, Rect, Size,
+};
 pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};

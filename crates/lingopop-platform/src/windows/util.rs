@@ -8,6 +8,9 @@ use ::windows::Win32::System::DataExchange::{CloseClipboard, OpenClipboard, SetC
 use ::windows::Win32::System::Memory::{
     GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
 };
+use ::windows::Win32::UI::HiDpi::{
+    SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use ::windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE};
 
 use crate::error::PlatformError;
@@ -158,6 +161,27 @@ pub(crate) fn set_clipboard_bytes(format: u32, data: &[u8]) -> Result<(), Platfo
             // SAFETY: ownership did not move to the system, so the block is still ours.
             let _ = unsafe { GlobalFree(Some(mem)) };
             Err(os_err("SetClipboardData", win32_code(&e)))
+        }
+    }
+}
+
+/// Switches the calling thread to per-monitor-v2 DPI awareness so coordinates and sizes are
+/// physical pixels whatever the host process uses; restores the previous context on drop.
+pub(crate) struct DpiGuard(DPI_AWARENESS_CONTEXT);
+
+impl DpiGuard {
+    pub(crate) fn per_monitor_v2() -> Self {
+        // SAFETY: only changes the calling thread's DPI awareness; the old value is restored in Drop.
+        Self(unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) })
+    }
+}
+
+impl Drop for DpiGuard {
+    fn drop(&mut self) {
+        // A null result means the switch failed, so there is nothing to restore.
+        if !self.0 .0.is_null() {
+            // SAFETY: `self.0` is the context this thread had before the guard was created.
+            let _ = unsafe { SetThreadDpiAwarenessContext(self.0) };
         }
     }
 }
