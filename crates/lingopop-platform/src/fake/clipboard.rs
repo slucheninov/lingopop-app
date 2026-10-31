@@ -46,6 +46,7 @@ pub struct FakeClipboard {
     log: Arc<EventLog>,
     state: Mutex<State>,
     read_hook: Mutex<Option<Arc<ReadHook>>>,
+    restore_hook: Mutex<Option<Arc<ReadHook>>>,
 }
 
 fn text_entry(text: &str) -> ClipboardEntry {
@@ -70,6 +71,7 @@ impl FakeClipboard {
                 panic_on_read: false,
             }),
             read_hook: Mutex::new(None),
+            restore_hook: Mutex::new(None),
         })
     }
 
@@ -133,6 +135,12 @@ impl FakeClipboard {
     /// Runs `hook` at the start of every `read_text` (to simulate a foreign write at that moment).
     pub fn on_read_text(&self, hook: Box<dyn Fn(&FakeClipboard) + Send + Sync>) {
         *self.read_hook.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(hook));
+    }
+
+    /// Runs `hook` at the start of every `restore_if`, before the sequence is compared (to
+    /// simulate a foreign write between the guard's check and the restore).
+    pub fn on_restore_if(&self, hook: Box<dyn Fn(&FakeClipboard) + Send + Sync>) {
+        *self.restore_hook.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(hook));
     }
 
     /// Applies `mutation` once virtual time reaches now + `after`.
@@ -225,6 +233,31 @@ impl Clipboard for FakeClipboard {
         s.entries = snapshot.entries.clone();
         s.seq += 1;
         Ok(())
+    }
+
+    fn restore_if(
+        &self,
+        snapshot: &ClipboardSnapshot,
+        expected_sequence: u64,
+    ) -> Result<bool, PlatformError> {
+        self.record(ClipboardCall::Restore);
+        // Test hook: a foreign write landing after the guard's check, before the clipboard is held.
+        let hook = self
+            .restore_hook
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(h) = hook {
+            h(self);
+        }
+        self.take_failure(ClipboardCall::Restore)?;
+        let mut s = self.settled();
+        if s.seq != expected_sequence {
+            return Ok(false);
+        }
+        s.entries = snapshot.entries.clone();
+        s.seq += 1;
+        Ok(true)
     }
 
     fn read_text(&self) -> Result<Option<String>, PlatformError> {

@@ -38,6 +38,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
+const PROTECTION_NAMES: [&str; 3] = [
+    "ExcludeClipboardContentFromMonitorProcessing",
+    "CanIncludeInClipboardHistory",
+    "CanUploadToCloudClipboard",
+];
+
 static CLIP_LOCK: Mutex<()> = Mutex::new(());
 
 /// `EM_SETSEL` (from `Win32_UI_Controls`, not worth a feature for one constant).
@@ -244,6 +250,19 @@ fn clipboard_roundtrip_text_html_image() {
         (registered("HTML Format"), html),
         (registered("PNG"), png),
         (u32::from(CF_DIB.0), tiny_dib()),
+        // Protection markers of a password manager: they must survive a snapshot / restore.
+        (
+            registered("ExcludeClipboardContentFromMonitorProcessing"),
+            vec![1u8],
+        ),
+        (
+            registered("CanIncludeInClipboardHistory"),
+            0u32.to_le_bytes().to_vec(),
+        ),
+        (
+            registered("CanUploadToCloudClipboard"),
+            0u32.to_le_bytes().to_vec(),
+        ),
     ]);
     let clip = clipboard();
     let before = clip.snapshot().expect("snapshot");
@@ -254,7 +273,10 @@ fn clipboard_roundtrip_text_html_image() {
             ClipboardFormat::UnicodeText,
             ClipboardFormat::Html,
             ClipboardFormat::Png,
-            ClipboardFormat::Dib
+            ClipboardFormat::Dib,
+            ClipboardFormat::ExcludeFromMonitors,
+            ClipboardFormat::CanIncludeInHistory,
+            ClipboardFormat::CanUploadToCloud,
         ]
     );
     assert!(before.skipped.is_empty(), "{:?}", before.skipped);
@@ -270,6 +292,40 @@ fn clipboard_roundtrip_text_html_image() {
     let after = clip.snapshot().expect("snapshot after restore");
     assert_eq!(after.entries, before.entries, "every format byte-identical");
     assert!(after.skipped.is_empty(), "{:?}", after.skipped);
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn clipboard_restore_keeps_absence_of_exclusion_formats() {
+    let _lock = clip_lock();
+    put_raw(&[(u32::from(CF_UNICODETEXT.0), utf16_bytes("plain"))]);
+    let clip = clipboard();
+    let before = clip.snapshot().expect("snapshot");
+    clip.write_text_transient("x").expect("transient");
+    clip.restore(&before).expect("restore");
+    assert_eq!(clip.read_text().expect("read").as_deref(), Some("plain"));
+    for name in PROTECTION_NAMES {
+        assert!(
+            read_raw(registered(name)).is_none(),
+            "{name} must stay absent"
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn clipboard_restore_if_skips_when_sequence_differs() {
+    let _lock = clip_lock();
+    let clip = clipboard();
+    clip.write_text("original").expect("write");
+    let snap = clip.snapshot().expect("snapshot");
+    clip.write_text("newer").expect("newer write");
+    let stale = snap.sequence;
+    assert!(!clip.restore_if(&snap, stale).expect("restore_if"));
+    assert_eq!(clip.read_text().expect("read").as_deref(), Some("newer"));
+    let now = clip.sequence_number();
+    assert!(clip.restore_if(&snap, now).expect("restore_if"));
+    assert_eq!(clip.read_text().expect("read").as_deref(), Some("original"));
 }
 
 #[test]

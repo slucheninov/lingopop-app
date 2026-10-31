@@ -96,6 +96,18 @@ impl Clipboard for MacClipboard {
         }
     }
 
+    fn restore_if(
+        &self,
+        snapshot: &ClipboardSnapshot,
+        expected_sequence: u64,
+    ) -> Result<bool, PlatformError> {
+        // Checked right before `clearContents`; the pasteboard has no lock to hold.
+        if pasteboard().changeCount() as u64 != expected_sequence {
+            return Ok(false);
+        }
+        self.restore(snapshot).map(|()| true)
+    }
+
     fn read_text(&self) -> Result<Option<String>, PlatformError> {
         Ok(pasteboard()
             .stringForType(string_type())

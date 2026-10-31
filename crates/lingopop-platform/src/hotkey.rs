@@ -178,9 +178,10 @@ mod real {
         fn register(&self, hotkey: &Hotkey) -> Result<HotkeyId, PlatformError> {
             let chord = to_global_hotkey(hotkey)?;
             self.manager.register(chord).map_err(map_error)?;
-            if let Ok(mut map) = self.registered.lock() {
-                map.insert(chord.id(), chord);
-            }
+            self.registered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(chord.id(), chord);
             Ok(HotkeyId(chord.id()))
         }
 
@@ -188,10 +189,18 @@ mod real {
             let chord = self
                 .registered
                 .lock()
-                .ok()
-                .and_then(|mut map| map.remove(&id.0))
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&id.0)
                 .ok_or(PlatformError::InvalidHotkey)?;
-            self.manager.unregister(chord).map_err(map_error)
+            if let Err(e) = self.manager.unregister(chord) {
+                // The OS still owns the chord: keep tracking it so a retry can succeed.
+                self.registered
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(id.0, chord);
+                return Err(map_error(e));
+            }
+            Ok(())
         }
 
         fn events(&self) -> crossbeam_channel::Receiver<HotkeyEvent> {

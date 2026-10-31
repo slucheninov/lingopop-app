@@ -58,6 +58,9 @@ pub fn capture_selection(
             return Err(PlatformError::InputBlocked);
         }
     }
+    // Wait BEFORE the snapshot: a foreign write during the wait would otherwise be clobbered by
+    // restoring an older snapshot.
+    wait_for_modifiers(keys, sleeper, opts)?;
     let snapshot = clip.snapshot()?;
     if !snapshot.skipped.is_empty() {
         log(
@@ -81,8 +84,6 @@ fn capture_inner(
     sleeper: &dyn Sleeper,
     opts: &CaptureOptions,
 ) -> Result<Option<String>, PlatformError> {
-    wait_for_modifiers(keys, sleeper, opts)?;
-
     let before = clip.sequence_number();
     keys.send_copy()?;
 
@@ -115,6 +116,11 @@ fn capture_inner(
     // Still empty (an app between "empty" and "set") while budget remains: keep polling.
     loop {
         if let Some(text) = clip.read_text()?.filter(|t| !t.trim().is_empty()) {
+            // The text may belong to a foreign write that landed after `last`: only a sequence
+            // that is still the one we observed proves it is our copy.
+            if clip.sequence_number() != last {
+                return Ok(None);
+            }
             return Ok(Some(text));
         }
         if sleeper.now().saturating_sub(settle_start) >= opts.settle_cap {

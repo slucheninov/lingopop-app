@@ -13,20 +13,30 @@ use ::windows::Win32::System::Ole::{CF_DIB, CF_HDROP, CF_UNICODETEXT};
 use super::util::{
     map_err, os_err, read_hglobal, set_clipboard_bytes, wide, ClipboardGuard, MessageWindow,
 };
-use crate::clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
+use crate::clipboard::{
+    protection_unreadable, unreadable_label, Clipboard, ClipboardEntry, ClipboardFormat,
+    ClipboardSnapshot,
+};
 use crate::error::PlatformError;
 use crate::sleeper::Sleeper;
 
 /// Formats captured by `snapshot`, in this order. `CF_TEXT` / `CF_OEMTEXT` / `CF_LOCALE` /
 /// `CF_DIBV5` are not stored: Windows synthesizes them from the stored ones (and from a
 /// `CF_DIBV5`-only source it synthesizes `CF_DIB`, which drops alpha).
-const SNAPSHOT_ORDER: [ClipboardFormat; 6] = [
+///
+/// The three exclusion markers are captured too, as ordinary entries with their exact bytes, so a
+/// restore puts back the protection of e.g. a password copied from a password manager (and absence
+/// stays absence).
+const SNAPSHOT_ORDER: [ClipboardFormat; 9] = [
     ClipboardFormat::UnicodeText,
     ClipboardFormat::Html,
     ClipboardFormat::Rtf,
     ClipboardFormat::Png,
     ClipboardFormat::Dib,
     ClipboardFormat::FileList,
+    ClipboardFormat::ExcludeFromMonitors,
+    ClipboardFormat::CanIncludeInHistory,
+    ClipboardFormat::CanUploadToCloud,
 ];
 
 /// Registered format names that keep our temporary write out of clipboard history, cloud sync
@@ -57,6 +67,9 @@ fn format_id(format: ClipboardFormat) -> Result<u32, PlatformError> {
         ClipboardFormat::Png => registered("PNG"),
         ClipboardFormat::Dib => Ok(u32::from(CF_DIB.0)),
         ClipboardFormat::FileList => Ok(u32::from(CF_HDROP.0)),
+        ClipboardFormat::ExcludeFromMonitors => registered(EXCLUDE_FROM_MONITORS),
+        ClipboardFormat::CanIncludeInHistory => registered(CAN_INCLUDE_IN_HISTORY),
+        ClipboardFormat::CanUploadToCloud => registered(CAN_UPLOAD_TO_CLOUD),
     }
 }
 
@@ -68,6 +81,9 @@ fn format_name(format: ClipboardFormat) -> &'static str {
         ClipboardFormat::Png => "PNG",
         ClipboardFormat::Dib => "CF_DIB",
         ClipboardFormat::FileList => "CF_HDROP",
+        ClipboardFormat::ExcludeFromMonitors => EXCLUDE_FROM_MONITORS,
+        ClipboardFormat::CanIncludeInHistory => CAN_INCLUDE_IN_HISTORY,
+        ClipboardFormat::CanUploadToCloud => CAN_UPLOAD_TO_CLOUD,
     }
 }
 
@@ -95,6 +111,22 @@ fn utf16_bytes(text: &str) -> Vec<u8> {
         .collect()
 }
 
+/// The three exclusion markers with the values of a protected write: the monitor-exclusion marker
+/// (1 byte) and both "may include / upload" flags as DWORD 0.
+fn protection_markers() -> Result<Vec<(u32, Vec<u8>)>, PlatformError> {
+    Ok(vec![
+        (registered(EXCLUDE_FROM_MONITORS)?, vec![0u8]),
+        (
+            registered(CAN_INCLUDE_IN_HISTORY)?,
+            0u32.to_le_bytes().to_vec(),
+        ),
+        (
+            registered(CAN_UPLOAD_TO_CLOUD)?,
+            0u32.to_le_bytes().to_vec(),
+        ),
+    ])
+}
+
 fn empty() -> Result<(), PlatformError> {
     // SAFETY: the caller holds the clipboard open with a window owner.
     unsafe { EmptyClipboard() }.map_err(map_err("EmptyClipboard"))
@@ -112,6 +144,52 @@ impl WindowsClipboard {
         Self { sleeper }
     }
 
+    /// Shared body of `restore` / `restore_if`. With `expected`, the sequence number is re-read
+    /// AFTER the clipboard is open (nobody can write while we hold it) and a mismatch returns
+    /// `Ok(false)` with the clipboard untouched.
+    fn restore_inner(
+        &self,
+        snapshot: &ClipboardSnapshot,
+        expected: Option<u64>,
+    ) -> Result<bool, PlatformError> {
+        let ids = snapshot
+            .entries
+            .iter()
+            .map(|e| format_id(e.format))
+            .collect::<Result<Vec<_>, _>>()?;
+        // Fail closed: a protection marker that was present but unreadable at snapshot time is
+        // replaced by the full protected set, never dropped.
+        let markers = if protection_unreadable(&snapshot.skipped) {
+            protection_markers()?
+        } else {
+            Vec::new()
+        };
+        let owner = MessageWindow::new()?;
+        let _guard = ClipboardGuard::open(Some(&owner), self.sleeper.as_ref())?;
+        if let Some(expected) = expected {
+            if self.sequence_number() != expected {
+                return Ok(false);
+            }
+        }
+        empty()?;
+        // Best effort: put back every entry we can, report the first failure.
+        let mut first_err = None;
+        for (entry, id) in snapshot.entries.iter().zip(ids) {
+            if entry.data.is_empty() {
+                continue;
+            }
+            if let Err(e) = set_clipboard_bytes(id, &entry.data) {
+                first_err.get_or_insert(e);
+            }
+        }
+        for (id, data) in &markers {
+            if let Err(e) = set_clipboard_bytes(*id, data) {
+                first_err.get_or_insert(e);
+            }
+        }
+        first_err.map_or(Ok(true), Err)
+    }
+
     /// Opens, empties and fills the clipboard with `text`, plus the exclusion formats when
     /// `transient`. An `OpenClipboard` failure returns `ClipboardBusy` with nothing changed; a
     /// failure after `EmptyClipboard` returns the error (the clipboard is then partially written,
@@ -120,17 +198,7 @@ impl WindowsClipboard {
         // Resolve every id first, so no failure can happen between opening and emptying.
         let text_id = format_id(ClipboardFormat::UnicodeText)?;
         let extra = if transient {
-            vec![
-                (registered(EXCLUDE_FROM_MONITORS)?, vec![0u8]),
-                (
-                    registered(CAN_INCLUDE_IN_HISTORY)?,
-                    0u32.to_le_bytes().to_vec(),
-                ),
-                (
-                    registered(CAN_UPLOAD_TO_CLOUD)?,
-                    0u32.to_le_bytes().to_vec(),
-                ),
-            ]
+            protection_markers()?
         } else {
             Vec::new()
         };
@@ -169,7 +237,7 @@ impl Clipboard for WindowsClipboard {
             match read_format(id) {
                 Ok(Some(data)) => entries.push(ClipboardEntry { format, data }),
                 Ok(None) => {}
-                Err(()) => skipped.push(format!("format {} unreadable", format_name(format))),
+                Err(()) => skipped.push(unreadable_label(format_name(format))),
             }
         }
         // Read while the clipboard is open: nobody else can write in between.
@@ -182,25 +250,15 @@ impl Clipboard for WindowsClipboard {
     }
 
     fn restore(&self, snapshot: &ClipboardSnapshot) -> Result<(), PlatformError> {
-        let ids = snapshot
-            .entries
-            .iter()
-            .map(|e| format_id(e.format))
-            .collect::<Result<Vec<_>, _>>()?;
-        let owner = MessageWindow::new()?;
-        let _guard = ClipboardGuard::open(Some(&owner), self.sleeper.as_ref())?;
-        empty()?;
-        // Best effort: put back every entry we can, report the first failure.
-        let mut first_err = None;
-        for (entry, id) in snapshot.entries.iter().zip(ids) {
-            if entry.data.is_empty() {
-                continue;
-            }
-            if let Err(e) = set_clipboard_bytes(id, &entry.data) {
-                first_err.get_or_insert(e);
-            }
-        }
-        first_err.map_or(Ok(()), Err)
+        self.restore_inner(snapshot, None).map(|_| ())
+    }
+
+    fn restore_if(
+        &self,
+        snapshot: &ClipboardSnapshot,
+        expected_sequence: u64,
+    ) -> Result<bool, PlatformError> {
+        self.restore_inner(snapshot, Some(expected_sequence))
     }
 
     fn read_text(&self) -> Result<Option<String>, PlatformError> {

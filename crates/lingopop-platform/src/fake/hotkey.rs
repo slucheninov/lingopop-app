@@ -42,7 +42,10 @@ impl FakeHotkeyService {
     /// Simulates another application owning this chord: registering it is a `HotkeyConflict`.
     pub fn block(&self, hotkey: &Hotkey) -> Result<(), PlatformError> {
         let id = chord_id(hotkey)?;
-        self.blocked.lock().expect("blocked").insert(id);
+        self.blocked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id);
         Ok(())
     }
 
@@ -51,7 +54,7 @@ impl FakeHotkeyService {
         if self
             .registered
             .lock()
-            .expect("registered")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains_key(&id.0)
         {
             let _ = self.tx.send(HotkeyEvent { id });
@@ -62,8 +65,17 @@ impl FakeHotkeyService {
 impl HotkeyService for FakeHotkeyService {
     fn register(&self, hotkey: &Hotkey) -> Result<HotkeyId, PlatformError> {
         let id = chord_id(hotkey)?;
-        let mut registered = self.registered.lock().expect("registered");
-        if registered.contains_key(&id) || self.blocked.lock().expect("blocked").contains(&id) {
+        let mut registered = self
+            .registered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if registered.contains_key(&id)
+            || self
+                .blocked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&id)
+        {
             return Err(PlatformError::HotkeyConflict);
         }
         registered.insert(id, hotkey.clone());
@@ -73,7 +85,7 @@ impl HotkeyService for FakeHotkeyService {
     fn unregister(&self, id: HotkeyId) -> Result<(), PlatformError> {
         self.registered
             .lock()
-            .expect("registered")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id.0)
             .map(|_| ())
             .ok_or(PlatformError::InvalidHotkey)

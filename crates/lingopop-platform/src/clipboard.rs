@@ -14,6 +14,12 @@ pub enum ClipboardFormat {
     Png,
     Dib,
     FileList,
+    /// Registered `ExcludeClipboardContentFromMonitorProcessing` marker (Windows).
+    ExcludeFromMonitors,
+    /// Registered `CanIncludeInClipboardHistory` marker (Windows).
+    CanIncludeInHistory,
+    /// Registered `CanUploadToCloudClipboard` marker (Windows).
+    CanUploadToCloud,
 }
 
 /// One clipboard format with its raw bytes. `Debug` prints the size only.
@@ -56,11 +62,44 @@ impl fmt::Debug for ClipboardSnapshot {
     }
 }
 
+/// Registered clipboard format names that protect content from history, cloud sync and monitors.
+/// Windows only; kept here so the fail-closed rule below is pure and testable on every OS.
+#[doc(hidden)]
+pub const PROTECTION_FORMAT_NAMES: [&str; 3] = [
+    "ExcludeClipboardContentFromMonitorProcessing",
+    "CanIncludeInClipboardHistory",
+    "CanUploadToCloudClipboard",
+];
+
+/// The `skipped` entry for a format that is present but could not be read (the NAME only).
+#[doc(hidden)]
+pub fn unreadable_label(name: &str) -> String {
+    format!("format {name} unreadable")
+}
+
+/// True when any protection marker was present but unreadable in the snapshot: a restore must then
+/// mark the content as protected instead of silently dropping the protection (fail closed).
+#[doc(hidden)]
+pub fn protection_unreadable(skipped: &[String]) -> bool {
+    PROTECTION_FORMAT_NAMES
+        .iter()
+        .any(|n| skipped.contains(&unreadable_label(n)))
+}
+
 pub trait Clipboard: Send + Sync {
     /// Changes on every clipboard write by any application, even with identical content.
     fn sequence_number(&self) -> u64;
     fn snapshot(&self) -> Result<ClipboardSnapshot, PlatformError>;
     fn restore(&self, snapshot: &ClipboardSnapshot) -> Result<(), PlatformError>;
+    /// Restores `snapshot` only when the sequence number still equals `expected_sequence` at the
+    /// moment the clipboard is held (on Windows: re-read after `OpenClipboard` succeeded, so a
+    /// foreign write during the open retries is never clobbered). `Ok(true)` = restored,
+    /// `Ok(false)` = the sequence differed and nothing was touched.
+    fn restore_if(
+        &self,
+        snapshot: &ClipboardSnapshot,
+        expected_sequence: u64,
+    ) -> Result<bool, PlatformError>;
     /// `None` when the clipboard holds no text.
     fn read_text(&self) -> Result<Option<String>, PlatformError>;
     /// Text excluded from clipboard history and cloud sync (our own temporary write).
@@ -111,10 +150,26 @@ impl Drop for RestoreGuard<'_> {
         if now == self.snapshot.sequence || self.observed.get() != Some(now) {
             return;
         }
-        if let Err(e) = self.clip.restore(&self.snapshot) {
+        // The decision above is only a pre-check: `restore_if` repeats it atomically with the
+        // clipboard being held, so a write that lands in between is not clobbered.
+        if let Err(e) = self.clip.restore_if(&self.snapshot, now) {
             if let Some(log) = &self.log {
                 log(&format!("clipboard restore failed: {e}"));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreadable_protection_marker_is_detected_by_name_only() {
+        assert!(!protection_unreadable(&[]));
+        assert!(!protection_unreadable(&[unreadable_label("PNG")]));
+        for n in PROTECTION_FORMAT_NAMES {
+            assert!(protection_unreadable(&["x".into(), unreadable_label(n)]));
         }
     }
 }

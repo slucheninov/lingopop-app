@@ -3,13 +3,18 @@
 #![cfg(windows)]
 
 use std::ffi::c_void;
+use std::sync::Arc;
+
+use lingopop_platform::{Clipboard, ClipboardSnapshot, SystemSleeper, WindowsClipboard};
 
 use windows::Win32::Foundation::{GetLastError, GlobalFree, HANDLE, POINT};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
     SetClipboardData,
 };
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows::Win32::System::Memory::{
+    GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::System::StationsAndDesktops::{
     GetProcessWindowStation, GetUserObjectInformationW, UOI_NAME,
@@ -25,6 +30,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
 fn last_error() -> u32 {
     // SAFETY: reads thread-local state only.
     unsafe { GetLastError() }.0
+}
+
+/// Puts the user's clipboard back when the probe ends, on every path (including a panic).
+struct ClipboardRestore {
+    clip: WindowsClipboard,
+    snapshot: ClipboardSnapshot,
+}
+
+impl Drop for ClipboardRestore {
+    fn drop(&mut self) {
+        let ok = self.clip.restore(&self.snapshot).is_ok();
+        println!("probe: clipboard restore ok={ok}");
+    }
 }
 
 fn window_station_name() -> String {
@@ -91,16 +109,25 @@ fn clipboard_roundtrip() -> bool {
         let read = (|| {
             let h = GetClipboardData(u32::from(CF_UNICODETEXT.0)).ok()?;
             let mem = windows::Win32::Foundation::HGLOBAL(h.0);
+            // A foreign write between our two opens may have replaced the block with a shorter
+            // one: bound the read by the real block size and stop at the first NUL.
+            let units = GlobalSize(mem) / 2;
             let ptr = GlobalLock(mem);
             if ptr.is_null() {
                 return None;
             }
-            let back = std::slice::from_raw_parts(ptr.cast::<u16>(), text.len()).to_vec();
+            // SAFETY: GlobalLock returned a pointer to at least `GlobalSize` bytes, i.e. `units`
+            // u16 values (a GMEM_MOVEABLE block is at least 2-byte aligned), valid until unlock.
+            let back: Vec<u16> = std::slice::from_raw_parts(ptr.cast::<u16>(), units)
+                .iter()
+                .copied()
+                .take_while(|&u| u != 0)
+                .collect();
             let _ = GlobalUnlock(mem);
             Some(back)
         })();
         let _ = CloseClipboard();
-        read.as_deref() == Some(&text[..])
+        read.as_deref() == Some(&text[..text.len() - 1])
     }
 }
 
@@ -123,7 +150,16 @@ fn desktop_probe() {
     let seq = unsafe { GetClipboardSequenceNumber() };
     println!("probe: GetClipboardSequenceNumber={seq} (0 = no window-station access)");
 
-    let clipboard_ok = clipboard_roundtrip();
+    // The roundtrip empties the clipboard: save the user's content first and restore it at the end.
+    let clip = WindowsClipboard::new(Arc::new(SystemSleeper::new()));
+    let restore_guard = match clip.snapshot() {
+        Ok(snapshot) => Some(ClipboardRestore { clip, snapshot }),
+        Err(_) => {
+            println!("probe: clipboard snapshot failed; skipping the roundtrip to keep it intact");
+            None
+        }
+    };
+    let clipboard_ok = restore_guard.is_some() && clipboard_roundtrip();
     println!("probe: clipboard CF_UNICODETEXT roundtrip ok={clipboard_ok}");
 
     // SAFETY: a pure query.

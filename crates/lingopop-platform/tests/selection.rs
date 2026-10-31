@@ -5,7 +5,7 @@ use std::time::Duration;
 use lingopop_core::hotkey::Modifier;
 use lingopop_platform::fake::{
     ClipboardCall, CopyBehavior, Event, FakeClipboard, FakeForeground, FakeKeys, FakeOp,
-    FakeSleeper, KeyCall,
+    FakeSleeper, KeyCall, Mutation,
 };
 use lingopop_platform::{
     capture_selection, CaptureOptions, Clipboard, ClipboardEntry, ClipboardFormat, LogFn,
@@ -280,9 +280,32 @@ fn capture_does_not_clobber_a_foreign_write_after_copy() {
     // Another app writes right after our copy settled, before we restore.
     r.clip
         .on_read_text(Box::new(|c| c.set_external_text("FOREIGN")));
-    assert_eq!(capture(&r), Ok(Some("FOREIGN".into())));
+    // The text read may be the foreign write, so it is not returned as the selection.
+    assert_eq!(capture(&r), Ok(None));
     assert!(!r.clip.calls().contains(&ClipboardCall::Restore));
     assert_eq!(r.clip.text().as_deref(), Some("FOREIGN"));
+}
+
+#[test]
+fn capture_foreign_write_during_modifier_wait_is_in_the_snapshot() {
+    let r = rig();
+    r.keys.on_copy(CopyBehavior::Select("hello".into()));
+    r.keys.hold_modifiers(vec![Modifier::Ctrl], Some(ms(80)));
+    r.clip.schedule(ms(40), Mutation::SetText("FOREIGN".into()));
+    assert_eq!(capture(&r).unwrap().as_deref(), Some("hello"));
+    // Restore writes back the newer foreign value, not the pre-wait one.
+    assert_eq!(r.clip.text().as_deref(), Some("FOREIGN"));
+}
+
+#[test]
+fn restore_guard_does_not_clobber_a_write_between_check_and_restore() {
+    let r = rig();
+    r.keys.on_copy(CopyBehavior::Select("hello".into()));
+    // Fires inside `restore_if`, i.e. after the guard's sequence check passed.
+    r.clip
+        .on_restore_if(Box::new(|c| c.set_external_text("LATE-FOREIGN")));
+    assert_eq!(capture(&r).unwrap().as_deref(), Some("hello"));
+    assert_eq!(r.clip.text().as_deref(), Some("LATE-FOREIGN"));
 }
 
 #[test]
