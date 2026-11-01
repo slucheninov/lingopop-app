@@ -423,6 +423,7 @@ impl Orchestrator {
             st.session = Some(Session {
                 operation,
                 text: text.clone(),
+                captured: text.clone(),
                 last_result: None,
                 detected_source: detected_source.clone(),
                 target_language: target_language.clone(),

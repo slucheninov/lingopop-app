@@ -17,6 +17,9 @@ use crate::view_model::PopupViewModel;
 pub struct Session {
     pub operation: AIOperation,
     pub text: String,
+    /// The selection exactly as captured (untrimmed): what Replace overwrites in the target.
+    /// Unlike `text` it is never changed by Rewrite / Explain.
+    pub captured: String,
     /// Text currently displayed in the Result phase, absent on loading / error / close.
     pub last_result: Option<String>,
     pub detected_source: Option<String>,
@@ -41,6 +44,7 @@ impl std::fmt::Debug for Session {
         f.debug_struct("Session")
             .field("operation", &self.operation)
             .field("text_chars", &self.text.chars().count())
+            .field("captured_chars", &self.captured.chars().count())
             .field(
                 "result_chars",
                 &self.last_result.as_ref().map(|s| s.chars().count()),
@@ -85,6 +89,7 @@ mod tests {
         let s = Session {
             operation: AIOperation::Translate,
             text: "PRIVATE-INPUT".into(),
+            captured: "PRIVATE-CAPTURE".into(),
             last_result: Some("PRIVATE-RESULT".into()),
             detected_source: None,
             target_language: "German".into(),

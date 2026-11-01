@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Fixed
+
+- Replace now keeps the leading and trailing whitespace (line breaks) of the selection it overwrites; selecting a full line and replacing it no longer joins it with the next line.
+- No Alt menu access-key tips (Notepad F E V ...) after a hotkey that contains Alt or Win: the hotkey now taps an unassigned key so the physical Alt release is not a lone Alt press.
+
+### Changed
+
+- The manual checklist is trimmed to basic functionality.
+
 ## [0.2.0-alpha.4] - 2026-11-01
 
 ### Changed

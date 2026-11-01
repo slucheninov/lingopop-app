@@ -9,6 +9,11 @@ pub trait KeySynth: Send + Sync {
     fn modifiers_down(&self) -> Vec<Modifier>;
     /// Synthesizes key-up for the given modifiers.
     fn release_modifiers(&self, modifiers: &[Modifier]) -> Result<(), PlatformError>;
+    /// If Alt or a Win key is physically down, taps the unassigned `VK_MASK` key so the later
+    /// physical release is no "lone Alt / Win" and opens neither the menu bar (access-key tips)
+    /// nor the Start menu. Does nothing otherwise. Call as soon as a hotkey with such a modifier
+    /// fired (the hotkey's own key press was consumed by `RegisterHotKey`).
+    fn mask_menu_activation(&self) -> Result<(), PlatformError>;
     fn send_copy(&self) -> Result<(), PlatformError>;
     fn send_paste(&self) -> Result<(), PlatformError>;
 }
@@ -104,6 +109,12 @@ pub fn release_events(modifiers: &[Modifier]) -> Vec<VkEvent> {
     out
 }
 
+/// The `VK_MASK` down+up tap that makes a following Alt / Win release not "lone".
+#[doc(hidden)]
+pub fn menu_mask_events() -> [VkEvent; 2] {
+    [key(VK_MASK, false, false), key(VK_MASK, true, false)]
+}
+
 /// `SendInput` reports how many events it inserted; fewer than requested means another thread or
 /// UIPI blocked the input.
 #[doc(hidden)]
@@ -133,6 +144,14 @@ mod tests {
                 ev(VK_C, true, false),
                 ev(VK_CONTROL, true, false),
             ]
+        );
+    }
+
+    #[test]
+    fn menu_mask_events_tap_vk_mask_down_then_up() {
+        assert_eq!(
+            menu_mask_events(),
+            [ev(VK_MASK, false, false), ev(VK_MASK, true, false)]
         );
     }
 

@@ -200,6 +200,16 @@ async fn replace_hides_popup_before_paste() {
     assert!(!r.popup.is_visible());
 }
 #[tokio::test]
+async fn replace_keeps_whitespace_of_captured_selection() {
+    let (r, _) = ready_rig();
+    r.keys
+        .on_copy(CopyBehavior::Select("  ORIGINAL\r\n".into()));
+    ready(&r).await;
+    r.orch.replace().await;
+    assert_eq!(r.keys.pasted(), vec![Some("  DISPLAYED\r\n".into())]);
+}
+
+#[tokio::test]
 async fn replace_targets_window_captured_before_capture() {
     let (r, _) = ready_rig();
     let fg = r.fg.clone();
