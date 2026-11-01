@@ -50,6 +50,9 @@ pub struct HttpRequest {
     pub url: Url,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    /// Force HTTP/1.1 (no ALPN h2). Google's unofficial translate endpoint answers 429 to
+    /// hyper's HTTP/2.
+    pub http1_only: bool,
 }
 
 impl HttpRequest {
@@ -59,7 +62,14 @@ impl HttpRequest {
             url,
             headers: owned_headers(headers),
             body: None,
+            http1_only: false,
         }
+    }
+
+    /// Sends this request over a connection that never negotiates HTTP/2.
+    pub fn http1_only(mut self) -> Self {
+        self.http1_only = true;
+        self
     }
 
     /// The value of the first header named `name` (case-insensitive).
@@ -176,6 +186,7 @@ pub fn json_post(
         url,
         headers: all,
         body: Some(bytes),
+        http1_only: false,
     })
 }
 
@@ -356,6 +367,15 @@ mod tests {
             let err = decode::<Reply>(body).unwrap_err();
             assert_eq!(err, TranslationError::Decoding(expected.into()), "{body:?}");
         }
+    }
+
+    #[test]
+    fn http1_only_defaults_to_false_and_builder_sets_it() {
+        let request = get("https://api.x.com/v1");
+        assert!(!request.http1_only);
+        assert!(request.http1_only().http1_only);
+        let post = json_post(url("https://api.x.com/v1"), &[], &json!({})).unwrap();
+        assert!(!post.http1_only);
     }
 
     #[test]

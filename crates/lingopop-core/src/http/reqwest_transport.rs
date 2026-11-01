@@ -50,6 +50,9 @@ pub fn redirect_allowed(original: &Url, target: &Url) -> bool {
 #[derive(Debug, Clone)]
 pub struct ReqwestTransport {
     client: reqwest::Client,
+    /// Same settings, but never negotiates HTTP/2 (`HttpRequest::http1_only`). A per-request
+    /// `version()` is ignored by reqwest once ALPN picked h2, so it needs its own client.
+    http1_client: reqwest::Client,
 }
 
 impl ReqwestTransport {
@@ -64,26 +67,41 @@ impl ReqwestTransport {
     }
 
     fn build(timeouts: HttpTimeouts, no_proxy: bool) -> Result<Self, TranslationError> {
-        let mut builder = reqwest::Client::builder()
-            .connect_timeout(timeouts.connect)
-            .read_timeout(timeouts.read)
-            .timeout(timeouts.total)
-            .user_agent(format!("LingoPop/{}", crate::VERSION))
-            .redirect(Policy::custom(|attempt| {
-                if attempt.previous().len() >= MAX_REDIRECTS {
-                    return attempt.stop();
-                }
-                match attempt.previous().first() {
-                    Some(original) if redirect_allowed(original, attempt.url()) => attempt.follow(),
-                    _ => attempt.stop(),
-                }
-            }));
-        if no_proxy {
-            builder = builder.no_proxy();
-        }
-        let client = builder.build().map_err(network_error)?;
-        Ok(Self { client })
+        let client = client_builder(timeouts, no_proxy)
+            .build()
+            .map_err(network_error)?;
+        let http1_client = client_builder(timeouts, no_proxy)
+            .http1_only()
+            .build()
+            .map_err(network_error)?;
+        Ok(Self {
+            client,
+            http1_client,
+        })
     }
+}
+
+/// The one place the client settings live, so the HTTP/2-capable and the HTTP/1.1-only
+/// client cannot drift apart.
+fn client_builder(timeouts: HttpTimeouts, no_proxy: bool) -> reqwest::ClientBuilder {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(timeouts.connect)
+        .read_timeout(timeouts.read)
+        .timeout(timeouts.total)
+        .user_agent(format!("LingoPop/{}", crate::VERSION))
+        .redirect(Policy::custom(|attempt| {
+            if attempt.previous().len() >= MAX_REDIRECTS {
+                return attempt.stop();
+            }
+            match attempt.previous().first() {
+                Some(original) if redirect_allowed(original, attempt.url()) => attempt.follow(),
+                _ => attempt.stop(),
+            }
+        }));
+    if no_proxy {
+        builder = builder.no_proxy();
+    }
+    builder
 }
 
 #[async_trait]
@@ -93,8 +111,12 @@ impl Transport for ReqwestTransport {
             HttpMethod::Get => reqwest::Method::GET,
             HttpMethod::Post => reqwest::Method::POST,
         };
-        let mut builder = self
-            .client
+        let client = if request.http1_only {
+            &self.http1_client
+        } else {
+            &self.client
+        };
+        let mut builder = client
             .request(method, request.url)
             .headers(header_map(&request.headers)?);
         if let Some(body) = request.body {
