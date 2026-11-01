@@ -16,10 +16,9 @@ const GENERATED_DE: &str = include_str!("../../../i18n/generated/de.json");
 const WINDOWS: &str = include_str!("../../../i18n/windows.json");
 
 fn build(language: Language, generated: &str) -> HashMap<String, String> {
-    let mut merged: HashMap<String, String> =
-        serde_json::from_str(generated).expect("embedded generated catalog is valid JSON");
+    let mut merged: HashMap<String, String> = serde_json::from_str(generated).unwrap_or_default();
     let windows: HashMap<String, HashMap<String, String>> =
-        serde_json::from_str(WINDOWS).expect("embedded windows.json is valid JSON");
+        serde_json::from_str(WINDOWS).unwrap_or_default();
     for (key, mut values) in windows {
         if let Some(value) = values.remove(language.code()) {
             merged.entry(key).or_insert(value);

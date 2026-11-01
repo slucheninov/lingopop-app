@@ -68,12 +68,10 @@ pub async fn fetch_latest_version_with(
     deadline: impl Future<Output = ()>,
 ) -> Option<String> {
     let request = async {
+        let url = Url::parse(RELEASES_API_URL).ok()?;
         let bytes = perform(
             transport,
-            HttpRequest::get(
-                Url::parse(RELEASES_API_URL).expect("const url"),
-                &[("Accept", "application/vnd.github+json")],
-            ),
+            HttpRequest::get(url, &[("Accept", "application/vnd.github+json")]),
         )
         .await
         .ok()?;

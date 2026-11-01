@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use chrono::{
-    DateTime, Datelike, Duration, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone,
-    Timelike, Weekday,
+    DateTime, Datelike, Duration, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    Offset, TimeZone, Timelike, Utc, Weekday,
 };
 use serde::{Deserialize, Serialize};
 
@@ -273,9 +273,7 @@ fn weekday_abbrev(day: Weekday, language: Language) -> &'static str {
 }
 
 fn fixed_offset(seconds: i32) -> FixedOffset {
-    FixedOffset::east_opt(seconds)
-        .or_else(|| FixedOffset::east_opt(0))
-        .expect("a zero UTC offset is inside FixedOffset's range")
+    FixedOffset::east_opt(seconds).unwrap_or_else(|| Utc.fix())
 }
 
 fn unix_to_local(unix: f64, utc_offset_seconds: i32) -> NaiveDateTime {
@@ -294,8 +292,7 @@ fn local_to_unix(local: NaiveDateTime, utc_offset_seconds: i32) -> f64 {
 }
 
 fn midnight(date: NaiveDate) -> NaiveDateTime {
-    date.and_hms_opt(0, 0, 0)
-        .expect("midnight is a valid civil time")
+    date.and_time(NaiveTime::MIN)
 }
 
 fn at_hour(date: NaiveDate, hour: u32) -> NaiveDateTime {
@@ -655,5 +652,71 @@ mod tests {
             .find(|bucket| bucket.start_unix == PREVIOUS)
             .unwrap();
         assert!(previous.by_provider.is_empty());
+    }
+
+    /// Records on three distinct local days plus one just before the cutoff: each in-window
+    /// record lands in its own slot, the old one in none, and totals ignore it.
+    fn assert_multi_day(period: Period, slots: usize, days_back: [usize; 3]) {
+        let day = |back: usize| NOV1_LOCAL_START - back as f64 * 86_400.0;
+        let cutoff = day(slots - 1);
+        let records = vec![
+            claude(
+                "m",
+                1,
+                2,
+                Timestamp::from_unix_seconds(day(days_back[0]) + 3_600.0),
+            ),
+            claude(
+                "m",
+                10,
+                20,
+                Timestamp::from_unix_seconds(day(days_back[1]) + 7_200.0),
+            ),
+            record(
+                ProviderType::OpenAI,
+                "m",
+                100,
+                200,
+                Timestamp::from_unix_seconds(day(days_back[2]) + 10.0),
+            ),
+            claude("m", 1000, 2000, Timestamp::from_unix_seconds(cutoff - 1.0)),
+        ];
+        let buckets = chart_buckets(&records, period, NOW_NOV1, OFFSET_PLUS_1H, Language::En);
+        assert_eq!(buckets.len(), slots);
+        let expected = [
+            (slots - 1 - days_back[0], "Claude", (1, 2)),
+            (slots - 1 - days_back[1], "Claude", (10, 20)),
+            (slots - 1 - days_back[2], "OpenAI", (100, 200)),
+        ];
+        for (index, bucket) in buckets.iter().enumerate() {
+            match expected.iter().find(|(slot, _, _)| *slot == index) {
+                Some((_, provider, tokens)) => {
+                    assert_eq!(bucket.by_provider.len(), 1, "slot {index}");
+                    assert_eq!(bucket.by_provider.get(*provider).copied(), Some(*tokens));
+                }
+                None => assert!(bucket.by_provider.is_empty(), "slot {index}"),
+            }
+            assert_eq!(bucket.start_unix, cutoff + index as f64 * 86_400.0);
+        }
+        let all = totals(&records, period, NOW_NOV1, OFFSET_PLUS_1H);
+        assert_eq!(all.calls, 3);
+        assert_eq!(all.input_tokens, 111);
+        assert_eq!(all.output_tokens, 222);
+        let by = totals_by_provider(&records, period, NOW_NOV1, OFFSET_PLUS_1H);
+        assert_eq!(by.len(), 2);
+        assert_eq!(by["Claude"].calls, 2);
+        assert_eq!(by["Claude"].input_tokens, 11);
+        assert_eq!(by["OpenAI"].calls, 1);
+        assert_eq!(by["OpenAI"].output_tokens, 200);
+    }
+
+    #[test]
+    fn days7_multi_day_records_land_in_their_own_slots() {
+        assert_multi_day(Period::Days7, 7, [6, 3, 0]);
+    }
+
+    #[test]
+    fn days30_multi_day_records_land_in_their_own_slots() {
+        assert_multi_day(Period::Days30, 30, [29, 9, 0]);
     }
 }

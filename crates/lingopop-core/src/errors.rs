@@ -104,11 +104,11 @@ pub fn redacted_url(url: &str) -> String {
 }
 
 /// A URL-valued setting or header (a base URL, a referer) as it may appear in `Debug` output:
-/// scheme, host, port and path survive (`redacted_url`), user info, query and fragment are
-/// dropped. Nothing else is echoed: a string that is not an absolute URL becomes
+/// only scheme, host and port survive (`https://h.example:8443/`); user info, path, query and
+/// fragment are dropped (the path may carry a secret). Nothing else is echoed: a string that is not an absolute URL becomes
 /// `<unparseable, N chars>`, one that parses but is not http(s) with a host (`user:secret`,
 /// `mailto:x?k`) becomes `<non-http url, N chars>`. An empty string stays empty. A secret
-/// embedded in the path is not detected.
+/// embedded in the path is therefore never printed.
 pub fn debug_url(url: &str) -> String {
     if url.is_empty() {
         return String::new();
@@ -118,7 +118,14 @@ pub fn debug_url(url: &str) -> String {
         Ok(parsed) if !is_http_with_host(&parsed) => {
             format!("<non-http url, {} chars>", url.chars().count())
         }
-        Ok(_) => redacted_url(url),
+        Ok(mut parsed) => {
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
+            parsed.set_path("/");
+            parsed.set_query(None);
+            parsed.set_fragment(None);
+            parsed.to_string()
+        }
     }
 }
 
@@ -307,7 +314,7 @@ mod tests {
         let debug = format!("{err:?}");
         assert!(!debug.contains("sk-ant-FIXTURE"), "{debug}");
         assert!(debug.contains("401"), "{debug}");
-        assert!(debug.contains("https://api.x.com/v1"), "{debug}");
+        assert!(debug.contains("https://api.x.com/"), "{debug}");
         assert!(debug.contains("<25 chars>"), "{debug}");
         assert!(!format!("{err}").contains("sk-ant-FIXTURE"));
         assert_eq!(
@@ -513,8 +520,10 @@ mod tests {
     fn debug_url_strips_secrets_and_never_echoes_unparseable_input() {
         assert_eq!(
             debug_url("https://u:SECRET@h.example:8443/p/v1?key=SECRET#SECRET"),
-            "https://h.example:8443/p/v1"
+            "https://h.example:8443/"
         );
+        let out = debug_url("https://host/SECRET");
+        assert!(!out.contains("SECRET"), "{out}");
         assert_eq!(debug_url(""), "");
         assert_eq!(debug_url("not a url SECRET"), "<unparseable, 16 chars>");
         assert_eq!(debug_url("/rel?key=SECRET"), "<unparseable, 15 chars>");
@@ -537,7 +546,7 @@ mod tests {
         // http (not only https) with a host is still shown, stripped.
         assert_eq!(
             debug_url("http://u:SECRET@h.example/p?k=SECRET"),
-            "http://h.example/p"
+            "http://h.example/"
         );
     }
 
@@ -574,7 +583,7 @@ mod tests {
         };
         assert_eq!(
             format!("{err:?}"),
-            r#"Http { status: 500, body: <0 chars>, url: "https://api.x.com/v1" }"#
+            r#"Http { status: 500, body: <0 chars>, url: "https://api.x.com/" }"#
         );
     }
 

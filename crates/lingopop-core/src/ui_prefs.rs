@@ -120,9 +120,15 @@ impl UiPrefs {
             }
             let defaults = Self::default();
             let prefs = Self {
-                popup_font_size: field(&object, "popupFontSize")
-                    .unwrap_or(defaults.popup_font_size)
-                    .clamp(*POPUP_FONT_RANGE.start(), *POPUP_FONT_RANGE.end()),
+                popup_font_size: field::<i64>(&object, "popupFontSize").map_or(
+                    defaults.popup_font_size,
+                    |size| {
+                        size.clamp(
+                            i64::from(*POPUP_FONT_RANGE.start()),
+                            i64::from(*POPUP_FONT_RANGE.end()),
+                        ) as u32
+                    },
+                ),
                 app_language: field(&object, "appLanguage").unwrap_or(defaults.app_language),
                 latest_version: field(&object, "latestVersion"),
                 last_update_check: field(&object, "lastUpdateCheck"),
@@ -188,6 +194,17 @@ mod tests {
         assert_eq!(prefs.popup_font_size, 20);
         assert_eq!(prefs.app_language, AppLanguage::System);
         assert_eq!(read_json(r#"{"popupFontSize":0}"#).popup_font_size, 11);
+    }
+
+    #[test]
+    fn font_size_negative_and_huge_values_clamp() {
+        assert_eq!(read_json(r#"{"popupFontSize":-1}"#).popup_font_size, 11);
+        assert_eq!(
+            read_json(r#"{"popupFontSize":5000000000}"#).popup_font_size,
+            20
+        );
+        assert_eq!(read_json(r#"{"popupFontSize":"x"}"#).popup_font_size, 13);
+        assert_eq!(read_json(r#"{"popupFontSize":1.5}"#).popup_font_size, 13);
     }
 
     #[test]

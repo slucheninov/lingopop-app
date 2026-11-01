@@ -33,7 +33,7 @@ pub use microsoft::MicrosoftProvider;
 pub use openai::OpenAiCompatible;
 
 /// Everything a provider needs for one call. `Debug` never prints the API key, and the
-/// URL-valued fields lose user info, query and fragment (`errors::debug_url`).
+/// URL-valued fields keep only scheme, host and port (`errors::debug_url`).
 #[derive(Clone)]
 pub struct ProviderConfig {
     pub provider_type: ProviderType,
@@ -239,8 +239,8 @@ mod tests {
         ] {
             assert!(!debug.contains(sentinel), "{sentinel} leaked: {debug}");
         }
-        assert!(debug.contains("https://proxy.example:8443/v1"), "{debug}");
-        assert!(debug.contains("https://ref.example/app"), "{debug}");
+        assert!(debug.contains("https://proxy.example:8443/"), "{debug}");
+        assert!(debug.contains("https://ref.example/"), "{debug}");
     }
 
     #[test]
