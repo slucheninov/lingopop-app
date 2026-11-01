@@ -964,6 +964,54 @@ fn dismiss_watcher_stops_on_hide() {
     wait_hooks(&watcher, false);
 }
 
+#[test]
+#[ignore = "needs interactive desktop"]
+fn dismiss_watcher_reports_injected_outside_click() {
+    use lingopop_platform::{DismissEvent, DismissWatcher, WindowsDismissWatcher};
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        MOUSEINPUT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let _lock = clip_lock();
+    let mut cursor = POINT::default();
+    // SAFETY: valid out pointer to a POINT.
+    unsafe { GetCursorPos(&mut cursor) }.expect("cursor");
+    let watcher = WindowsDismissWatcher::new();
+    let events = watcher.events();
+    // The rectangle lies far to the right of the cursor, so a click at the cursor is outside it.
+    watcher
+        .start(Rect::new(cursor.x + 1000, cursor.y, 200, 80))
+        .expect("start");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !watcher.hooks_installed() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(watcher.hooks_installed());
+    // VM guest tools and remote desktops deliver the mouse as injected input, so SendInput stands in for them.
+    let inputs = [MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP].map(|flags| INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dwFlags: flags,
+                ..Default::default()
+            },
+        },
+    });
+    // SAFETY: valid mouse INPUT slice and matching structure size.
+    assert_eq!(
+        unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) },
+        2
+    );
+    assert_eq!(
+        events.recv_timeout(Duration::from_secs(2)),
+        Ok(DismissEvent::ClickOutside),
+        "injected outside click must be reported"
+    );
+    watcher.stop();
+}
+
 static ESCAPES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 unsafe extern "system" fn escape_probe_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     use windows::Win32::UI::{Input::KeyboardAndMouse::VK_ESCAPE, WindowsAndMessaging::WM_KEYDOWN};
