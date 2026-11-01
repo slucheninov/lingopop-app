@@ -54,7 +54,7 @@ pub struct ProviderCapabilities {
 }
 
 /// Per-provider connection settings (the `providerSettings.v1` entry shape). The hand-written
-/// `Debug` shows the URL-valued fields through `errors::debug_url` (no user info, query or
+/// `Debug` shows the URL-valued fields through `errors::debug_url` (scheme, host and port only: no user info, path, query or
 /// fragment), so a pasted `https://user:secret@host/?key=...` never reaches a log.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderConnectionSettings {

@@ -501,7 +501,7 @@ mod tests {
         let debug = format!("{request:?}");
         assert!(!debug.contains("REFSECRET"), "{debug}");
         assert!(
-            debug.contains(r#"("Referer", "https://ref.example/app")"#),
+            debug.contains(r#"("Referer", "https://ref.example/")"#),
             "{debug}"
         );
         assert!(

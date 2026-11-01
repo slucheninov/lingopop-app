@@ -1088,8 +1088,8 @@ mod tests {
         ] {
             assert!(!debug.contains(sentinel), "{sentinel} leaked: {debug}");
         }
-        assert!(debug.contains("https://proxy.example:8443/v1"), "{debug}");
-        assert!(debug.contains("https://ref.example/app"), "{debug}");
+        assert!(debug.contains("https://proxy.example:8443/"), "{debug}");
+        assert!(debug.contains("https://ref.example/"), "{debug}");
         assert!(debug.contains("<unparseable, 23 chars>"), "{debug}");
         assert!(
             debug.contains("m-1") && debug.contains("westeurope"),
