@@ -21,7 +21,7 @@ use lingopop_platform::{
 use crate::gate::PlatformGate;
 use crate::messages::{
     gate_message, max_input, missing_key, nothing_selected, platform_message,
-    translation_error_view, KEY_PLATFORM_GENERIC,
+    translation_error_view, KEY_INPUT_BLOCKED, KEY_PLATFORM_GENERIC,
 };
 use crate::placement::popup_origin;
 use crate::popup::{PopupView, MAX_LOGICAL_SIDE};
@@ -42,6 +42,9 @@ pub trait Persist: Send + Sync {
     fn add_history(&self, entry: HistoryEntry, max_count: u32);
     fn append_usage(&self, record: UsageRecord);
 }
+
+/// How long the administrator-app (`KEY_INPUT_BLOCKED`) error stays before it closes by itself.
+pub const INPUT_BLOCKED_AUTO_CLOSE: std::time::Duration = std::time::Duration::from_secs(6);
 
 pub struct Deps {
     pub platform: Platform,
@@ -276,7 +279,28 @@ impl Orchestrator {
         generation: u64,
         message: crate::view_model::UserMessageView,
     ) {
+        let auto_close = message.key == KEY_INPUT_BLOCKED;
         self.present(generation, &PopupViewModel::error(message, Vec::new(), &[]));
+        if auto_close {
+            self.schedule_auto_close(generation);
+        }
+    }
+
+    /// Windows delivers neither clicks nor Esc of an elevated window to our hooks, so the
+    /// administrator-app error could only be closed with the x. After `INPUT_BLOCKED_AUTO_CLOSE`
+    /// it closes like `close()`, but only while `generation` is still the one on screen.
+    fn schedule_auto_close(&self, generation: u64) {
+        let me = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(INPUT_BLOCKED_AUTO_CLOSE).await;
+            let mut st = me.state();
+            if st.generation != generation {
+                return;
+            }
+            me.deps().popup.hide();
+            me.deps().platform.dismiss.stop();
+            st.session = None;
+        });
     }
 
     /// Shows the on-screen Result / OCR model again with `notice` (a failed Copy or Replace),
@@ -423,6 +447,7 @@ impl Orchestrator {
             st.session = Some(Session {
                 operation,
                 text: text.clone(),
+                captured: text.clone(),
                 last_result: None,
                 detected_source: detected_source.clone(),
                 target_language: target_language.clone(),

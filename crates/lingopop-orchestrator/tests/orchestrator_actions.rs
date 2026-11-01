@@ -12,7 +12,7 @@ use lingopop_core::{
 use lingopop_orchestrator::{
     fake::{FakeConfig, FakePersist, FakePicker, FakePopup, PopupCall},
     messages::{KEY_CLIPBOARD_TIMEOUT, KEY_FOREGROUND_LOST, KEY_INPUT_BLOCKED},
-    *,
+    INPUT_BLOCKED_AUTO_CLOSE, *,
 };
 use lingopop_platform::{fake::*, *};
 use std::sync::{Arc, Mutex};
@@ -199,6 +199,16 @@ async fn replace_hides_popup_before_paste() {
     assert_eq!(r.keys.pasted(), vec![Some("DISPLAYED".into())]);
     assert!(!r.popup.is_visible());
 }
+#[tokio::test]
+async fn replace_keeps_whitespace_of_captured_selection() {
+    let (r, _) = ready_rig();
+    r.keys
+        .on_copy(CopyBehavior::Select("  ORIGINAL\r\n".into()));
+    ready(&r).await;
+    r.orch.replace().await;
+    assert_eq!(r.keys.pasted(), vec![Some("  DISPLAYED\r\n".into())]);
+}
+
 #[tokio::test]
 async fn replace_targets_window_captured_before_capture() {
     let (r, _) = ready_rig();
@@ -707,4 +717,31 @@ async fn show_failure_does_not_start_dismiss_watcher() {
     r.orch.popup_resized((700.0, 400.0));
     assert_eq!(r.popup.view.calls(), popup_calls, "no resize");
     assert!(r.dismiss.calls().is_empty(), "no update_rect");
+}
+
+#[tokio::test]
+async fn input_blocked_error_closes_itself_after_delay() {
+    let (r, _) = ready_rig();
+    r.fg.set_elevated(WindowHandle(7), true);
+    r.orch.trigger(AIOperation::Translate).await;
+    error(&r, KEY_INPUT_BLOCKED);
+    assert!(r.popup.is_visible());
+    tokio::time::pause();
+    tokio::time::sleep(INPUT_BLOCKED_AUTO_CLOSE + std::time::Duration::from_secs(1)).await;
+    assert!(!r.popup.is_visible());
+    assert_eq!(r.dismiss.calls().last(), Some(&DismissCall::Stop));
+}
+
+#[tokio::test]
+async fn newer_trigger_prevents_input_blocked_auto_close() {
+    let (r, _) = ready_rig();
+    r.fg.set_elevated(WindowHandle(7), true);
+    r.orch.trigger(AIOperation::Translate).await;
+    error(&r, KEY_INPUT_BLOCKED);
+    r.fg.set_elevated(WindowHandle(7), false);
+    ready(&r).await;
+    tokio::time::pause();
+    tokio::time::sleep(INPUT_BLOCKED_AUTO_CLOSE + std::time::Duration::from_secs(1)).await;
+    assert!(r.popup.is_visible());
+    assert!(matches!(model(&r).phase, PopupPhase::Result(_)));
 }

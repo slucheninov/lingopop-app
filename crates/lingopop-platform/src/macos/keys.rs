@@ -100,6 +100,11 @@ impl KeySynth for MacKeys {
         Ok(())
     }
 
+    fn mask_menu_activation(&self) -> Result<(), PlatformError> {
+        // No Alt menu keytips on macOS.
+        Ok(())
+    }
+
     fn send_copy(&self) -> Result<(), PlatformError> {
         chord(KEY_C)
     }
