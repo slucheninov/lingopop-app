@@ -15,9 +15,9 @@ use ::windows::Win32::UI::Input::KeyboardAndMouse::{
 use ::windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, PeekMessageW, PostThreadMessageW,
     SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT,
-    LLKHF_ALTDOWN, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE,
-    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
-    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
+    LLKHF_ALTDOWN, LLKHF_INJECTED, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, WH_KEYBOARD_LL, WH_MOUSE_LL,
+    WM_APP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
+    WM_XBUTTONDOWN,
 };
 
 use super::util::{map_err, os_err};
@@ -80,6 +80,7 @@ fn state() -> &'static State {
     })
 }
 
+// Injected keyboard input is ignored: our own synthesized key chords must never dismiss the popup.
 unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0
         && state().active.load(Ordering::SeqCst)
@@ -102,6 +103,7 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     // SAFETY: forwards the unchanged hook arguments; the hook handle is ignored by this API.
     unsafe { CallNextHookEx(None, code, w, l) }
 }
+// Mouse clicks are accepted whether or not they are injected (see the comment below); never swallowed.
 unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0
         && state().active.load(Ordering::SeqCst)
@@ -112,17 +114,16 @@ unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     {
         // SAFETY: for a nonnegative low-level mouse hook code Windows supplies this structure.
         let click = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
-        let event = if click.flags & LLMHF_INJECTED == 0 {
-            classify_click(
-                Point {
-                    x: click.pt.x,
-                    y: click.pt.y,
-                },
-                state().rect(),
-            )
-        } else {
-            None
-        };
+        // Injected clicks count: VM guest tools (Parallels, SPICE, VMware) and remote-desktop tools deliver the
+        // mouse through SendInput, so every click there carries LLMHF_INJECTED. This app never synthesizes mouse
+        // input (only Ctrl+C / Ctrl+V chords), so there is nothing of our own to filter out.
+        let event = classify_click(
+            Point {
+                x: click.pt.x,
+                y: click.pt.y,
+            },
+            state().rect(),
+        );
         if let Some(event) = event {
             let _ = state().sender.try_send(event);
         }

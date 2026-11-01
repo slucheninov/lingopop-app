@@ -22,7 +22,7 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] With the popup visible press Esc. Expected: the popup closes and the Esc is not delivered to Notepad.
 - [ ] With the popup hidden press Esc in an app that reacts to it (a dialog, Chrome find bar). Expected: the app receives Esc normally.
 - [ ] With the popup visible press Ctrl+Esc or Shift+Esc. Expected: the chord passes through (Start menu / task switcher behaves as usual) and the popup stays.
-- [ ] With the popup visible click anywhere outside it. Expected: the popup closes and the click still reaches the app underneath.
+- [ ] With the popup visible click anywhere outside it. Expected: the popup closes and the click still reaches the app underneath. Repeat inside a virtual machine (Parallels / UTM / VMware) and over remote desktop, where the mouse arrives as injected input: it must close there too.
 - [ ] Click inside the popup (text, empty area). Expected: the popup stays open.
 - [ ] Trigger an operation, then trigger another before the first result arrives. Expected: only the second result is shown; no flicker of the first.
 

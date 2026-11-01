@@ -94,7 +94,12 @@ fn rig_full(
             .map(|p| (p, "key".into()))
             .collect(),
     };
-    let config = Arc::new(FakeConfig::new(Settings::default(), snapshot));
+    // These tests are written against Claude as the active provider (the Windows default is Google (Free)).
+    let settings = Settings {
+        active_provider: ProviderType::Claude,
+        ..Settings::default()
+    };
+    let config = Arc::new(FakeConfig::new(settings, snapshot));
     let stores = Arc::new(FakePersist::new());
     let dismiss = Arc::new(FakeDismissWatcher::default());
     let logs = Arc::new(Mutex::new(Vec::<String>::new()));
