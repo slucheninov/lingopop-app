@@ -6,9 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.4] - 2026-11-01
+
+### Changed
+
+- The default active provider is Google (Free) instead of Claude (the mac default), so a fresh install translates without an API key. An `activeProvider` saved in `settings.json` still wins.
+
 ### Fixed
 
 - Google (Free) always failed with "Rate limit exceeded" (HTTP 429): Google rejects the HTTP/2 connection of the HTTP client; Google (Free) requests now use HTTP/1.1.
+- Clicking outside the popup did not close it in a virtual machine (guest tools deliver the mouse as injected input, which the dismiss hook ignored); injected clicks now count, injected Escape is still ignored.
 
 ## [0.2.0-alpha.3] - 2026-10-31
 

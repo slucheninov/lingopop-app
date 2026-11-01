@@ -162,10 +162,12 @@ fn rig_gated(
     let registry = Arc::new(ProviderRegistry::standard());
     let popup = Arc::new(FakePopup::new());
     let persist = Arc::new(FakePersist::new());
-    let config = Arc::new(FakeConfig::new(
-        Settings::default(),
-        snapshot(keys_for, fallbacks),
-    ));
+    // Written against Claude as the active provider (the Windows default is Google (Free)).
+    let settings = Settings {
+        active_provider: ProviderType::Claude,
+        ..Settings::default()
+    };
+    let config = Arc::new(FakeConfig::new(settings, snapshot(keys_for, fallbacks)));
     let orch = Orchestrator::new(Deps {
         platform,
         runner: Arc::new(OperationRunner::new(
