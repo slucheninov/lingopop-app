@@ -165,3 +165,29 @@ fn notice_serializes_only_when_set() {
         .get("notice")
         .is_none());
 }
+
+#[test]
+fn every_message_key_has_all_translations() {
+    use lingopop_core::i18n::lookup;
+    use lingopop_core::Language;
+    use lingopop_orchestrator::messages::*;
+
+    for key in [
+        KEY_NOTHING_SELECTED,
+        KEY_CLIPBOARD_TIMEOUT,
+        KEY_MAX_INPUT,
+        KEY_MISSING_KEY,
+        KEY_NO_TEXT_FOUND_RETRY,
+        KEY_NO_TEXT_FOUND,
+        KEY_SELECTION_TOO_SMALL,
+        KEY_INPUT_BLOCKED,
+        KEY_FOREGROUND_LOST,
+        KEY_OCR_UNAVAILABLE,
+        KEY_PLATFORM_GENERIC,
+        KEY_SCREEN_TIMEOUT,
+    ] {
+        for language in [Language::Pl, Language::Uk, Language::De] {
+            assert_ne!(lookup(language, key), key, "{language:?}: {key}");
+        }
+    }
+}

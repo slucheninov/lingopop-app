@@ -1,0 +1,117 @@
+{
+  "Already used by %@.": {
+    "de": "Wird bereits verwendet von: %@.",
+    "pl": "Już używany przez: %@.",
+    "uk": "Уже використовується: %@."
+  },
+  "Click a shortcut field, then press a key combination. Use Ctrl, Alt or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.": {
+    "de": "Tastenkürzel-Feld anklicken und Tastenkombination drücken. Strg, Alt oder Umschalt plus eine Taste verwenden. Esc bricht die Aufnahme ab. ✕ entfernt das Tastenkürzel.",
+    "pl": "Kliknij pole skrótu, a następnie naciśnij kombinację klawiszy. Użyj Ctrl, Alt lub Shift oraz klawisza. Esc anuluje nagrywanie. ✕ usuwa skrót.",
+    "uk": "Клацніть поле скорочення, потім натисніть комбінацію клавіш. Використовуйте Ctrl, Alt або Shift разом із клавішею. Esc скасовує запис. ✕ видаляє скорочення."
+  },
+  "Close": {
+    "de": "Schließen",
+    "pl": "Zamknij",
+    "uk": "Закрити"
+  },
+  "Couldn't save the API key. Check that the data folder is writable.": {
+    "de": "API-Schlüssel konnte nicht gespeichert werden. Prüfen, ob der Datenordner beschreibbar ist.",
+    "pl": "Nie udało się zapisać klucza API. Sprawdź, czy folder danych jest zapisywalny.",
+    "uk": "Не вдалося зберегти ключ API. Перевірте, чи є доступ на запис до папки даних."
+  },
+  "Couldn't switch back to the original app, so nothing was replaced. The text is on your clipboard; paste it manually with Ctrl+V.": {
+    "de": "Wechsel zurück zur ursprünglichen App war nicht möglich, daher wurde nichts ersetzt. Der Text liegt in der Zwischenablage und kann manuell mit Strg+V eingefügt werden.",
+    "pl": "Nie udało się wrócić do pierwotnej aplikacji, więc nic nie zostało zamienione. Tekst jest w schowku; wklej go ręcznie za pomocą Ctrl+V.",
+    "uk": "Не вдалося повернутися до початкової програми, тому нічого не замінено. Текст у буфері обміну; вставте його вручну за допомогою Ctrl+V."
+  },
+  "Explaining…": {
+    "de": "Erklären…",
+    "pl": "Wyjaśnianie…",
+    "uk": "Пояснення…"
+  },
+  "Fixing grammar…": {
+    "de": "Grammatik wird korrigiert…",
+    "pl": "Poprawianie gramatyki…",
+    "uk": "Виправлення граматики…"
+  },
+  "Line one\nLine \"two\"": {
+    "de": "Zeile eins\nZeile „zwei“ und \"Anführungszeichen\"",
+    "pl": "Linia pierwsza\nLinia „dwa” i \"cudzysłów\"",
+    "uk": "Рядок перший\nРядок «два» і \"лапки\""
+  },
+  "LingoPop can't reach an app running as administrator. Run LingoPop as administrator, or copy and paste the text manually.": {
+    "de": "LingoPop kann nicht auf eine App zugreifen, die als Administrator läuft. LingoPop als Administrator ausführen oder den Text manuell kopieren und einfügen.",
+    "pl": "LingoPop nie może połączyć się z aplikacją uruchomioną jako administrator. Uruchom LingoPop jako administrator lub skopiuj i wklej tekst ręcznie.",
+    "uk": "LingoPop не може отримати доступ до програми, запущеної від імені адміністратора. Запустіть LingoPop від імені адміністратора або скопіюйте й вставте текст вручну."
+  },
+  "No OCR language is installed. Add a language with Optical character recognition in Settings → Time & language → Language & region, or use Retry to send the image to AI.": {
+    "de": "Es ist keine OCR-Sprache installiert. Eine Sprache mit optionaler Zeichenerkennung unter Einstellungen → Zeit & Sprache → Sprache & Region hinzufügen oder mit „Wiederholen“ das Bild an die KI senden.",
+    "pl": "Nie zainstalowano żadnego języka OCR. Dodaj język z funkcją Optyczne rozpoznawanie znaków w Ustawienia → Czas i język → Język i region lub użyj Ponów próbę, aby wysłać obraz do AI.",
+    "uk": "Не встановлено жодної мови OCR. Додайте мову з функцією «Оптичне розпізнавання символів» у розділі Параметри → Час і мова → Мова та регіон або скористайтеся «Спробувати ще раз», щоб надіслати зображення до AI."
+  },
+  "Provider settings can't be saved because secrets.dat is unreadable. Remove or rename it and enter your keys again.": {
+    "de": "Anbietereinstellungen können nicht gespeichert werden, weil secrets.dat nicht lesbar ist. Datei entfernen oder umbenennen und die Schlüssel erneut eingeben.",
+    "pl": "Nie można zapisać ustawień dostawców, ponieważ plik secrets.dat jest nieczytelny. Usuń go lub zmień jego nazwę i wprowadź klucze ponownie.",
+    "uk": "Налаштування провайдерів неможливо зберегти, бо файл secrets.dat не читається. Видаліть його або перейменуйте й введіть ключі знову."
+  },
+  "Recognizing text…": {
+    "de": "Text wird erkannt…",
+    "pl": "Rozpoznawanie tekstu…",
+    "uk": "Розпізнавання тексту…"
+  },
+  "Rewriting…": {
+    "de": "Umschreiben…",
+    "pl": "Przepisywanie…",
+    "uk": "Переписування…"
+  },
+  "Screen capture or text recognition took too long. Try again.": {
+    "de": "Bildschirmaufnahme oder Texterkennung hat zu lange gedauert. Erneut versuchen.",
+    "pl": "Przechwytywanie ekranu lub rozpoznawanie tekstu trwało zbyt długo. Spróbuj ponownie.",
+    "uk": "Захоплення екрана або розпізнавання тексту тривало надто довго. Спробуйте ще раз."
+  },
+  "Select text in any app, press a shortcut, and get an instant AI translation, grammar fix, or rewrite in a popup near your cursor.": {
+    "de": "Text in einer beliebigen App markieren, Tastenkürzel drücken und sofort KI-Übersetzung, Grammatikkorrektur oder Umformulierung in einem Popup neben dem Cursor erhalten.",
+    "pl": "Zaznacz tekst w dowolnej aplikacji, naciśnij skrót i uzyskaj natychmiastowe tłumaczenie AI, poprawkę gramatyki lub przepisanie tekstu w oknie obok kursora.",
+    "uk": "Виділіть текст у будь-якій програмі, натисніть скорочення й миттєво отримайте переклад AI, виправлення граматики або переписаний текст у спливному вікні біля курсора."
+  },
+  "Something went wrong on this PC (%@). Try again.": {
+    "de": "Auf diesem PC ist ein Fehler aufgetreten (%@). Erneut versuchen.",
+    "pl": "Coś poszło nie tak na tym komputerze (%@). Spróbuj ponownie.",
+    "uk": "Щось пішло не так на цьому комп’ютері (%@). Спробуйте ще раз."
+  },
+  "Stored locally, encrypted with Windows Data Protection for your user account.": {
+    "de": "Wird lokal gespeichert, verschlüsselt mit dem Windows-Datenschutz für Ihr Benutzerkonto.",
+    "pl": "Przechowywany lokalnie, zaszyfrowany za pomocą ochrony danych systemu Windows dla Twojego konta użytkownika.",
+    "uk": "Зберігається локально, зашифрований засобами захисту даних Windows для вашого облікового запису."
+  },
+  "Supports Claude, OpenAI, Gemini, Grok, Google Translate, DeepL, and Microsoft Translator. API keys and provider settings are stored locally, encrypted for your Windows account.": {
+    "de": "Unterstützt Claude, OpenAI, Gemini, Grok, Google Translate, DeepL und Microsoft Translator. API-Schlüssel und Anbietereinstellungen werden lokal gespeichert, verschlüsselt für Ihr Windows-Konto.",
+    "pl": "Obsługuje Claude, OpenAI, Gemini, Grok, Google Translate, DeepL i Microsoft Translator. Klucze API i ustawienia dostawców są przechowywane lokalnie, zaszyfrowane dla Twojego konta Windows.",
+    "uk": "Підтримує Claude, OpenAI, Gemini, Grok, Google Translate, DeepL і Microsoft Translator. Ключі API та налаштування провайдерів зберігаються локально в зашифрованому вигляді для вашого облікового запису Windows."
+  },
+  "This shortcut can't be registered.": {
+    "de": "Dieses Tastenkürzel kann nicht registriert werden.",
+    "pl": "Nie można zarejestrować tego skrótu.",
+    "uk": "Це скорочення неможливо зареєструвати."
+  },
+  "This shortcut is already used by another app.": {
+    "de": "Dieses Tastenkürzel wird bereits von einer anderen App verwendet.",
+    "pl": "Ten skrót jest już używany przez inną aplikację.",
+    "uk": "Це скорочення вже використовується іншою програмою."
+  },
+  "Translate with %@": {
+    "de": "Übersetzen mit %@",
+    "pl": "Przetłumacz za pomocą %@",
+    "uk": "Перекласти за допомогою %@"
+  },
+  "Translating…": {
+    "de": "Übersetzen…",
+    "pl": "Tłumaczenie…",
+    "uk": "Переклад…"
+  },
+  "Working…": {
+    "de": "Wird verarbeitet…",
+    "pl": "Przetwarzanie…",
+    "uk": "Обробка…"
+  }
+}

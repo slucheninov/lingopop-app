@@ -8,12 +8,14 @@ pub mod fsio;
 pub mod history_store;
 pub mod hotkey;
 pub mod http;
+pub mod i18n;
 pub mod keyed_map;
 pub mod languages;
 pub mod operation;
 pub mod paths;
 pub mod prompts;
 pub mod provider;
+pub mod provider_draft;
 pub mod providers;
 pub mod records;
 pub mod runner;
@@ -23,6 +25,10 @@ pub mod settings;
 mod store_common;
 pub mod target_language;
 pub mod time;
+pub mod ui_prefs;
+pub mod updates;
+pub mod usage_pricing;
+pub mod usage_stats;
 pub mod usage_store;
 
 pub use fsio::{LoadOutcome, StoreError};
@@ -39,6 +45,7 @@ pub use provider::{
     default_providers, ProviderCapabilities, ProviderConnectionSettings, ProviderField,
     ProviderType,
 };
+pub use provider_draft::{DraftErrors, ProviderDraft};
 pub use providers::{AIProvider, ProviderConfig, ProviderRegistry, ProviderResult, TokenUsage};
 pub use records::{HistoryEntry, UsageRecord};
 pub use runner::{
@@ -49,6 +56,15 @@ pub use secrets::{
 };
 pub use settings::{sanitize_magic_prompt, Settings, SettingsError};
 pub use time::{Clock, ManualClock, SystemClock, Timestamp};
+pub use ui_prefs::{
+    resolve_system, AppLanguage, Language, UiPrefs, DEFAULT_POPUP_FONT_SIZE, POPUP_FONT_RANGE,
+};
+pub use updates::*;
+pub use usage_pricing::{estimated_cost, price, PRICING};
+pub use usage_stats::{
+    chart_buckets, format_cost, format_tokens, totals, totals_by_provider, usage_display_name,
+    Bucket, Period, Totals, TRACKED_PROVIDERS,
+};
 pub use usage_store::UsageStore;
 
 /// Crate version, taken from the workspace `Cargo.toml`.
