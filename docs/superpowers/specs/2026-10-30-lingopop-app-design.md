@@ -149,7 +149,7 @@ Traits:
   - пустой или мусорный текст: как на macOS, Retry в OCR-popup отправляет изображение vision-провайдерам.
 - **Секреты**: DPAPI `CryptProtectData` (область CurrentUser) защищает тот же плоский JSON-payload. Файл `%APPDATA%\LingoPop\secrets.dat`.
 - **Файлы данных** в `%APPDATA%\LingoPop\`: `settings.json`, `history.json`, `usage.json`, `secrets.dat`.
-- **Автозапуск**: HKCU Run через `tauri-plugin-autostart`.
+- **Автозапуск**: значение в HKCU Run, которое оболочка пишет напрямую через `LoginItem` в `lingopop-platform`; `tauri-plugin-autostart` не используется (уточнено в Фазе 4b, §11 в [2026-11-01-phase4b-windows-ui-design.md](2026-11-01-phase4b-windows-ui-design.md)).
 - **Один экземпляр**: `tauri-plugin-single-instance`.
 - Разделы про разрешения Accessibility и Screen Recording в Settings → Main на Windows скрываются, права не нужны.
 
@@ -225,11 +225,11 @@ Traits:
 
 ## 8. Локализация
 
-- Строки один раз импортируются скриптом из `App/Localizable.xcstrings` macOS-репозитория в JSON для frontend и отдельно для Rust (строки трея и нативных окон). После импорта источником истины становится каталог `lingopop-app`: повторных импортов нет, CI macOS-репозиторий не требует (решение ассистента).
+- Строки один раз импортируются скриптом из `App/Localizable.xcstrings` macOS-репозитория в JSON для frontend и отдельно для Rust (строки трея и нативных окон). Уточнено в Фазе 4b (§9 в [2026-11-01-phase4b-windows-ui-design.md](2026-11-01-phase4b-windows-ui-design.md)): общие ключи генерируются скриптом из `App/Localizable.xcstrings` и не правятся вручную (повторная генерация возможна при изменении macOS-каталога), Windows-only ключи живут в отдельном вручную поддерживаемом каталоге; CI macOS-репозиторий по-прежнему не требует.
 - Переводы pl/uk/de для ключей, которых нет на macOS (Windows-only), пишет исполнитель (AI-агент) по тем же терминологическим правилам. Системные термины берутся такими, как в самой Windows для каждого языка, например «Параметры» / «Einstellungen» / «Ustawienia» (решение ассистента).
 - CI-проверка с теми же правилами, что `scripts/check-localizations.py`: все ключи без `shouldTranslate: false` переведены на pl/uk/de; мультимножество спецификаторов формата (`%@`, `%lld`, `%1$@`, `%%`), переводы строк и спецсимволы (`…`, `→`, `⌘`, `{{targetLanguage}}`) совпадают с ключом.
 - Нелокализуемое: `rawValue`, названия языков из таблицы `Languages` (это данные), тексты промптов, логи, HTTP/JSON-поля, бренды провайдеров.
-- Переключение языка применяется сразу, без перезапуска (решение ассистента; на macOS нужен перезапуск, на Windows это дешевле).
+- Смена языка применяется после перезапуска приложения, как на macOS, с кнопкой Relaunch (решение владельца в Фазе 4b, §9 в [2026-11-01-phase4b-windows-ui-design.md](2026-11-01-phase4b-windows-ui-design.md); прежнее решение «сразу, без перезапуска» отменено).
 - Строки, которые есть только на macOS (⌘, Accessibility, Screen Recording), на Windows не показываются; ключи, неприменимые к Windows, помечаются в скрипте импорта.
 
 ## 9. Тестирование
@@ -318,6 +318,6 @@ Popup не забирает фокус: окно создаётся с `focusabl
 
 ### Разбиение
 
-Фаза 4a (этот раздел, план `docs/superpowers/plans/2026-10-31-phase4a-orchestration-popup.md`): оркестрация, popup, минимальная оболочка Tauri. Фаза 4b: окна Settings и History, полное меню трея, overlay выбора области, локализация, usage, автозапуск.
+Фаза 4a (этот раздел, план `docs/superpowers/plans/2026-10-31-phase4a-orchestration-popup.md`): оркестрация, popup, минимальная оболочка Tauri. Фаза 4b: окна Settings и History, полное меню трея, overlay выбора области, локализация, usage, автозапуск. Дизайн Фазы 4b: [docs/superpowers/specs/2026-11-01-phase4b-windows-ui-design.md](2026-11-01-phase4b-windows-ui-design.md).
 
 Пункт 3 списка владельца для Фазы 4 ещё не получен; будет добавлен сюда.
