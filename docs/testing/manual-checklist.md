@@ -1,6 +1,6 @@
 # Manual checklist (Windows)
 
-The basics CI cannot verify: a real desktop and other apps. Run it on a Windows 10/11 machine (a VM is fine) before a release and after changes to `lingopop-platform`, the popup or the shell. Tick an item only when the expected result is observed. Build with `npm run build --prefix app` then `cargo build -p lingopop-app --release`.
+The basics CI cannot verify: a real desktop and other apps. Run it on a Windows 10/11 machine (a VM is fine) before a release and after changes to `lingopop-platform`, the popup or the shell. Tick an item only when the expected result is observed. Use the release exe, or build the same way the release workflow does: `npm run build --prefix app` then `cargo build -p lingopop-app --release --locked --features custom-protocol` (without the feature the exe loads the dev server URL).
 
 Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in `settings.json`.
 
@@ -9,9 +9,9 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [x] Launch `lingopop.exe`. Expected: a tray icon with the tooltip "LingoPop", no window, no taskbar button.
 - [x] Launch it a second time. Expected: the second process exits at once; the first keeps running (single instance).
 - [x] Tray menu, "Quit LingoPop". Expected: the icon disappears and the process ends. Closing the popup never quits the app.
-- [x] Open `%APPDATA%\LingoPop`. Expected: the data folder is exactly this (not `%APPDATA%\app.lingopop.windows`) and holds `lingopop.log`; `history.json` / `usage.json` appear after the first successful run.
+- [x] Open `%APPDATA%\LingoPop`. Expected: the data folder is exactly this (not `%APPDATA%\app.lingopop.windows`) and holds `lingopop.log`; `history.json` appears after the first successful run, `usage.json` only after a provider that reports token usage (not Google (Free)).
 - [ ] After a session with real text, search `lingopop.log` and `lingopop.log.1` for the selected text, the translation and the API key. Expected: none of them appear.
-- [ ] Delete `settings.json` (fresh install), start the app and translate. Expected: Google (Free) is the active provider and works without any key.
+- [ ] Quit the app, rename an existing `settings.json` to `settings.json.keep` (fresh install), start the app and translate; afterwards quit and rename it back. Expected: Google (Free) is the active provider and works without any key.
 
 ## Popup
 
