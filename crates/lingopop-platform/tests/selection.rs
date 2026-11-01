@@ -203,6 +203,7 @@ fn capture_releases_held_modifiers_after_timeout() {
     assert_eq!(
         r.keys.events(),
         vec![
+            KeyCall::MaskMenuActivation,
             KeyCall::ReleaseModifiers(vec![Modifier::Ctrl, Modifier::Alt]),
             KeyCall::SendCopy
         ]
@@ -225,7 +226,7 @@ fn capture_elevated_foreground_is_input_blocked_before_touching_clipboard() {
     r.keys.on_copy(CopyBehavior::Select("hello".into()));
     assert_eq!(capture(&r), Err(PlatformError::InputBlocked));
     assert!(r.clip.calls().is_empty());
-    assert!(r.keys.events().is_empty());
+    assert_eq!(r.keys.events(), vec![KeyCall::MaskMenuActivation]);
 }
 
 #[test]
@@ -360,4 +361,29 @@ fn clipboard_snapshot_debug_prints_counts_only() {
     assert!(!shown.contains("SECRET"), "{shown}");
     assert!(shown.contains("entries: 1"), "{shown}");
     assert!(!format!("{:?}", snap.entries[0]).contains("SECRET"));
+}
+
+#[test]
+fn capture_masks_menu_activation_before_wait_and_copy() {
+    let r = rig();
+    r.keys.on_copy(CopyBehavior::Select("hello".into()));
+    r.keys
+        .hold_modifiers(vec![Modifier::Ctrl, Modifier::Alt], Some(ms(80)));
+    assert_eq!(capture(&r).unwrap().as_deref(), Some("hello"));
+    let events = r.clip.log().events();
+    let mask_at = events
+        .iter()
+        .position(|e| e.event == Event::Key(KeyCall::MaskMenuActivation))
+        .expect("mask requested");
+    let copy_at = events
+        .iter()
+        .position(|e| e.event == Event::Key(KeyCall::SendCopy))
+        .unwrap();
+    assert_eq!(mask_at, 0);
+    assert!(mask_at < copy_at);
+    assert_eq!(
+        events[mask_at].at,
+        Duration::ZERO,
+        "before the modifier wait"
+    );
 }

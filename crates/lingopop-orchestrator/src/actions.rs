@@ -57,6 +57,9 @@ impl Orchestrator {
                     return;
                 };
                 let target = session.target_window;
+                // The provider output is trimmed; the selection being overwritten may carry
+                // leading / trailing whitespace (a line break) that must survive.
+                let text = with_original_padding(&session.captured, &text);
                 // The session stays until the paste is decided, so a gate failure can
                 // show the result again.
                 me.deps().popup.hide();
@@ -261,5 +264,48 @@ impl Orchestrator {
 
     pub async fn escape(&self) {
         self.close().await;
+    }
+}
+
+/// `replacement` with its own surrounding whitespace removed, wrapped in the leading and trailing
+/// whitespace of `original` (the selection Replace overwrites), so a selected line keeps its
+/// line break. An all-whitespace `original` is kept whole as the leading part (never doubled).
+fn with_original_padding(original: &str, replacement: &str) -> String {
+    let core = replacement.trim();
+    let body = original.trim_start();
+    let leading = &original[..original.len() - body.len()];
+    let trailing = &body[body.trim_end().len()..];
+    format!("{leading}{core}{trailing}")
+}
+
+#[cfg(test)]
+mod padding_tests {
+    use super::with_original_padding as pad;
+
+    #[test]
+    fn keeps_trailing_crlf() {
+        assert_eq!(pad("Hello.\r\n", "Hallo."), "Hallo.\r\n");
+    }
+
+    #[test]
+    fn keeps_leading_and_trailing_whitespace() {
+        assert_eq!(pad("  \tHello \n", "Hallo"), "  \tHallo \n");
+    }
+
+    #[test]
+    fn no_padding_is_unchanged() {
+        assert_eq!(pad("Hello", "Hallo"), "Hallo");
+    }
+
+    #[test]
+    fn replacement_whitespace_is_not_doubled() {
+        assert_eq!(pad("Hello\n", " Hallo\n\n"), "Hallo\n");
+        assert_eq!(pad("Hello", "\n Hallo \n"), "Hallo");
+    }
+
+    #[test]
+    fn all_whitespace_original_is_kept_once() {
+        assert_eq!(pad(" \n", "Hallo"), " \nHallo");
+        assert_eq!(pad("", "Hallo"), "Hallo");
     }
 }

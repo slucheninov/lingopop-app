@@ -8,8 +8,8 @@ use lingopop_core::hotkey::Modifier;
 
 use crate::error::PlatformError;
 use crate::keys::{
-    chord_events, ensure_inserted, release_events, KeySynth, VkEvent, VK_C, VK_CONTROL, VK_LWIN,
-    VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
+    chord_events, ensure_inserted, menu_mask_events, release_events, KeySynth, VkEvent, VK_C,
+    VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
 };
 
 /// Windows keyboard: reads the physical modifier state and synthesizes input with `SendInput`.
@@ -85,6 +85,14 @@ impl KeySynth for WindowsKeys {
 
     fn release_modifiers(&self, modifiers: &[Modifier]) -> Result<(), PlatformError> {
         send(&release_events(modifiers))
+    }
+
+    fn mask_menu_activation(&self) -> Result<(), PlatformError> {
+        if is_down(VK_MENU) || is_down(VK_LWIN) || is_down(VK_RWIN) {
+            send(&menu_mask_events())
+        } else {
+            Ok(())
+        }
     }
 
     fn send_copy(&self) -> Result<(), PlatformError> {

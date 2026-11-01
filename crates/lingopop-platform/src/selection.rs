@@ -52,6 +52,12 @@ pub fn capture_selection(
     sleeper: &dyn Sleeper,
     opts: &CaptureOptions,
 ) -> Result<Option<String>, PlatformError> {
+    // The hotkey's own key press was consumed by RegisterHotKey, so a physical Alt / Win release
+    // would look like a lone Alt tap (menu bar access-key tips). Mask it first; a failure only
+    // risks the cosmetic tips.
+    if keys.mask_menu_activation().is_err() {
+        log(opts, "menu mask failed");
+    }
     if let Some(w) = fg.current() {
         if fg.is_elevated(w) {
             log(opts, "input blocked: target runs elevated");

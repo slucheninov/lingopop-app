@@ -11,8 +11,8 @@ pub trait ForegroundWindow: Send + Sync {
     fn restore(&self, window: WindowHandle) -> Result<(), PlatformError>;
     /// The window's process runs at a higher integrity level than ours, so UIPI would silently
     /// drop our synthesized input (`SendInput` still reports success).
-    /// TODO(manual checklist): verify Capture / Replace against an elevated Notepad ("Run as
-    /// administrator") from a non-elevated LingoPop: it must report `InputBlocked`.
+    /// Verified manually on Windows 11 on 2026-11-01 (non-elevated LingoPop against elevated
+    /// Notepad reports `InputBlocked`; elevated LingoPop works).
     fn is_elevated(&self, window: WindowHandle) -> bool;
 }
 

@@ -175,6 +175,7 @@ impl Orchestrator {
             st.session = Some(Session {
                 operation: AIOperation::ScreenTranslate,
                 text: String::new(),
+                captured: String::new(),
                 last_result: None,
                 detected_source: None,
                 target_language: settings.target_language.clone(),

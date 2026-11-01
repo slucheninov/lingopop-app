@@ -17,6 +17,7 @@ pub enum KeyCall {
     ReleaseModifiers(Vec<Modifier>),
     SendCopy,
     SendPaste,
+    MaskMenuActivation,
 }
 
 /// What the "application" does when it receives Ctrl+C.
@@ -131,6 +132,11 @@ impl KeySynth for FakeKeys {
     fn release_modifiers(&self, modifiers: &[Modifier]) -> Result<(), PlatformError> {
         self.record(KeyCall::ReleaseModifiers(modifiers.to_vec()));
         self.state().held.retain(|m| !modifiers.contains(m));
+        Ok(())
+    }
+
+    fn mask_menu_activation(&self) -> Result<(), PlatformError> {
+        self.record(KeyCall::MaskMenuActivation);
         Ok(())
     }
 
