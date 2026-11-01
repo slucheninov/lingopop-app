@@ -20,6 +20,10 @@ impl DataPaths {
         self.dir.join("settings.json")
     }
 
+    pub fn ui_json(&self) -> PathBuf {
+        self.dir.join("ui.json")
+    }
+
     pub fn history_json(&self) -> PathBuf {
         self.dir.join("history.json")
     }
