@@ -52,7 +52,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            active_provider: ProviderType::Claude,
+            // Windows deviation from the mac default (Claude): Google (Free) needs no API key,
+            // so a fresh install translates before any key is entered.
+            active_provider: ProviderType::GoogleFree,
             fallbacks: ProviderKeyedMap::default(),
             target_language: "Ukrainian".to_string(),
             // Parity with the mac app, which ships only Translate.
@@ -264,7 +266,7 @@ mod tests {
     #[test]
     fn defaults_match_the_values_above() {
         let s = Settings::default();
-        assert_eq!(s.active_provider, ProviderType::Claude);
+        assert_eq!(s.active_provider, ProviderType::GoogleFree);
         assert!(s.fallbacks.0.is_empty());
         assert_eq!(s.target_language, "Ukrainian");
         assert_eq!(
@@ -349,7 +351,7 @@ mod tests {
         let s = decode(
             r#"{"activeProvider":"Bogus","maxHistoryCount":-5,"targetLanguage":"German","useAutoDetect":"yes"}"#,
         );
-        assert_eq!(s.active_provider, ProviderType::Claude);
+        assert_eq!(s.active_provider, ProviderType::GoogleFree);
         assert_eq!(s.max_history_count, 10);
         assert_eq!(s.target_language, "German");
         assert!(!s.use_auto_detect);

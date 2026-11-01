@@ -183,10 +183,12 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
     let registry = Arc::new(ProviderRegistry::standard());
     let popup = Arc::new(FakePopup::new());
     let persist = Arc::new(FakePersist::new());
-    let config = Arc::new(FakeConfig::new(
-        Settings::default(),
-        snapshot_with(opts.keys_for),
-    ));
+    // Written against Claude as the active provider (the Windows default is Google (Free)).
+    let settings = Settings {
+        active_provider: ProviderType::Claude,
+        ..Settings::default()
+    };
+    let config = Arc::new(FakeConfig::new(settings, snapshot_with(opts.keys_for)));
     let deps = Deps {
         platform,
         runner: Arc::new(OperationRunner::new(
