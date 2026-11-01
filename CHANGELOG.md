@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.5] - 2026-11-01
+
 ### Fixed
 
 - The administrator-app error now closes by itself after 6 s; Windows does not deliver clicks or Esc in an elevated window to LingoPop's hooks.
