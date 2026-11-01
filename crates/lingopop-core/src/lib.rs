@@ -26,6 +26,8 @@ pub mod target_language;
 pub mod time;
 pub mod ui_prefs;
 pub mod updates;
+pub mod usage_pricing;
+pub mod usage_stats;
 pub mod usage_store;
 
 pub use fsio::{LoadOutcome, StoreError};
@@ -57,6 +59,11 @@ pub use ui_prefs::{
     resolve_system, AppLanguage, Language, UiPrefs, DEFAULT_POPUP_FONT_SIZE, POPUP_FONT_RANGE,
 };
 pub use updates::*;
+pub use usage_pricing::{estimated_cost, price, PRICING};
+pub use usage_stats::{
+    chart_buckets, format_cost, format_tokens, totals, totals_by_provider, usage_display_name,
+    Bucket, Period, Totals, TRACKED_PROVIDERS,
+};
 pub use usage_store::UsageStore;
 
 /// Crate version, taken from the workspace `Cargo.toml`.
