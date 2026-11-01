@@ -64,7 +64,8 @@ impl AIProvider for GoogleFreeProvider {
                 ("q", text),
             ],
         )?;
-        let request = HttpRequest::get(url, &[("User-Agent", "Mozilla/5.0")]);
+        // Google answers 429 to hyper's HTTP/2 on this endpoint; HTTP/1.1 works.
+        let request = HttpRequest::get(url, &[("User-Agent", "Mozilla/5.0")]).http1_only();
         let bytes = perform(transport, request).await?;
         let response: Value = serde_json::from_slice(&bytes)
             .map_err(|_| TranslationError::Decoding("Invalid JSON".into()))?;
@@ -127,6 +128,7 @@ mod tests {
             vec![("User-Agent".to_string(), "Mozilla/5.0".to_string())]
         );
         assert_eq!(request.body, None);
+        assert!(request.http1_only);
     }
 
     #[tokio::test]

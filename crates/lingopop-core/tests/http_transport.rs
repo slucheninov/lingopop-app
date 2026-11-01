@@ -260,3 +260,23 @@ async fn invalid_header_value_error_does_not_leak_it() {
         assert!(!text.contains("sk-secret"), "{text}");
     }
 }
+
+#[tokio::test]
+async fn http1_only_request_succeeds_with_the_same_client_settings() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/h1"))
+        .and(header(
+            "user-agent",
+            format!("LingoPop/{}", lingopop_core::VERSION).as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(&b"ok"[..]))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let request = get(url(&server, "/h1")).http1_only();
+    let response = transport().send(request).await.unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, b"ok");
+}

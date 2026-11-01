@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Fixed
+
+- Google (Free) always failed with "Rate limit exceeded" (HTTP 429): Google rejects the HTTP/2 connection of the HTTP client; Google (Free) requests now use HTTP/1.1.
+
 ## [0.2.0-alpha.3] - 2026-10-31
 
 ### Fixed
