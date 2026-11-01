@@ -34,3 +34,4 @@ dist/
 *.swp
 *~
 app/.svelte-check/
+__pycache__/

@@ -1,0 +1,26 @@
+Accessibility
+Accessibility access required
+After granting access, fully quit and relaunch LingoPop.
+Click a shortcut field, then press a key combination. Use any of ⌃ ⌥ ⇧ ⌘ plus a key. Esc cancels recording. ✕ removes the shortcut.
+Could not capture the screen. Check that Screen Recording permission is granted.
+Couldn't switch back to the original app, so nothing was replaced. The text is on your clipboard; paste it manually with ⌘V.
+Granted
+Hide LingoPop
+LingoPop can't read selected text yet.
+Open Settings
+Quit LingoPop from the menu bar and open it again to apply the new language.
+Re-check
+Request
+Required for Screen Translate.
+Screen Recording
+Screen Recording access required
+Steps:\n1. Open System Settings → Privacy & Security → %@\n2. Make sure LingoPop is in the list and the toggle is ON\n3. Quit LingoPop completely (menu bar → Quit) and relaunch\n\nmacOS only reads the new permission after a full restart of the app.
+Select text anywhere on your Mac, press a shortcut, and get an instant AI translation, grammar fix, or rewrite in a popup near your cursor.
+Supports Claude, OpenAI, Gemini, Grok, Google Translate, DeepL, and Microsoft Translator. API keys and provider settings are stored locally in an encrypted file. Usage statistics, and optionally translation history, can sync between Macs via iCloud Drive.
+Sync translation history to iCloud
+Sync usage statistics via iCloud Drive
+Syncs usage statistics and, if enabled, translation history between Macs signed into the same Apple ID. Settings, provider settings and API keys stay local on each Mac.
+iCloud Drive available
+iCloud Drive sync
+iCloud Drive unavailable
+⚠ Re-check Accessibility…
