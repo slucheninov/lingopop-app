@@ -49,7 +49,7 @@ jobs:
           python-version: "3.12"
       - name: Check localization catalogs
         shell: bash
-        run: python3 scripts/gen-localizations.py check
+        run: python scripts/gen-localizations.py check
       - name: Test frontend
         shell: bash
         run: npm test --prefix app

@@ -16,12 +16,21 @@ export function currentLanguage(): string {
   return language;
 }
 
-/** The translated template when the catalog has it, else the English key itself; substitution never emits HTML. */
+/** `%%`, or `%@` / `%lld` / `%ld` / `%d` with an optional `n$` position: the grammar of core `i18n::format`. */
+const PLACEHOLDER = /%(?:(\d+)\$)?(@|lld|ld|d)|%%/g;
+
+/**
+ * The translated template when the catalog has it, else the English key itself; substitution never emits HTML.
+ * A placeholder without its argument stays as written, and an unpositional one still takes the next ordered slot.
+ */
 export function t(key: string, args: readonly (string | number)[] = []): string {
   const template = Object.hasOwn(catalog, key) ? catalog[key] : key;
   let ordered = 0;
-  return template.replace(/%(?:(\d+)\$)?(@|lld)/g, (placeholder, position: string | undefined) => {
-    const index = position ? Number(position) - 1 : ordered++;
-    return args[index] === undefined ? placeholder : String(args[index]);
+  return template.replace(PLACEHOLDER, (placeholder: string, position: string | undefined) => {
+    if (placeholder === '%%') {
+      return '%';
+    }
+    const index = position === undefined ? ordered++ : Number(position) - 1;
+    return index >= 0 && args[index] !== undefined ? String(args[index]) : placeholder;
   });
 }

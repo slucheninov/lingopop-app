@@ -19,6 +19,13 @@ test('t_keeps_substitution_rules', () => {
   expect(t('Missing %@ arg')).toBe('Missing %@ arg');
 });
 
+test('t_formats_like_core', () => {
+  expect(t('100%%')).toBe('100%');
+  expect(t('%d items', ['3'])).toBe('3 items');
+  expect(t('%2$@ %1$@', ['a', 'b'])).toBe('b a');
+  expect(t('%0$@ %3$@', ['x'])).toBe('%0$@ %3$@');
+});
+
 test('t_substitutes_into_the_translated_template', () => {
   setLanguage('de', { 'Retry with %@': 'Erneut mit %@' });
   expect(t('Retry with %@', ['Claude'])).toBe('Erneut mit Claude');

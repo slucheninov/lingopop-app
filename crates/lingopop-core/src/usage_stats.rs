@@ -325,6 +325,7 @@ fn split_unix(unix: f64) -> (i64, u32) {
 #[cfg(test)]
 mod tests {
     use super::{chart_buckets, format_cost, format_tokens, totals, totals_by_provider, Period};
+    use crate::usage_pricing::estimated_cost;
     use crate::{AIOperation, Language, ProviderType, Timestamp, UsageRecord};
 
     /// 2026-11-01T10:30:00Z. Local +01:00 is 11:30, so the local day starts at 2026-10-31T23:00:00Z.
@@ -396,6 +397,38 @@ mod tests {
             (cost - 0.0011).abs() < 1e-12,
             "cost {cost} is not 0.0011 within 1e-12"
         );
+    }
+
+    #[test]
+    fn totals_accumulate_records_per_provider() {
+        let at = |seconds: f64| Timestamp::from_unix_seconds(NOW_NOV1 - seconds);
+        let records = [
+            claude("claude-haiku-5-5", 1000, 2000, at(10.0)),
+            claude("claude-haiku-5-5", 3000, 4000, at(20.0)),
+            record(ProviderType::OpenAI, "gpt-5.4-mini", 500, 700, at(30.0)),
+        ];
+        let claude_cost = estimated_cost("claude-haiku-5-5", 1000, 2000).unwrap()
+            + estimated_cost("claude-haiku-5-5", 3000, 4000).unwrap();
+        let openai_cost = estimated_cost("gpt-5.4-mini", 500, 700).unwrap();
+
+        let by_provider = totals_by_provider(&records, Period::Day, NOW_NOV1, 0);
+        let claude_totals = &by_provider["Claude"];
+        assert_eq!(claude_totals.input_tokens, 4000);
+        assert_eq!(claude_totals.output_tokens, 6000);
+        assert_eq!(claude_totals.calls, 2);
+        assert!((claude_totals.cost.unwrap() - claude_cost).abs() < 1e-12);
+
+        let openai_totals = &by_provider["OpenAI"];
+        assert_eq!(openai_totals.input_tokens, 500);
+        assert_eq!(openai_totals.output_tokens, 700);
+        assert_eq!(openai_totals.calls, 1);
+        assert!((openai_totals.cost.unwrap() - openai_cost).abs() < 1e-12);
+
+        let all = totals(&records, Period::Day, NOW_NOV1, 0);
+        assert_eq!(all.input_tokens, 4500);
+        assert_eq!(all.output_tokens, 6700);
+        assert_eq!(all.calls, 3);
+        assert!((all.cost.unwrap() - (claude_cost + openai_cost)).abs() < 1e-12);
     }
 
     #[test]

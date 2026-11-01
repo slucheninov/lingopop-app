@@ -66,7 +66,9 @@ impl ProviderFields {
                 && !base_url.to_ascii_lowercase().starts_with("https://"))
             .then_some("Base URL must start with https://"),
             referer: (fields.contains(&ProviderField::Referer)
-                && referer.chars().any(char::is_control))
+                && referer
+                    .chars()
+                    .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')))
             .then_some("Referer must not contain control characters"),
             region: (fields.contains(&ProviderField::Region)
                 && !region
@@ -136,6 +138,11 @@ mod tests {
         assert!(fields.validate(ProviderType::Claude).is_empty());
         fields.referer = "https://a/\n".into();
         assert_eq!(fields.validate(ProviderType::GoogleCloud).referer, None);
+        fields.referer = "https://a/\u{2028}b".into();
+        assert_eq!(
+            fields.validate(ProviderType::GoogleCloud).referer,
+            Some("Referer must not contain control characters")
+        );
     }
 
     #[test]

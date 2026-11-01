@@ -171,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_latest_is_none_on_404_and_network() {
         assert_eq!(
-            fetch_latest_version(&FakeTransport::json(404, "{}")).await,
+            fetch_latest_version(&FakeTransport::json(404, r#"{"tag_name":"v9.9.9"}"#)).await,
             None
         );
         let fake = FakeTransport::new(|_| Err(TranslationError::Network("offline".into())));

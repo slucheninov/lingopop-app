@@ -134,8 +134,15 @@ impl UiPrefs {
         }
     }
 
+    /// Writes the clamped font size, so a file written by this build always loads back unchanged.
     pub fn save(&self, path: &Path) -> Result<(), StoreError> {
-        atomic_write(path, &serde_json::to_vec_pretty(self)?, false)?;
+        let stored = Self {
+            popup_font_size: self
+                .popup_font_size
+                .clamp(*POPUP_FONT_RANGE.start(), *POPUP_FONT_RANGE.end()),
+            ..self.clone()
+        };
+        atomic_write(path, &serde_json::to_vec_pretty(&stored)?, false)?;
         Ok(())
     }
 }
@@ -246,6 +253,22 @@ mod tests {
         assert_eq!(
             wire,
             serde_json::json!({"popupFontSize":17,"appLanguage":"pl","latestVersion":"0.3.0","lastUpdateCheck":1_700_000_000.5})
+        );
+    }
+
+    #[test]
+    fn save_clamps_out_of_range_font_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ui.json");
+        let prefs = UiPrefs {
+            popup_font_size: 40,
+            ..UiPrefs::default()
+        };
+        prefs.save(&path).unwrap();
+        assert_eq!(prefs.popup_font_size, 40);
+        assert_eq!(
+            UiPrefs::load(&path, &clock()).unwrap().0.popup_font_size,
+            20
         );
     }
 
