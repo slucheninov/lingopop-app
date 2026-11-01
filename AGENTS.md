@@ -14,7 +14,7 @@ Each task appends its own modules here in the same commit.
 - `rust-toolchain.toml`, `rustfmt.toml` - toolchain (honoured only by CI locally, no `rustup` on the dev machine) and formatting
 - `.gitignore`, `.gitattributes` (`eol=lf`), `LICENSE`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 - `scripts/check-core-deps.sh` - guard: `lingopop-core` must not depend on OS or UI crates, nor on a platform TLS stack (`native-tls`, `openssl*`, `aws-lc-*`, `rustls-native-certs`, `rustls-platform-verifier`, `system-configuration*`) and must not have `tokio` as a direct normal dependency (dev-dependency or transitive via reqwest is fine); a second guard fails when `lingopop-orchestrator` has a direct normal dependency on `tauri*`, `windows*`, `winapi`, `objc*`, `cocoa`, `core-foundation*` or `core-graphics`
-- `.github/workflows/ci.yml` - CI (`core` matrix on Windows and macOS, aggregator job `build-and-test`; both legs run `actions/setup-python` 3.12 and the step `Check localization catalogs` = `python3 scripts/gen-localizations.py check` before `Test frontend`)
+- `.github/workflows/ci.yml` - CI (`core` matrix on Windows and macOS, aggregator job `build-and-test`; both legs run `actions/setup-python` 3.12 and the step `Check localization catalogs` = `python scripts/gen-localizations.py check` before `Test frontend`)
 - `.github/workflows/release.yml` - release workflow (triggers: push of a `v*` tag and `workflow_dispatch`; dispatch only uploads the workflow artifact). Job `build-windows-portable` on `windows-latest`: on tag runs the tag without `v` must equal the workspace `version` in `Cargo.toml` and `version` in `app/src-tauri/tauri.conf.json` (the two must always match); frontend `npm ci` / build / test, `cargo build -p lingopop-app --release --locked --features custom-protocol`, stages `target/release/lingopop.exe` as `LingoPop-<version>-windows-x64-portable.exe` plus `SHA256SUMS.txt` (lowercase SHA-256, two spaces, file name) and uploads them as an artifact. Job `publish-prerelease` (tag runs only, the only job with `contents: write`) runs `gh release create --prerelease` with notes from the matching CHANGELOG section. The exe is unsigned (SmartScreen warns) and needs the WebView2 runtime
 - `crates/lingopop-core/Cargo.toml`, `crates/lingopop-core/src/lib.rs` - the OS-agnostic core crate (`VERSION`)
 - `crates/lingopop-core/src/operation.rs` - `AIOperation` (frozen raw values, English names)
@@ -184,7 +184,7 @@ cargo test -p lingopop-core --test mac_fixtures -- --ignored write_rust_outputs_
 
 ### Localization catalogs
 
-`i18n/generated/{pl,uk,de}.json` are generated from the real macOS `Localizable.xcstrings`, not hand-edited. Run `python3 scripts/gen-localizations.py generate` on the Mac only when the mac catalog changes (it also rewrites `i18n/SOURCE.txt`), commit the output, and add or remove mac-only keys in `i18n/exclusions.txt`. Windows-only texts go to `i18n/windows.json` with all three languages. CI runs `python3 scripts/gen-localizations.py check` on both legs (no mac repo needed).
+`i18n/generated/{pl,uk,de}.json` are generated from the real macOS `Localizable.xcstrings`, not hand-edited. Run `python3 scripts/gen-localizations.py generate` on the Mac only when the mac catalog changes (it also rewrites `i18n/SOURCE.txt`), commit the output, and add or remove mac-only keys in `i18n/exclusions.txt`. Windows-only texts go to `i18n/windows.json` with all three languages. CI runs `python scripts/gen-localizations.py check` on both legs (no mac repo needed).
 
 ## Rules
 
