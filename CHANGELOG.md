@@ -8,6 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ### Fixed
 
+- The administrator-app error now closes by itself after 6 s; Windows does not deliver clicks or Esc in an elevated window to LingoPop's hooks.
 - Replace now keeps the leading and trailing whitespace (line breaks) of the selection it overwrites; selecting a full line and replacing it no longer joins it with the next line.
 - No Alt menu access-key tips (Notepad F E V ...) after a hotkey that contains Alt or Win: the hotkey now taps an unassigned key so the physical Alt release is not a lone Alt press.
 

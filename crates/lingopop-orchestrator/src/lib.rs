@@ -20,7 +20,7 @@ pub use messages::{
     gate_message, max_input, missing_key, no_text_found, nothing_selected, platform_message,
     screen_gate_message, selection_too_small, translation_error_view,
 };
-pub use orchestrator::{ConfigSource, Deps, Orchestrator, Persist};
+pub use orchestrator::{ConfigSource, Deps, Orchestrator, Persist, INPUT_BLOCKED_AUTO_CLOSE};
 pub use placement::popup_origin;
 pub use popup::{PopupView, INITIAL_POPUP_SIZE, MAX_LOGICAL_SIDE};
 pub use providers::{ocr_translate_providers, retry_providers, vision_providers};
