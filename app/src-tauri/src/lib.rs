@@ -12,6 +12,7 @@ pub mod provider_cmds;
 pub mod settings_cmds;
 pub mod state;
 pub mod tray;
+pub mod usage_cmds;
 pub mod windows;
 
 use std::error::Error;
@@ -265,6 +266,8 @@ pub fn run() {
             provider_cmds::provider_save,
             provider_cmds::provider_clear_key,
             hotkeys::hotkeys_suspend,
+            usage_cmds::usage_get,
+            usage_cmds::usage_reset,
             commands::app_relaunch
         ])
         .setup(move |app| setup(app, &data_dir))

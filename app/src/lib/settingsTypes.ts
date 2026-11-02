@@ -7,6 +7,32 @@ export type Modifier = 'ctrl' | 'alt' | 'shift' | 'win';
 export type HotkeyStatus = 'registered' | 'conflict' | 'invalid' | 'none';
 export type TabId = 'main' | 'providers' | 'shortcuts' | 'usage' | 'magic' | 'about';
 
+export type UsagePeriod = 'day' | 'days7' | 'days30';
+export interface UsageTotals { inputTokens: number; outputTokens: number; calls: number; cost: number | null }
+export interface UsageBucket { startUnix: number; label: string; byProvider: Record<string, [number, number]> }
+export interface UsageRow {
+  provider: Provider;
+  name: string;
+  colour: 'red' | 'green' | 'blue' | 'purple';
+  inputLabel: string;
+  outputLabel: string;
+  calls: number;
+  costLabel: string;
+}
+export interface UsageView {
+  period: UsagePeriod;
+  totals: UsageTotals;
+  costLabel: string;
+  tokensLabel: string;
+  inOutLabel: string;
+  callsLabel: string;
+  periodLabel: string;
+  chartTitle: string;
+  buckets: UsageBucket[];
+  rows: UsageRow[];
+  unavailable: boolean;
+}
+
 /** Core `Hotkey` as it travels in `SettingsPatch::Hotkey`: W3C `KeyboardEvent.code` + modifiers. */
 export interface Hotkey { key: string; modifiers: Modifier[] }
 export interface HotkeyView { key: string; modifiers: Modifier[]; display: string }

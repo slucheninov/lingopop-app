@@ -185,6 +185,10 @@ impl ShellStores {
             .map(|s| s.records().to_vec())
             .unwrap_or_default()
     }
+    /// False when `usage.json` could not be opened. Callers must not create the file.
+    pub fn usage_available(&self) -> bool {
+        lock(&self.usage).is_some()
+    }
     fn mutate_history(&self, f: impl FnOnce(&mut HistoryStore) -> Result<(), StoreError>) {
         let hook = {
             let mut guard = lock(&self.history);
