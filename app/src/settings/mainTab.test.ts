@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { invoke } from '@tauri-apps/api/core';
 import Settings from './Settings.svelte';
+import { tick } from 'svelte';
 import { setLanguage } from '../lib/i18n';
 import { baseView, listeners, mockIpc } from './testSupport';
 
@@ -198,7 +199,11 @@ test('stale_changed_event_after_the_final_response_does_not_win', async () => {
   await fireEvent.input(slider, { target: { value: '18' } });
   persisted = { ...baseView, popupFontSize: 18 };
   resolvers[0](persisted);
-  await waitFor(() => expect(screen.getByText('18 pt')).toBeTruthy());
+  // Barrier: "18 pt" is already shown optimistically, so wait until the response and its
+  // continuations have fully settled before delivering the stale events.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await tick();
+  expect(screen.getByText('18 pt')).toBeTruthy();
   const before = reads();
   // An event emitted by an EARLIER commit (font 13) is delivered after the final response: payload ignored.
   listeners.get('settings://changed')!({ payload: { ...baseView, popupFontSize: 13 } });
