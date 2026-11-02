@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { t } from '../lib/i18n';
   import { checkForUpdates, openUrl, PRIVACY_URL, RELEASES_PAGE_URL } from '../lib/settingsIpc';
   import type { SettingsPatch, SettingsView, UiPatch } from '../lib/settingsTypes';
@@ -12,6 +12,11 @@
   let disposed = false;
   // The view only carries a version newer than this build; a lookup made here shows at once.
   let latest = $derived(found ?? view.latestVersion);
+  // A fresh view (the check itself and the background loop both signal one) is as new as any manual result, so it wins.
+  $effect(() => {
+    void view.latestVersion;
+    untrack(() => { found = null; });
+  });
 
   onMount(() => () => { disposed = true; });
 

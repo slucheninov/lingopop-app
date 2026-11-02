@@ -2,9 +2,9 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { setLanguage } from '../lib/i18n';
-import { countScalars, truncateScalars } from '../lib/scalars';
+import { countScalars, sanitizeMagicPrompt, truncateScalars } from '../lib/scalars';
 import Settings from './Settings.svelte';
-import { baseView, mockIpc } from './testSupport';
+import { baseView, listeners, mockIpc } from './testSupport';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
@@ -33,6 +33,36 @@ test('scalar_parity_table', () => {
   expect(truncateScalars('a😀b', 3)).toBe('a😀b');
   expect(truncateScalars('abc', 0)).toBe('');
   expect(truncateScalars('😀'.repeat(5), 4)).toBe('😀'.repeat(4));
+});
+
+test('sanitize_magic_prompt_parity_table', () => {
+  // Expected values follow core `sanitize_magic_prompt`: trim Unicode White_Space, drop ASCII controls except \n \t, cut to 2000 scalars.
+  const x1999 = 'x'.repeat(1999);
+  const cases: [string, string][] = [
+    ['  hi  ', 'hi'],
+    ['a\tb\nc', 'a\tb\nc'],
+    ['\n\ta\n\t', 'a'],
+    ['a\u0001b\u0000c\rd\u001fe', 'abcde'],
+    ['a\u007fb', 'a\u007fb'],
+    ['a\u0085b', 'a\u0085b'],
+    ['\u0085x\u0085', 'x'],
+    ['\u00a0x\u3000\u2028', 'x'],
+    ['\ufeffx', '\ufeffx'],
+    ['\u200bx', '\u200bx'],
+    [' \u0001x ', 'x'],
+    ['é — Привіт', 'é — Привіт'],
+    ['\u0001' + x1999 + 'Y', x1999 + 'Y'],
+    ['😀'.repeat(2001), '😀'.repeat(2000)],
+    [`${'x'.repeat(1999)}😀z`, `${x1999}😀`],
+  ];
+  for (const [input, want] of cases) expect(sanitizeMagicPrompt(input)).toBe(want);
+});
+
+test('live_input_drops_controls_before_cutting', async () => {
+  const area = await openMagic();
+  await fireEvent.input(area, { target: { value: `\u0001${'x'.repeat(1999)}Y` } });
+  expect(area.value).toBe(`${'x'.repeat(1999)}Y`);
+  expect(screen.getByText(/ \/ 2000$/).textContent).toBe('2000 / 2000');
 });
 
 test('counter_red_at_1900_and_truncates_at_2000', async () => {
@@ -84,10 +114,10 @@ test('save_disabled_until_changed_then_sends_patch', async () => {
   await waitFor(() => expect(area.value).toBe('saved'));
   const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
   expect(save.disabled).toBe(true);
-  await fireEvent.input(area, { target: { value: 'edited\u0001' } });
+  await fireEvent.input(area, { target: { value: 'edited  ' } });
   expect(save.disabled).toBe(false);
   await fireEvent.click(save);
-  expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'magicPrompt', value: 'edited\u0001' } });
+  expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'magicPrompt', value: 'edited  ' } });
   // The draft becomes the sanitized saved value and Save is disabled again.
   await waitFor(() => expect(area.value).toBe('edited'));
   expect(save.disabled).toBe(true);
@@ -150,4 +180,73 @@ test('check_for_updates_rejection_is_silent', async () => {
   await waitFor(() => expect((screen.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled).toBe(false));
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.queryByText(/boom/)).toBeNull();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
+const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+test('superseded_save_response_does_not_restore_the_old_prompt', async () => {
+  const update = deferred<unknown>();
+  const reread = deferred<unknown>();
+  let reads = 0;
+  const area = await openMagic({
+    settings_get: () => (reads++ === 0 ? { ...baseView, magicPrompt: 'old' } : reread.promise),
+    settings_update: () => update.promise,
+  });
+  await waitFor(() => expect(area.value).toBe('old'));
+  await fireEvent.input(area, { target: { value: 'new' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  // A change signal queues a read behind the save, so the save's own response is discarded.
+  listeners.get('settings://changed')!({ payload: null });
+  update.resolve({ ...baseView, magicPrompt: 'new' });
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true));
+  expect(area.value).toBe('new');
+  reread.resolve({ ...baseView, magicPrompt: 'new' });
+  await waitFor(() => expect(calls('settings_get').length).toBe(2));
+  await flush();
+  expect(area.value).toBe('new');
+  expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test('edits_typed_during_a_save_are_kept', async () => {
+  const update = deferred<unknown>();
+  const area = await openMagic({ settings_get: { ...baseView, magicPrompt: 'old' }, settings_update: () => update.promise });
+  await waitFor(() => expect(area.value).toBe('old'));
+  await fireEvent.input(area, { target: { value: 'a' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.input(area, { target: { value: 'ab' } });
+  update.resolve({ ...baseView, magicPrompt: 'a' });
+  await flush();
+  expect(area.value).toBe('ab');
+  expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+test('a_changed_view_updates_an_unedited_draft_only', async () => {
+  let current = 'one';
+  const area = await openMagic({ settings_get: () => ({ ...baseView, magicPrompt: current }) });
+  await waitFor(() => expect(area.value).toBe('one'));
+  current = 'two';
+  listeners.get('settings://changed')!({ payload: null });
+  await waitFor(() => expect(area.value).toBe('two'));
+  await fireEvent.input(area, { target: { value: 'mine' } });
+  current = 'three';
+  listeners.get('settings://changed')!({ payload: null });
+  await flush();
+  await waitFor(() => expect(calls('settings_get').length).toBeGreaterThan(2));
+  expect(area.value).toBe('mine');
+});
+
+test('background_update_replaces_an_older_manual_result', async () => {
+  let latest: string | null = null;
+  await openAbout({ settings_get: () => ({ ...baseView, latestVersion: latest }), updates_check: '9.9.9' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+  expect(await screen.findByText('Version 9.9.9 available')).toBeTruthy();
+  latest = '9.9.10';
+  listeners.get('settings://changed')!({ payload: null });
+  expect(await screen.findByText('Version 9.9.10 available')).toBeTruthy();
+  expect(screen.queryByText('Version 9.9.9 available')).toBeNull();
 });

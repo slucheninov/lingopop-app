@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { t } from '../lib/i18n';
-  import { countScalars, truncateScalars } from '../lib/scalars';
+  import { countScalars, dropControlsAndTruncate, sanitizeMagicPrompt } from '../lib/scalars';
   import type { SettingsPatch, SettingsView, UiPatch } from '../lib/settingsTypes';
 
   // Port of MagicSettingsTab.swift. The frame passes the Ui patch callback to every tab; Magic has no UI preference.
@@ -10,7 +10,9 @@
   const LIMIT = 2000;
   const WARN_AT = 1900;
 
-  // The draft starts from the saved prompt (Mac: onAppear); later saves adopt the saved value explicitly.
+  // `saved` is the last committed prompt we know of (a saved value, or what the view last reported); the draft starts
+  // from it (Mac: onAppear) and follows it while the user has no unsaved edit.
+  let saved = $state(untrack(() => view.magicPrompt));
   let draft = $state(untrack(() => view.magicPrompt));
   let confirmReset = $state(false);
   let cancelButton = $state<HTMLButtonElement | null>(null);
@@ -19,18 +21,34 @@
   $effect(() => {
     if (confirmReset) cancelButton?.focus();
   });
+  // A view is authoritative whenever it changes (a signal read, a later response): an unedited draft follows it.
+  $effect(() => {
+    const next = view.magicPrompt;
+    untrack(() => {
+      if (draft === saved) draft = next;
+      saved = next;
+    });
+  });
 
   function onInput(event: Event) {
     const area = event.currentTarget as HTMLTextAreaElement;
-    const next = truncateScalars(area.value, LIMIT);
+    // Mac cuts to 2000 scalars live and sanitizes on Save; controls are dropped first so none can use up the limit.
+    const next = dropControlsAndTruncate(area.value, LIMIT);
     draft = next;
     // The draft may equal its previous value (typing past the limit), so write the cut text back to the field.
     if (area.value !== next) area.value = next;
   }
 
-  /** The draft becomes the sanitized value the shell saved. A refused save keeps the draft (the frame shows the error). */
+  /**
+   * A successful save commits `sanitizeMagicPrompt(value)` (the shell applies the same rule). The draft adopts it unless the
+   * user kept typing meanwhile; the answer is not read from `view`, which may still hold an older commit when a queued read
+   * superseded this response. A refused save keeps the draft (the frame shows the error).
+   */
   async function save(value: string) {
-    if (await onPatch({ field: 'magicPrompt', value })) draft = view.magicPrompt;
+    if (!(await onPatch({ field: 'magicPrompt', value }))) return;
+    const committed = sanitizeMagicPrompt(value);
+    if (draft === value) draft = committed;
+    saved = committed;
   }
 
   function reset() {
@@ -47,7 +65,7 @@
     <span class="count" class:warn={count >= WARN_AT}>{t('%lld / 2000', [count])}</span>
     <span class="spacer"></span>
     <button type="button" class="link" onclick={() => { confirmReset = true; }}>{t('Reset to default')}</button>
-    <button type="button" class="primary" disabled={draft === view.magicPrompt} onclick={() => { void save(draft); }}>{t('Save')}</button>
+    <button type="button" class="primary" disabled={draft === saved} onclick={() => { void save(draft); }}>{t('Save')}</button>
   </div>
   {#if confirmReset}
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="magic-reset-title">
