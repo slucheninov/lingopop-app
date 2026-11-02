@@ -33,5 +33,6 @@
 <style>
   header { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   select { max-width:100%; }
+  .text { font-size:var(--result-font-size, 13px); }
   .fallback { font-size:11px; color:#a64b08; background:#fff0dc; border-radius:9px; padding:2px 7px; }
 </style>

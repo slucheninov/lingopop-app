@@ -123,5 +123,20 @@
     "pl": "Link jest niedozwolony.",
     "uk": "Посилання не дозволено.",
     "de": "Link nicht erlaubt."
+  },
+  "Add language pair": {
+    "pl": "Dodaj parę języków",
+    "uk": "Додати пару мов",
+    "de": "Sprachpaar hinzufügen"
+  },
+  "Detected language": {
+    "pl": "Wykryty język",
+    "uk": "Визначена мова",
+    "de": "Erkannte Sprache"
+  },
+  "Remove %@": {
+    "pl": "Usuń: %@",
+    "uk": "Видалити: %@",
+    "de": "Entfernen: %@"
   }
 }

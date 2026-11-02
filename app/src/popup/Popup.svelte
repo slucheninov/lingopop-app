@@ -2,16 +2,19 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { ready, resized, sendAction } from '../lib/ipc';
-  import { panelWidth, rowAvailable, viewKey } from '../lib/actionRow';
+  import { panelWidth, rowAvailable, viewKey, measureText, REFERENCE_FONT_SIZE } from '../lib/actionRow';
+  import { bootstrap } from '../lib/bootstrap';
   import { createResizeReporter } from '../lib/resizeReporter';
   import { icons } from '../lib/icons';
   import { t } from '../lib/i18n';
   import type { PopupModel } from '../lib/types';
+  import type { UiChanged } from '../lib/settingsTypes';
   import LoadingView from './LoadingView.svelte';
   import ResultView from './ResultView.svelte';
   import OcrView from './OcrView.svelte';
   import ErrorView from './ErrorView.svelte';
   let model = $state<PopupModel | null>(null);
+  let fontSize = $state(REFERENCE_FONT_SIZE);
   let content = $state<HTMLElement>();
   let disposed = false;
   const reporter = createResizeReporter(resized);
@@ -26,24 +29,32 @@
       void reporter.report(Math.ceil(rect.width), Math.ceil(rect.height));
     });
   }
-  let width = $derived(model ? panelWidth(model) : 320);
+  let width = $derived(model ? panelWidth(model, measureText, fontSize) : 320);
   $effect(() => { void model; report(); });
   onMount(() => {
     const observer = new ResizeObserver(() => report());
     if (content) observer.observe(content);
+    // popup://model is registered LAST: `ready` re-emits a model that arrived before the listener existed.
+    const fontRegistration = listen<UiChanged>('ui://changed', event => { if (!disposed) fontSize = event.payload.popupFontSize; });
     const registration = listen<PopupModel>('popup://model', event => { if (!disposed) model = event.payload; });
-    // Register first: popup_ready re-emits a model that may have arrived before mount.
-    void registration.then(() => { if (!disposed) void ready().catch(() => {}); }).catch(() => {});
+    // Register both listeners and install the language first (a failed bootstrap stays English), then popup_ready.
+    const started = Promise.all([fontRegistration, registration, bootstrap()]);
+    void started.then(([, , boot]) => {
+      if (disposed) return;
+      fontSize = boot.popupFontSize;
+      void ready().catch(() => {});
+    }).catch(() => {});
     return () => {
       disposed = true;
       if (frame) cancelAnimationFrame(frame);
       observer.disconnect();
       void registration.then(unlisten => unlisten()).catch(() => {});
+      void fontRegistration.then(unlisten => unlisten()).catch(() => {});
     };
   });
 </script>
 <svelte:window onkeydown={event => { if (event.key === 'Escape') sendAction({type:'close'}); }} />
-<main bind:this={content} style:width={`${width}px`}>
+<main bind:this={content} style:width={`${width}px`} style:--result-font-size={`${fontSize}px`}>
   {#if model}
     <button class="close" type="button" title={t('Close')} aria-label={t('Close')} onclick={() => sendAction({type:'close'})}>{@html icons.close}</button>
     {#key viewKey(model)}

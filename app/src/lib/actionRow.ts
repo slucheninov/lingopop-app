@@ -22,18 +22,23 @@ export function rowWidth(titles: readonly string[], retry: boolean, mode: RowMod
   if (retry) widths.push((isIconOnly(mode, titles.length) ? 30 : Math.ceil(measure(retryTitle)) + 38) + 14);
   return widths.length ? widths.reduce((a,b) => a+b, 0) + 8 * widths.length + 28 : 0;
 }
+export const REFERENCE_FONT_SIZE = 13;
 let sharedContext: CanvasRenderingContext2D | null | undefined;
 export function measureText(text: string): number {
   if (sharedContext === undefined) {
     sharedContext = document.createElement('canvas').getContext('2d');
-    if (sharedContext) sharedContext.font = '13px system-ui';
+    // The action row keeps the 13px body font (only the result / OCR text follows the font-size setting, like mac).
+    if (sharedContext) sharedContext.font = `${REFERENCE_FONT_SIZE}px system-ui`;
   }
   return sharedContext ? sharedContext.measureText(text).width : Array.from(text).length * 7;
 }
-/** Text-driven width (mac `PopupLayout.dynamicWidth`): 320 floor, 200 + scalar count, 700 cap. */
-export function popupWidth(model: { phase: string; text?: string }): number {
+/**
+ * Text-driven width (mac `PopupLayout.dynamicWidth`): 320 floor, 200 + scalar count scaled by
+ * `fontSize / 13` (the per-character term only), 700 cap.
+ */
+export function popupWidth(model: { phase: string; text?: string }, fontSize: number = REFERENCE_FONT_SIZE): number {
   return model.phase === 'result' || model.phase === 'ocr'
-    ? Math.min(700, Math.max(320, 200 + Array.from(model.text ?? '').length)) : 320;
+    ? Math.min(700, Math.max(320, 200 + Array.from(model.text ?? '').length * (fontSize / REFERENCE_FONT_SIZE))) : 320;
 }
 /** Popup `main` border on each side. Total width = row width (which already holds the 2 x 14 padding) + 2 x border. */
 export const BORDER_WIDTH = 1;
@@ -55,8 +60,8 @@ export function rowSpec(model: PopupModel): { titles: string[]; retry: boolean; 
  * Port of mac `PopupView.panelWidth`: min(700, max(text width, width of the row in the PREFERRED
  * mode)), so the row is widened for first and only falls back inside the bar. Plus the border.
  */
-export function panelWidth(model: PopupModel, measure: (text: string) => number = measureText): number {
-  const base = popupWidth(model);
+export function panelWidth(model: PopupModel, measure: (text: string) => number = measureText, fontSize: number = REFERENCE_FONT_SIZE): number {
+  const base = popupWidth(model, fontSize);
   const spec = rowSpec(model);
   if (!spec || (model.phase !== 'result' && model.phase !== 'ocr')) return base;
   const row = rowWidth(spec.titles, spec.retry, model.actionRow.preferred, measure, spec.chevrons);

@@ -7,6 +7,7 @@ import ActionRow from './ActionRow.svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { t } from '../lib/i18n';
 import { isIconOnly, pickMode, popupWidth, rowWidth, panelWidth, viewKey } from '../lib/actionRow';
+import { setLanguage } from '../lib/i18n';
 import { createResizeReporter } from '../lib/resizeReporter';
 import LoadingView from './LoadingView.svelte';
 import type { ResultModel } from '../lib/types';
@@ -220,4 +221,46 @@ test('popup_sends_each_distinct_size_once', async () => {
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('popup_resized',{width:350,height:200}));
   await new Promise(r => setTimeout(r, 20));
   expect(vi.mocked(invoke).mock.calls.filter(c => c[0]==='popup_resized')).toHaveLength(1);
+});
+const uiChangedHandler = () => vi.mocked(listen).mock.calls.find(call => call[0] === 'ui://changed')![1];
+test('popup_applies_font_size_from_ui_changed', async () => {
+  const { container } = render(Popup);
+  const main = container.querySelector('main')!;
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('popup_ready'));
+  expect(main.getAttribute('style')).toContain('--result-font-size: 13px');
+  const longText = { ...result, text: 'x'.repeat(100) };
+  vi.mocked(listen).mock.calls.at(-1)![1]({ event: 'popup://model', id: 1, payload: longText });
+  await waitFor(() => expect(main.style.width).toBe('320px'));   // 200 + 100 * 13/13 = 300, floor 320
+  uiChangedHandler()({ event: 'ui://changed', id: 2, payload: { popupFontSize: 26, appLanguage: 'system' } });
+  await waitFor(() => expect(main.getAttribute('style')).toContain('--result-font-size: 26px'));
+  expect(main.style.width).toBe(`${panelWidth(longText, undefined, 26)}px`);   // 200 + 100 * 2 = 400
+  expect(main.style.width).toBe('400px');
+});
+test('popup_bootstrap_failure_falls_back_to_english', async () => {
+  vi.mocked(invoke).mockImplementation(async (command: string) => { if (command === 'ui_bootstrap') throw new Error('boom'); return undefined; });
+  const { container } = render(Popup);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('popup_ready'));
+  expect(t('Close')).toBe('Close');
+  expect(container.querySelector('main')!.getAttribute('style')).toContain('--result-font-size: 13px');
+});
+test('popup_bootstrap_installs_language_and_font_before_ready', async () => {
+  vi.mocked(invoke).mockImplementation(async (command: string) => command === 'ui_bootstrap'
+    ? { language: 'pl', launchedLanguage: 'pl', catalog: { Close: 'Zamknij' }, version: '0', popupFontSize: 17, initialTab: null } : undefined);
+  const { container } = render(Popup);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('popup_ready'));
+  expect(t('Close')).toBe('Zamknij');
+  expect(container.querySelector('main')!.getAttribute('style')).toContain('--result-font-size: 17px');
+  setLanguage('en', {});
+});
+test('panelWidth_scales_text_term_with_font_size', () => {
+  const at = (text: string, size?: number) => panelWidth({ ...result, text, actionRow: { preferred: 'compact', candidates: ['compact'] } }, m6, size);
+  // Text term only: 200 + scalars * (fontSize / 13), the 320..700 clamp unchanged.
+  expect(at('x'.repeat(150), 13)).toBe(350);
+  expect(at('x'.repeat(150), 26)).toBe(500);
+  expect(at('x'.repeat(150))).toBe(350);
+  expect(at('x'.repeat(300), 26)).toBe(700);
+  // Row term unchanged by the font size.
+  const wide = { ...result, text: 'x', actionRow: { preferred: 'full' as const, candidates: ['full' as const] } };
+  expect(panelWidth(wide, m6, 11)).toBe(panelWidth(wide, m6, 20));
+  expect(popupWidth({ phase: 'result', text: 'x'.repeat(100) }, 26)).toBe(400);
 });

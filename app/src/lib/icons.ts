@@ -8,5 +8,14 @@ export const icons = {
   retry: svg('<path d="M20 10a8 8 0 1 0-2 8M20 4v6h-6"/>'),
   translate: svg('<path d="M3 5h12M9 3v2m-4 4 8 8M13 5c0 5-4 10-9 12m10 4 5-12 5 12m-8-4h6"/>'),
   chevron: svg('<path d="m6 9 6 6 6-6"/>'),
+  // Settings tab icons.
+  sliders: svg('<path d="M4 6h10m4 0h2M4 12h2m4 0h10M4 18h12m4 0h2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
+  cpu: svg('<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 3v3m6-3v3M9 18v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3"/>'),
+  command: svg('<path d="M9 9V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V9Z"/>'),
+  chart: svg('<path d="M4 20V10m6 10V4m6 16v-8m6 8H2"/>'),
+  sparkles: svg('<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Zm7 12 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/>'),
+  info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>'),
+  plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  minus: svg('<path d="M5 12h14"/>'),
   close: svg('<path d="m6 6 12 12M6 18 18 6"/>'),
 };
