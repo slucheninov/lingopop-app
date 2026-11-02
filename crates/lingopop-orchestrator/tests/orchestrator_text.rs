@@ -170,6 +170,7 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
     });
     let platform = Platform {
         system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
+        login_item: Arc::new(lingopop_platform::fake::FakeLoginItem::new()),
         popup_window: Arc::new(FakePopupWindow::default()),
         dismiss: Arc::new(FakeDismissWatcher::default()),
         clipboard: clipboard.clone(),

@@ -1,7 +1,8 @@
 //! Windows smoke tests against the real clipboard, keyboard, windows and OCR. The tests that need
 //! an interactive desktop are `#[ignore]` and run in the dedicated CI step (or by hand on a Windows
-//! box); the OCR tests (no language pack = a printed skip), the DPAPI tests and the `native()` bundle
-//! test need no desktop and run by default.
+//! box); the OCR tests (no language pack = a printed skip), the DPAPI tests, the login-item
+//! registry tests (HKCU `Software\LingoPopTest\` only) and the `native()` bundle test need no
+//! desktop and run by default.
 //! The clipboard is global: every test serializes on `CLIP_LOCK`.
 #![cfg(windows)]
 
@@ -1026,4 +1027,137 @@ unsafe extern "system" fn escape_probe_proc(hwnd: HWND, msg: u32, w: WPARAM, l: 
 #[ignore = "needs interactive desktop"]
 fn ui_languages_non_empty_on_desktop() {
     assert!(!lingopop_platform::native().system.ui_languages().is_empty());
+}
+
+fn test_subkey(name: &str) -> String {
+    let subkey = format!(r"Software\LingoPopTest\{name}-{}", std::process::id());
+    assert!(
+        subkey.starts_with(r"Software\LingoPopTest\"),
+        "refusing to touch a key outside the test hive"
+    );
+    assert!(
+        !subkey.contains("CurrentVersion"),
+        "refusing to touch the real Run key"
+    );
+    subkey
+}
+
+/// Deletes only `HKCU\Software\LingoPopTest\...`. Never the real Run key.
+struct DeleteTestKey(String);
+
+impl Drop for DeleteTestKey {
+    fn drop(&mut self) {
+        if !self.0.starts_with(r"Software\LingoPopTest\") || self.0.contains("CurrentVersion") {
+            return;
+        }
+        let name = wide(&self.0);
+        // SAFETY: `name` is NUL-terminated and names only the per-test subkey.
+        let _ = unsafe {
+            windows::Win32::System::Registry::RegDeleteKeyW(
+                windows::Win32::System::Registry::HKEY_CURRENT_USER,
+                PCWSTR(name.as_ptr()),
+            )
+        };
+    }
+}
+
+fn query_sz(subkey: &str, value: &str) -> Result<String, u32> {
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE,
+    };
+    let sub = wide(subkey);
+    let mut key = HKEY::default();
+    // SAFETY: `sub` is NUL-terminated and outlives the call; a null key is not closed.
+    let status = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(sub.as_ptr()),
+            Some(0),
+            KEY_QUERY_VALUE,
+            &mut key,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(status.0);
+    }
+    let read = (|| {
+        let name = wide(value);
+        let mut size = 0u32;
+        // SAFETY: `name` is NUL-terminated; a null data pointer requests the byte count.
+        let status = unsafe {
+            RegQueryValueExW(
+                key,
+                PCWSTR(name.as_ptr()),
+                None,
+                None,
+                None,
+                Some(&mut size),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(status.0);
+        }
+        let mut buf = vec![0u8; size as usize];
+        let mut got = size;
+        // SAFETY: `buf` has `size` bytes and lives for the call.
+        let status = unsafe {
+            RegQueryValueExW(
+                key,
+                PCWSTR(name.as_ptr()),
+                None,
+                None,
+                Some(buf.as_mut_ptr()),
+                Some(&mut got),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(status.0);
+        }
+        buf.truncate(got as usize);
+        let units: Vec<u16> = buf
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .take_while(|unit| *unit != 0)
+            .collect();
+        Ok(String::from_utf16_lossy(&units))
+    })();
+    // SAFETY: `key` was opened above and is closed exactly once.
+    let _ = unsafe { RegCloseKey(key) };
+    read
+}
+
+#[test]
+fn login_item_sets_quoted_value_and_removes_it() {
+    use lingopop_platform::{run_value, LoginItem, WindowsLoginItem};
+    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    let subkey = test_subkey("login_item_sets_quoted_value_and_removes_it");
+    let _cleanup = DeleteTestKey(subkey.clone());
+    let item = WindowsLoginItem::with_subkey(&subkey);
+    let exe = std::path::PathBuf::from(r"C:\Program Files\LingoPop\lingopop.exe");
+    item.set_enabled(true, &exe).expect("enable");
+    assert_eq!(
+        query_sz(&subkey, "LingoPop").expect("query"),
+        run_value(&exe)
+    );
+    item.set_enabled(false, &exe).expect("disable");
+    assert_eq!(
+        query_sz(&subkey, "LingoPop").expect_err("removed"),
+        ERROR_FILE_NOT_FOUND.0
+    );
+}
+
+#[test]
+fn login_item_disable_when_absent_is_ok() {
+    use lingopop_platform::{LoginItem, WindowsLoginItem};
+    use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+    let subkey = test_subkey("login_item_disable_when_absent_is_ok");
+    let _cleanup = DeleteTestKey(subkey.clone());
+    let item = WindowsLoginItem::with_subkey(&subkey);
+    item.set_enabled(false, std::path::Path::new("unused"))
+        .expect("absent value is success");
+    assert_eq!(
+        query_sz(&subkey, "LingoPop").expect_err("still absent"),
+        ERROR_FILE_NOT_FOUND.0
+    );
 }

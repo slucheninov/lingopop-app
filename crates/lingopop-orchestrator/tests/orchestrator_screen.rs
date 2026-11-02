@@ -149,6 +149,7 @@ fn rig_gated(
     let dismiss = Arc::new(FakeDismissWatcher::default());
     let platform = Platform {
         system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
+        login_item: Arc::new(lingopop_platform::fake::FakeLoginItem::new()),
         popup_window: Arc::new(FakePopupWindow::default()),
         dismiss: dismiss.clone(),
         clipboard: clip.clone(),

@@ -27,6 +27,7 @@ fn platform() -> lingopop_platform::Platform {
     let clipboard = FakeClipboard::new(sleeper.clone());
     Platform {
         system: Arc::new(FakeSystem::new(vec!["uk-UA".into()])),
+        login_item: Arc::new(FakeLoginItem::new()),
         popup_window: Arc::new(FakePopupWindow::default()),
         dismiss: Arc::new(FakeDismissWatcher::default()),
         keys: FakeKeys::new(clipboard.clone(), sleeper.clone()),

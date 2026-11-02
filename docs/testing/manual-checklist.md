@@ -41,3 +41,7 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Opening Settings to About delivers the initial tab after bootstrap; reopening an already live settings window switches tabs via `settings://tab`.
 - [ ] Allowed release/documentation links launch the default browser; foreign URLs/traversal are refused without logging the URL.
 - [ ] With Windows UI language Ukrainian/German, system language resolves accordingly; explicit app language overrides it and changes require relaunch.
+
+### Launch at login
+
+- [ ] Enable Launch at login, sign out and in: LingoPop starts; disable: it does not; move the exe and start it: the Run value is rewritten to the new path.

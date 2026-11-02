@@ -15,6 +15,7 @@ pub mod windows;
 
 use std::error::Error;
 use std::sync::Arc;
+use std::time::Duration;
 
 use lingopop_core::http::{HttpTimeouts, ReqwestTransport};
 use lingopop_core::paths::DataPaths;
@@ -27,6 +28,105 @@ use tauri::{App, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
 use crate::commands::ShellState;
 use crate::popup_shell::{ShellPopup, POPUP_LABEL};
+use crate::settings_cmds::SettingsHooks;
+
+/// Runs a login-item update off the caller. Production uses the Tauri blocking pool.
+trait LoginSpawn: Send + Sync {
+    fn spawn_login(&self, job: Box<dyn FnOnce() + Send>);
+}
+
+struct BlockingLogin;
+
+impl LoginSpawn for BlockingLogin {
+    fn spawn_login(&self, job: Box<dyn FnOnce() + Send>) {
+        drop(tauri::async_runtime::spawn_blocking(job));
+    }
+}
+
+/// Test executor: the registry write finishes before `launch_at_login` returns, so
+/// `FakeLoginItem::calls` is visible without a Tauri runtime.
+#[cfg(test)]
+struct InlineLogin;
+
+#[cfg(test)]
+impl LoginSpawn for InlineLogin {
+    fn spawn_login(&self, job: Box<dyn FnOnce() + Send>) {
+        job();
+    }
+}
+
+pub(crate) struct ShellHooks {
+    login: Arc<dyn lingopop_platform::LoginItem>,
+    spawn: Arc<dyn LoginSpawn>,
+    serial: Arc<std::sync::Mutex<()>>,
+}
+
+impl ShellHooks {
+    pub(crate) fn new(login: Arc<dyn lingopop_platform::LoginItem>) -> Self {
+        Self {
+            login,
+            spawn: Arc::new(BlockingLogin),
+            serial: Arc::new(std::sync::Mutex::new(())),
+        }
+    }
+
+    /// Same as [`Self::new`], but runs `set_enabled` on the calling thread.
+    #[cfg(test)]
+    pub(crate) fn synchronous(login: Arc<dyn lingopop_platform::LoginItem>) -> Self {
+        Self {
+            login,
+            spawn: Arc::new(InlineLogin),
+            serial: Arc::new(std::sync::Mutex::new(())),
+        }
+    }
+}
+
+impl SettingsHooks for ShellHooks {
+    fn launch_at_login(&self, enabled: bool) {
+        let login = Arc::clone(&self.login);
+        let serial = Arc::clone(&self.serial);
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(_) => {
+                log::warn!("login item update failed: current executable is unavailable");
+                return;
+            }
+        };
+        self.spawn.spawn_login(Box::new(move || {
+            let _guard = serial
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(error) = login.set_enabled(enabled, &exe) {
+                log::warn!("login item update failed: {error}");
+            }
+        }));
+    }
+
+    fn hotkeys(
+        &self,
+        _hotkeys: &std::collections::BTreeMap<
+            lingopop_core::operation::AIOperation,
+            lingopop_core::hotkey::Hotkey,
+        >,
+    ) {
+    }
+}
+
+/// Applies the loaded `launch_at_login` flag once, the way `setup` does at startup.
+pub(crate) fn apply_startup_login(hooks: &dyn SettingsHooks, enabled: bool) {
+    hooks.launch_at_login(enabled);
+}
+
+/// `--wait-for-pid <pid>` as its own argument. A missing or non-u32 value is `None`.
+pub fn parse_wait_pid(args: &[String]) -> Option<u32> {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--wait-for-pid" {
+            return args.next()?.parse().ok();
+        }
+    }
+    None
+}
 
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     let platform = lingopop_platform::native();
@@ -89,6 +189,8 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         };
         let _ = events.emit(event, ());
     }));
+    let hooks: Arc<dyn SettingsHooks> = Arc::new(ShellHooks::new(platform.login_item.clone()));
+    apply_startup_login(hooks.as_ref(), config.settings().launch_at_login);
     app.manage(ShellState {
         orchestrator: orchestrator.clone(),
         popup,
@@ -96,7 +198,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         stores,
         ui,
         platform,
-        hooks: Arc::new(settings_cmds::NoSettingsHooks),
+        hooks,
         settings_write: tokio::sync::Mutex::new(()),
         window_locks: [windows::SETTINGS_LABEL, windows::HISTORY_LABEL]
             .into_iter()
@@ -120,6 +222,15 @@ pub fn run() {
         eprintln!("cannot create the data directory: {e}");
     }
     logging::init(&data_dir);
+    if let Some(pid) = parse_wait_pid(&std::env::args().collect::<Vec<_>>()) {
+        let platform = lingopop_platform::native();
+        if !platform
+            .system
+            .wait_for_process_exit(pid, Duration::from_secs(10))
+        {
+            log::warn!("previous instance still running");
+        }
+    }
 
     let app = tauri::Builder::default()
         // Registered first; callbacks only schedule window creation.
@@ -134,7 +245,8 @@ pub fn run() {
             settings_cmds::settings_update,
             settings_cmds::ui_update,
             settings_cmds::ui_bootstrap,
-            settings_cmds::open_url
+            settings_cmds::open_url,
+            commands::app_relaunch
         ])
         .setup(move |app| setup(app, &data_dir))
         .build(tauri::generate_context!());
@@ -161,3 +273,5 @@ pub fn run() {
 
 #[cfg(test)]
 mod task4_tests;
+#[cfg(test)]
+mod task5_tests;

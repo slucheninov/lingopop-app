@@ -16,6 +16,7 @@ pub mod foreground;
 pub mod hotkey;
 pub mod inject;
 pub mod keys;
+pub mod login_item;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 mod macos;
@@ -31,13 +32,14 @@ mod windows;
 
 #[cfg(target_os = "macos")]
 pub use crate::macos::{
-    MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacMonitors, MacOcr,
-    MacPopupWindow,
+    MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLoginItem, MacMonitors,
+    MacOcr, MacPopupWindow,
 };
 #[cfg(windows)]
 pub use crate::windows::{
     set_dismiss_log, WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground,
-    WindowsKeys, WindowsMonitors, WindowsOcr, WindowsPopupWindow, WindowsProtector,
+    WindowsKeys, WindowsLoginItem, WindowsMonitors, WindowsOcr, WindowsPopupWindow,
+    WindowsProtector,
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
@@ -50,6 +52,7 @@ pub use hotkey::{to_chord, HotkeyEvent, HotkeyId, HotkeyService};
 pub use hotkey::{to_global_hotkey, GlobalHotkeyService};
 pub use inject::{replace_selection, ReplaceOptions, ReplaceOutcome};
 pub use keys::KeySynth;
+pub use login_item::{run_value, LoginItem};
 pub use monitors::{
     clamp_to_work_area, monitor_at, physical_size, validate_region, virtual_screen, MonitorInfo,
     Monitors, Point, Rect, Size,
