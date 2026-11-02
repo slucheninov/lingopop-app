@@ -225,6 +225,54 @@ test('edits_typed_during_a_save_are_kept', async () => {
   expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
 });
 
+test('clearing_the_text_during_a_save_is_kept', async () => {
+  const update = deferred<unknown>();
+  const reread = deferred<unknown>();
+  let reads = 0;
+  const area = await openMagic({
+    settings_get: () => (reads++ === 0 ? { ...baseView, magicPrompt: '' } : reread.promise),
+    settings_update: () => update.promise,
+  });
+  await fireEvent.input(area, { target: { value: 'new' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  listeners.get('settings://changed')!({ payload: null });
+  // The user clears the field again before the response arrives.
+  await fireEvent.input(area, { target: { value: '' } });
+  update.resolve({ ...baseView, magicPrompt: 'new' });
+  await flush();
+  expect(area.value).toBe('');
+  reread.resolve({ ...baseView, magicPrompt: 'new' });
+  await waitFor(() => expect(calls('settings_get').length).toBe(2));
+  await flush();
+  expect(area.value).toBe('');
+  expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+test('clearing_the_text_during_a_save_is_kept_when_the_response_is_the_view', async () => {
+  // No queued read: the save response itself becomes the view while the field was cleared.
+  const update = deferred<unknown>();
+  const area = await openMagic({ settings_get: { ...baseView, magicPrompt: '' }, settings_update: () => update.promise });
+  await fireEvent.input(area, { target: { value: 'new' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await fireEvent.input(area, { target: { value: '' } });
+  update.resolve({ ...baseView, magicPrompt: 'new' });
+  await flush();
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(area.value).toBe('');
+});
+
+test('reset_adopts_the_default_after_the_response', async () => {
+  const area = await openMagic({ settings_get: { ...baseView, magicPrompt: 'mine' }, settings_update: { ...baseView, magicPrompt: baseView.defaultMagicPrompt } });
+  await waitFor(() => expect(area.value).toBe('mine'));
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'magicPrompt', value: baseView.defaultMagicPrompt } }));
+  await flush();
+  expect(area.value).toBe(baseView.defaultMagicPrompt);
+  expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  // A later view change now moves the draft again (the reset was adopted, nothing is dirty).
+});
+
 test('a_changed_view_updates_an_unedited_draft_only', async () => {
   let current = 'one';
   const area = await openMagic({ settings_get: () => ({ ...baseView, magicPrompt: current }) });

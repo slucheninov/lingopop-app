@@ -11,9 +11,12 @@
   const WARN_AT = 1900;
 
   // `saved` is the last committed prompt we know of (a saved value, or what the view last reported); the draft starts
-  // from it (Mac: onAppear) and follows it while the user has no unsaved edit.
+  // from it (Mac: onAppear). Whether the user edited is tracked explicitly, never inferred by comparing strings: `revision`
+  // counts user edits (and Reset), `dirty` means "an edit the draft has not adopted a committed value for yet".
   let saved = $state(untrack(() => view.magicPrompt));
   let draft = $state(untrack(() => view.magicPrompt));
+  let dirty = false;
+  let revision = 0;
   let confirmReset = $state(false);
   let cancelButton = $state<HTMLButtonElement | null>(null);
   let count = $derived(countScalars(draft));
@@ -25,7 +28,7 @@
   $effect(() => {
     const next = view.magicPrompt;
     untrack(() => {
-      if (draft === saved) draft = next;
+      if (!dirty) draft = next;
       saved = next;
     });
   });
@@ -35,25 +38,34 @@
     // Mac cuts to 2000 scalars live and sanitizes on Save; controls are dropped first so none can use up the limit.
     const next = dropControlsAndTruncate(area.value, LIMIT);
     draft = next;
+    dirty = true;
+    revision++;
     // The draft may equal its previous value (typing past the limit), so write the cut text back to the field.
     if (area.value !== next) area.value = next;
   }
 
   /**
-   * A successful save commits `sanitizeMagicPrompt(value)` (the shell applies the same rule). The draft adopts it unless the
-   * user kept typing meanwhile; the answer is not read from `view`, which may still hold an older commit when a queued read
-   * superseded this response. A refused save keeps the draft (the frame shows the error).
+   * A successful save commits `sanitizeMagicPrompt(value)` (the shell applies the same rule). The draft adopts it only if
+   * the user made no edit since Save started (an explicit revision, so typing back to an earlier text still counts as an
+   * edit); the answer is not read from `view`, which may still hold an older commit when a queued read superseded this
+   * response. A refused save keeps the draft (the frame shows the error).
    */
   async function save(value: string) {
+    const started = revision;
     if (!(await onPatch({ field: 'magicPrompt', value }))) return;
     const committed = sanitizeMagicPrompt(value);
-    if (draft === value) draft = committed;
     saved = committed;
+    if (revision === started) {
+      draft = committed;
+      dirty = false;
+    }
   }
 
   function reset() {
     confirmReset = false;
     draft = view.defaultMagicPrompt;
+    dirty = true;
+    revision++;
     void save(draft);
   }
 </script>
