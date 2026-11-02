@@ -45,6 +45,9 @@ pub struct UsageView {
     pub unavailable: bool,
 }
 
+/// Windows-only catalog key.
+const USAGE_RESET_FAILED: &str = "Usage statistics couldn't be reset.";
+
 fn text(language: Language, key: &str) -> String {
     i18n::t(language, key, &[])
 }
@@ -169,8 +172,11 @@ pub async fn usage_get(state: State<'_, ShellState>, period: Period) -> Result<U
 
 #[tauri::command]
 pub async fn usage_reset(state: State<'_, ShellState>) -> Result<(), String> {
-    state.stores.reset_usage();
-    Ok(())
+    state.stores.reset_usage().map_err(|_| {
+        // Fixed text: the store error can carry a file path.
+        log::warn!("usage reset failed");
+        text(state.ui.language(), USAGE_RESET_FAILED)
+    })
 }
 
 #[cfg(test)]
@@ -332,7 +338,7 @@ mod tests {
         assert_eq!(view.cost_label, i18n::t(Language::Uk, "~$?", &[]));
         assert_eq!(view.calls_label, i18n::t(Language::Uk, "no activity", &[]));
         assert_ne!(view.calls_label, "no activity");
-        stores.reset_usage();
+        stores.reset_usage().unwrap();
         assert!(
             dir.path().join("usage.json").is_dir(),
             "reset must not replace a missing store with a file"

@@ -85,3 +85,29 @@ fn platform() -> Platform {
         sleeper,
     }
 }
+
+/// Queues jobs so a test can run them in any order.
+struct QueuedLogin(std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>>);
+impl crate::LoginSpawn for QueuedLogin {
+    fn spawn_login(&self, job: Box<dyn FnOnce() + Send>) {
+        self.0.lock().unwrap().push(job);
+    }
+}
+
+#[test]
+fn stale_login_item_job_is_skipped_when_it_runs_late() {
+    use crate::settings_cmds::SettingsHooks;
+    let item = Arc::new(FakeLoginItem::new());
+    let queue = Arc::new(QueuedLogin(std::sync::Mutex::new(Vec::new())));
+    let mut hooks = ShellHooks::synchronous(item.clone());
+    hooks.spawn = queue.clone();
+    hooks.launch_at_login(true);
+    hooks.launch_at_login(false);
+    let jobs: Vec<_> = queue.0.lock().unwrap().drain(..).collect();
+    // The newer disable runs first, then the stale enable must not recreate the value.
+    for job in jobs.into_iter().rev() {
+        job();
+    }
+    let exe = std::env::current_exe().expect("current exe");
+    assert_eq!(item.calls(), vec![(false, exe)]);
+}

@@ -153,5 +153,10 @@
     "de": "Nutzungsstatistiken konnten nicht gelesen werden.",
     "pl": "Nie udało się odczytać statystyk użycia.",
     "uk": "Не вдалося прочитати статистику використання."
+  },
+  "Usage statistics couldn't be reset.": {
+    "de": "Die Nutzungsstatistik konnte nicht zurückgesetzt werden.",
+    "pl": "Nie udało się zresetować statystyk użycia.",
+    "uk": "Не вдалося скинути статистику використання."
   }
 }

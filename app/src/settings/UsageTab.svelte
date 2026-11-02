@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { t } from '../lib/i18n';
+  import { renderError } from '../lib/ipcError';
   import { getUsage, resetUsage } from '../lib/settingsIpc';
   import type { SettingsPatch, SettingsView, UiPatch, UsagePeriod, UsageView } from '../lib/settingsTypes';
   import TokenChart from './TokenChart.svelte';
@@ -20,7 +21,9 @@
   let confirmReset = $state(false);
   let cancelButton = $state<HTMLButtonElement | null>(null);
   let resetButton = $state<HTMLButtonElement | null>(null);
+  let resetError = $state<string | null>(null);
   let disposed = false;
+  let loadGeneration = 0;
 
   async function closeConfirm() {
     confirmReset = false;
@@ -34,9 +37,10 @@
 
   async function load() {
     const requested = period;
+    const generation = ++loadGeneration;
     try {
       const next = await getUsage(requested);
-      if (!disposed && period === requested) usage = next;
+      if (!disposed && generation === loadGeneration && period === requested) usage = next;
     } catch {
       // A rejection is a catalog key. Keep the last view and do not log it.
     }
@@ -50,11 +54,16 @@
 
   async function remove() {
     confirmReset = false;
+    // Drop any response still in flight from before the reset.
+    loadGeneration += 1;
     try {
       await resetUsage();
-      if (!disposed) void load();
-    } catch {
+      if (disposed) return;
+      resetError = null;
+      void load();
+    } catch (error) {
       // A rejection is a catalog key. Keep the last view and do not log it.
+      if (!disposed) resetError = typeof error === 'string' ? error : "Usage statistics couldn't be reset.";
     }
   }
 
@@ -85,6 +94,9 @@
         <button type="button" class="danger" onclick={() => { void remove(); }}>{t('Delete')}</button>
       </div>
     </div>
+  {/if}
+  {#if resetError}
+    <p class="status" role="alert">{renderError(resetError)}</p>
   {/if}
   {#if usage?.unavailable}
     <p class="status" role="status">{t("Usage statistics couldn't be read.")}</p>

@@ -17,6 +17,7 @@ pub mod usage_cmds;
 pub mod windows;
 
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -63,6 +64,8 @@ pub(crate) struct ShellHooks {
     login: Arc<dyn lingopop_platform::LoginItem>,
     spawn: Arc<dyn LoginSpawn>,
     serial: Arc<std::sync::Mutex<()>>,
+    /// Newest requested value; an older queued job that lost the race skips its write.
+    latest_login: Arc<AtomicBool>,
 }
 
 impl ShellHooks {
@@ -72,6 +75,7 @@ impl ShellHooks {
             login,
             spawn: Arc::new(BlockingLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
+            latest_login: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -83,6 +87,7 @@ impl ShellHooks {
             login,
             spawn: Arc::new(InlineLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
+            latest_login: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -91,6 +96,7 @@ impl SettingsHooks for ShellHooks {
     fn launch_at_login(&self, enabled: bool) {
         let login = Arc::clone(&self.login);
         let serial = Arc::clone(&self.serial);
+        let latest = Arc::clone(&self.latest_login);
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(_) => {
@@ -98,10 +104,14 @@ impl SettingsHooks for ShellHooks {
                 return;
             }
         };
+        self.latest_login.store(enabled, Ordering::Release);
         self.spawn.spawn_login(Box::new(move || {
             let _guard = serial
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if latest.load(Ordering::Acquire) != enabled {
+                return;
+            }
             if let Err(error) = login.set_enabled(enabled, &exe) {
                 log::warn!("login item update failed: {error}");
             }

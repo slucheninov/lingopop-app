@@ -207,7 +207,7 @@ fn stores_change_hook_fires_on_every_mutation() {
     s.clear_history();
     let record=serde_json::from_value(serde_json::json!({"id":"00000000-0000-0000-0000-000000000002","timestamp":0,"provider":"Claude","model":"m","operation":"translate","inputTokens":1,"outputTokens":1})).unwrap();
     s.append_usage(record);
-    s.reset_usage();
+    s.reset_usage().unwrap();
     assert_eq!(h.load(Ordering::SeqCst), 4);
     assert_eq!(u.load(Ordering::SeqCst), 2);
 }
@@ -260,4 +260,18 @@ fn settings_effects_trim_uses_committed_history_limit() {
     apply_settings_effects(&config, &stores, &NoSettingsHooks, true, false, false);
     assert_eq!(stores.history_entries().len(), 5);
     assert_eq!(config.settings().max_history_count, 10);
+}
+
+#[cfg(unix)]
+#[test]
+fn reset_usage_returns_the_store_error() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let (_, s, _) = rig(d.path());
+    assert!(s.usage_available());
+    let mode = std::fs::metadata(d.path()).unwrap().permissions().mode();
+    std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = s.reset_usage();
+    std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+    assert!(result.is_err());
 }

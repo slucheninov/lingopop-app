@@ -127,3 +127,45 @@ test('usage_changed_event_refetches', async () => {
   listeners.get('usage://changed')?.({ payload: null });
   await waitFor(() => expect(calls('usage_get').length).toBeGreaterThan(before));
 });
+
+test('rejected_reset_shows_an_alert_and_clears_on_success', async () => {
+  let fail = true;
+  mockIpc({ usage_get: usageView, usage_reset: () => { if (fail) throw "Usage statistics couldn't be reset."; } });
+  render(Settings, { initialTab: 'usage' });
+  await screen.findByRole('button', { name: 'Reset stats…' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect((await screen.findByRole('alert')).textContent).toBe("Usage statistics couldn't be reset.");
+  fail = false;
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
+test('stale_usage_response_does_not_overwrite_post_reset_data', async () => {
+  const old = { ...usageView, tokensLabel: 'OLD' };
+  const fresh = { ...usageView, tokensLabel: 'ZERO' };
+  let release: (v: UsageView) => void = () => {};
+  let reads = 0;
+  mockIpc({
+    usage_get: () => {
+      reads += 1;
+      if (reads === 1) return usageView;
+      if (reads === 2) return new Promise<UsageView>(resolve => { release = resolve; });
+      return fresh;
+    },
+    usage_reset: undefined,
+  });
+  render(Settings, { initialTab: 'usage' });
+  await screen.findByRole('button', { name: 'Reset stats…' });
+  await waitFor(() => expect(reads).toBe(1));
+  listeners.get('usage://changed')?.({ payload: null });
+  await waitFor(() => expect(reads).toBe(2));
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await screen.findByText('ZERO');
+  release(old);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(screen.queryByText('OLD')).toBeNull();
+  expect(screen.getByText('ZERO')).toBeTruthy();
+});

@@ -226,8 +226,20 @@ impl ShellStores {
     pub fn trim_history(&self, max: u32) {
         self.mutate_history(|s| s.trim(max));
     }
-    pub fn reset_usage(&self) {
-        self.mutate_usage(UsageStore::reset);
+    /// `Ok(())` when the usage store is unavailable (nothing is created).
+    pub fn reset_usage(&self) -> Result<(), StoreError> {
+        let hook = {
+            let mut guard = lock(&self.usage);
+            let Some(s) = guard.as_mut() else {
+                return Ok(());
+            };
+            s.reset()?;
+            lock(&self.on_change).clone()
+        };
+        if let Some(h) = hook {
+            h(StoreKind::Usage);
+        }
+        Ok(())
     }
 }
 impl Persist for ShellStores {
