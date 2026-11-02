@@ -138,5 +138,10 @@
     "pl": "Usuń: %@",
     "uk": "Видалити: %@",
     "de": "Entfernen: %@"
+  },
+  "Invalid provider settings.": {
+    "pl": "Nieprawidłowe ustawienia dostawcy.",
+    "uk": "Некоректні налаштування провайдера.",
+    "de": "Ungültige Anbietereinstellungen."
   }
 }

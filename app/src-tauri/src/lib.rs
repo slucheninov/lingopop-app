@@ -8,6 +8,7 @@ pub mod logging;
 pub mod paths;
 pub mod picker;
 pub mod popup_shell;
+pub mod provider_cmds;
 pub mod settings_cmds;
 pub mod state;
 pub mod tray;
@@ -246,6 +247,10 @@ pub fn run() {
             settings_cmds::ui_update,
             settings_cmds::ui_bootstrap,
             settings_cmds::open_url,
+            provider_cmds::provider_state,
+            provider_cmds::provider_validate,
+            provider_cmds::provider_save,
+            provider_cmds::provider_clear_key,
             commands::app_relaunch
         ])
         .setup(move |app| setup(app, &data_dir))
@@ -275,3 +280,5 @@ pub fn run() {
 mod task4_tests;
 #[cfg(test)]
 mod task5_tests;
+#[cfg(test)]
+mod task7_tests;

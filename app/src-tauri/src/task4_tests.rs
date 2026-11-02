@@ -21,7 +21,7 @@ impl lingopop_core::secrets::SecretProtector for Protector {
         Ok(data.to_vec())
     }
 }
-fn platform() -> lingopop_platform::Platform {
+pub(crate) fn platform() -> lingopop_platform::Platform {
     use lingopop_platform::{fake::*, Platform, PlatformError, Point};
     let sleeper = Arc::new(FakeSleeper::new());
     let clipboard = FakeClipboard::new(sleeper.clone());
@@ -40,7 +40,7 @@ fn platform() -> lingopop_platform::Platform {
         sleeper,
     }
 }
-fn rig(dir: &std::path::Path) -> (Arc<ShellConfig>, Arc<ShellStores>, Arc<UiState>) {
+pub(crate) fn rig(dir: &std::path::Path) -> (Arc<ShellConfig>, Arc<ShellStores>, Arc<UiState>) {
     let mut platform = platform();
     platform.system = Arc::new(FakeSystem::new(vec!["uk-UA".into()]));
     load(&DataPaths::new(dir), &platform, Arc::new(SystemClock))

@@ -45,3 +45,11 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 ### Launch at login
 
 - [ ] Enable Launch at login, sign out and in: LingoPop starts; disable: it does not; move the exe and start it: the Run value is rewritten to the new path.
+
+### Providers tab
+
+- [ ] Settings > Providers: select Claude, paste a key and click Save. Expected: the key field empties at once, `Saved` appears for about 1.5 s and the sidebar shows `Key set`. Restart LingoPop: still `Key set`; open `%APPDATA%\LingoPop\lingopop.log`: the key (and any part of it) appears nowhere.
+- [ ] Click Clear on a stored key. Expected: `No key set`, the sidebar shows `No key`; Google (Free) shows `No key needed` and has no key field.
+- [ ] Type `http://x` into Endpoint. Expected: the https message appears and Save is disabled; fix it and Save works.
+- [ ] Rename `secrets.dat` to something unreadable (e.g. replace its content with text) and restart. Expected: Providers shows the `secrets.dat is unreadable` message instead of the key field and Save is disabled; the file is not modified.
+- [ ] `How to get an API key` opens the matching section of `docs/api-keys.md` in the default browser.

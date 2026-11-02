@@ -59,3 +59,32 @@ export interface UiBootstrap {
 
 /** Event payload of `ui://changed`. */
 export interface UiChanged { popupFontSize: number; appLanguage: AppLanguage }
+
+export type ProviderFieldName = 'apiKey' | 'baseUrl' | 'model' | 'referer' | 'region';
+/** The four key-free visible fields: the only thing `provider_validate` receives. */
+export interface ProviderFields { baseUrl: string; model: string; referer: string; region: string }
+/** `provider_save` argument: the one place an API key leaves the webview. Never store or log it. */
+export interface ProviderDraft extends ProviderFields { apiKey: string }
+/** Catalog keys (English text) per invalid field; `null` = valid. */
+export interface DraftErrors { baseUrl: string | null; referer: string | null; region: string | null }
+/** Mirrors `provider_cmds.rs` `ProviderState`: presence flags only, never key material. */
+export interface ProviderState {
+  provider: Provider;
+  name: string;
+  hasKey: boolean;
+  requiresKey: boolean;
+  baseUrl: string;
+  model: string;
+  referer: string;
+  region: string;
+  defaultBaseUrl: string;
+  autoBaseUrl: boolean;
+  models: string[];
+  fields: ProviderFieldName[];
+  operations: string[];
+  isActive: boolean;
+  fallback: Provider | null;
+  secretsUnavailable: boolean;
+  connectionsCorrupt: boolean;
+  keyGuideUrl: string;
+}
