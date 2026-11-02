@@ -197,5 +197,7 @@ test('failed_reset_reloads_usage_discarded_by_the_generation_bump', async () => 
   await screen.findByText('LOADED');
   release({ ...usageView, tokensLabel: 'STALE' });
   await tick();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await tick();
   expect(screen.queryByText('STALE')).toBeNull();
 });
