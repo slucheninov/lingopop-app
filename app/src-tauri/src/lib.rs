@@ -97,6 +97,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         ui,
         platform,
         hooks: Arc::new(settings_cmds::NoSettingsHooks),
+        settings_write: tokio::sync::Mutex::new(()),
         window_locks: [windows::SETTINGS_LABEL, windows::HISTORY_LABEL]
             .into_iter()
             .map(|label| (label, tokio::sync::Mutex::new(())))

@@ -1,7 +1,7 @@
 //! Settings IPC contains presence flags, never API key material.
 use crate::{
     commands::ShellState,
-    state::{ShellConfig, UiState},
+    state::{ShellConfig, ShellStores, UiState},
 };
 use lingopop_core::{
     hotkey::{Hotkey, Modifier},
@@ -203,6 +203,27 @@ pub fn apply_patch(s: &mut Settings, patch: SettingsPatch) {
         SettingsPatch::Hotkey { operation, hotkey } => s.set_hotkey(operation, hotkey),
     }
 }
+/// Called under ShellState.settings_write after the save, with no std config guard held.
+/// Re-read the committed settings so no effect consumes an earlier save result.
+pub(crate) fn apply_settings_effects(
+    config: &ShellConfig,
+    stores: &ShellStores,
+    hooks: &dyn SettingsHooks,
+    trim: bool,
+    launch: bool,
+    hotkeys: bool,
+) {
+    let committed = config.settings();
+    if trim {
+        stores.trim_history(committed.max_history_count);
+    }
+    if launch {
+        hooks.launch_at_login(committed.launch_at_login);
+    }
+    if hotkeys {
+        hooks.hotkeys(&committed.hotkeys);
+    }
+}
 #[tauri::command]
 pub async fn settings_get(state: State<'_, ShellState>) -> Result<SettingsView, String> {
     Ok(settings_view(&state))
@@ -213,10 +234,11 @@ pub async fn settings_update(
     state: State<'_, ShellState>,
     patch: SettingsPatch,
 ) -> Result<SettingsView, String> {
+    let _write = state.settings_write.lock().await;
     let trim = matches!(patch, SettingsPatch::MaxHistoryCount(_));
     let launch = matches!(patch, SettingsPatch::LaunchAtLogin(_));
     let hotkeys = matches!(patch, SettingsPatch::Hotkey { .. });
-    let s = state
+    state
         .config
         .update_settings(|s| apply_patch(s, patch))
         .map_err(|e| {
@@ -226,15 +248,14 @@ pub async fn settings_update(
             };
             i18n::t(state.ui.language(), "Couldn't save settings.", &[])
         })?;
-    if trim {
-        state.stores.trim_history(s.max_history_count);
-    }
-    if launch {
-        state.hooks.launch_at_login(s.launch_at_login);
-    }
-    if hotkeys {
-        state.hooks.hotkeys(&s.hotkeys);
-    }
+    apply_settings_effects(
+        &state.config,
+        &state.stores,
+        state.hooks.as_ref(),
+        trim,
+        launch,
+        hotkeys,
+    );
     let view = settings_view(&state);
     let _ = app.emit("settings://changed", &view);
     Ok(view)
@@ -251,7 +272,8 @@ pub async fn ui_update(
     state: State<'_, ShellState>,
     patch: UiPatch,
 ) -> Result<SettingsView, String> {
-    let p = state
+    let _write = state.settings_write.lock().await;
+    state
         .ui
         .update(|p| match patch {
             UiPatch::PopupFontSize(v) => {
@@ -263,14 +285,15 @@ pub async fn ui_update(
             log::warn!("UI preferences save failed");
             i18n::t(state.ui.language(), "Couldn't save settings.", &[])
         })?;
+    let view = settings_view(&state);
     let _ = app.emit(
         "ui://changed",
         UiChanged {
-            popup_font_size: p.popup_font_size,
-            app_language: p.app_language,
+            popup_font_size: view.popup_font_size,
+            app_language: view.app_language,
         },
     );
-    Ok(settings_view(&state))
+    Ok(view)
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

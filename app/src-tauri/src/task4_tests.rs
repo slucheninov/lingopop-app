@@ -235,3 +235,28 @@ fn pending_tab_is_taken_once() {
     assert_eq!(u.take_pending_tab().as_deref(), Some("about"));
     assert_eq!(u.take_pending_tab(), None);
 }
+
+#[test]
+fn settings_effects_trim_uses_committed_history_limit() {
+    let d = tempfile::tempdir().unwrap();
+    let (config, stores, _) = rig(d.path());
+    for _ in 0..5 {
+        let mut e = entry();
+        e.id = uuid::Uuid::new_v4();
+        stores.add_history(e, 10);
+    }
+    let earlier = config.update_settings(|s| s.max_history_count = 2).unwrap();
+    config
+        .update_settings(|s| s.max_history_count = 10)
+        .unwrap();
+    assert_eq!(earlier.max_history_count, 2);
+    // Side effects must read committed settings rather than use the earlier save result.
+    // This also proves no config guard is held across a reentrant history callback.
+    let c = config.clone();
+    stores.set_on_change(Arc::new(move |_| {
+        assert_eq!(c.settings().max_history_count, 10)
+    }));
+    apply_settings_effects(&config, &stores, &NoSettingsHooks, true, false, false);
+    assert_eq!(stores.history_entries().len(), 5);
+    assert_eq!(config.settings().max_history_count, 10);
+}

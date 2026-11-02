@@ -23,6 +23,8 @@ pub struct ShellState {
     pub ui: Arc<crate::state::UiState>,
     pub platform: lingopop_platform::Platform,
     pub hooks: Arc<dyn crate::settings_cmds::SettingsHooks>,
+    /// Serializes settings/UI saves through their side effects and emitted views.
+    pub settings_write: tokio::sync::Mutex<()>,
     pub window_locks: std::collections::BTreeMap<&'static str, tokio::sync::Mutex<()>>,
 }
 
