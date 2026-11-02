@@ -3,7 +3,7 @@
   import type { AppLanguage, SettingsPatch, SettingsView, UiPatch } from '../lib/settingsTypes';
   import LanguagePairs from './LanguagePairs.svelte';
   import Relaunch from './Relaunch.svelte';
-  let { view, onPatch, onUiPatch }: { view: SettingsView; onPatch: (patch: SettingsPatch) => void; onUiPatch: (patch: UiPatch) => void } = $props();
+  let { view, onPatch, onUiPatch }: { view: SettingsView; onPatch: (patch: SettingsPatch) => Promise<boolean>; onUiPatch: (patch: UiPatch) => Promise<boolean> } = $props();
 
   // Native names are never translated; `System` is.
   const APP_LANGUAGES: { value: AppLanguage; name: string | null }[] = [
@@ -15,14 +15,21 @@
   // The slider shows the dragged value at once and follows the saved one when it changes from outside.
   let fontSize = $state(0);
   let sentFontSize = 0;
-  $effect(() => { fontSize = view.popupFontSize; sentFontSize = view.popupFontSize; });
+  // While a font save is in flight the control keeps what the user dragged to (a view for an older commit may arrive).
+  let fontInFlight = 0;
+  $effect(() => { const saved = view.popupFontSize; if (fontInFlight === 0) { fontSize = saved; sentFontSize = saved; } });
   function onFont(event: Event) {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     if (!Number.isFinite(value)) return;
     fontSize = value;
     if (value === sentFontSize) return;
     sentFontSize = value;
-    onUiPatch({ field: 'popupFontSize', value });
+    fontInFlight++;
+    void onUiPatch({ field: 'popupFontSize', value }).then(saved => {
+      fontInFlight--;
+      // A refused save puts the control back on the saved value and forgets the dedup state, so a retry is sent.
+      if (!saved && fontInFlight === 0) { fontSize = view.popupFontSize; sentFontSize = view.popupFontSize; }
+    });
   }
 
   /** A whole number in `min..=max`; garbage is ignored and the field shows the saved value again. */
@@ -35,15 +42,17 @@
     }
     const value = Math.min(max, Math.max(0, Math.trunc(parsed)));
     input.value = String(value);
-    onPatch({ field, value });
+    void onPatch({ field, value }).then(saved => { if (!saved) input.value = String(view[field]); });
   }
+  /** Puts a switch / select back on the saved value when the shell refused the change. */
+  function revert(saved: Promise<boolean>, restore: () => void) { void saved.then(ok => { if (!ok) restore(); }); }
 </script>
 <div class="main">
   <section>
     <h3>{t('Target language')}</h3>
-    <label class="row switch"><input type="checkbox" role="switch" checked={view.useAutoDetect} onchange={event => onPatch({ field: 'useAutoDetect', value: event.currentTarget.checked })} /><span>{t('Auto-detect input language')}</span></label>
+    <label class="row switch"><input type="checkbox" role="switch" checked={view.useAutoDetect} onchange={event => { const box = event.currentTarget; revert(onPatch({ field: 'useAutoDetect', value: box.checked }), () => { box.checked = view.useAutoDetect; }); }} /><span>{t('Auto-detect input language')}</span></label>
     <label class="row"><span>{view.useAutoDetect ? t('Default target') : t('Target')}</span>
-      <select value={view.targetLanguage} onchange={event => onPatch({ field: 'targetLanguage', value: event.currentTarget.value })}>
+      <select value={view.targetLanguage} onchange={event => { const select = event.currentTarget; revert(onPatch({ field: 'targetLanguage', value: select.value }), () => { select.value = view.targetLanguage; }); }}>
         {#each targetOptions as language}<option value={language}>{language}</option>{/each}
       </select></label>
     {#if view.useAutoDetect}
@@ -59,7 +68,7 @@
   <section>
     <h3>{t('Language')}</h3>
     <label class="row"><span>{t('Language')}</span>
-      <select value={view.appLanguage} onchange={event => onUiPatch({ field: 'appLanguage', value: event.currentTarget.value as AppLanguage })}>
+      <select value={view.appLanguage} onchange={event => { const select = event.currentTarget; revert(onUiPatch({ field: 'appLanguage', value: select.value as AppLanguage }), () => { select.value = view.appLanguage; }); }}>
         {#each APP_LANGUAGES as language}<option value={language.value}>{language.name ?? t('System')}</option>{/each}
       </select></label>
     <Relaunch needed={view.needsRelaunch} />
@@ -75,8 +84,8 @@
   </section>
   <section>
     <h3>{t('Startup')}</h3>
-    <label class="row switch"><input type="checkbox" role="switch" checked={view.launchAtLogin} onchange={event => onPatch({ field: 'launchAtLogin', value: event.currentTarget.checked })} /><span>{t('Launch at login')}</span></label>
-    <label class="row switch"><input type="checkbox" role="switch" checked={view.autoCopyOCR} onchange={event => onPatch({ field: 'autoCopyOCR', value: event.currentTarget.checked })} /><span>{t('Auto-copy OCR/translation results to clipboard')}</span></label>
+    <label class="row switch"><input type="checkbox" role="switch" checked={view.launchAtLogin} onchange={event => { const box = event.currentTarget; revert(onPatch({ field: 'launchAtLogin', value: box.checked }), () => { box.checked = view.launchAtLogin; }); }} /><span>{t('Launch at login')}</span></label>
+    <label class="row switch"><input type="checkbox" role="switch" checked={view.autoCopyOCR} onchange={event => { const box = event.currentTarget; revert(onPatch({ field: 'autoCopyOCR', value: box.checked }), () => { box.checked = view.autoCopyOCR; }); }} /><span>{t('Auto-copy OCR/translation results to clipboard')}</span></label>
   </section>
 </div>
 <style>

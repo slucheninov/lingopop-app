@@ -23,6 +23,8 @@ export function rowWidth(titles: readonly string[], retry: boolean, mode: RowMod
   return widths.length ? widths.reduce((a,b) => a+b, 0) + 8 * widths.length + 28 : 0;
 }
 export const REFERENCE_FONT_SIZE = 13;
+/** Mac `PopupLayout.headerFontSize`: two points under the result font, never below 8. */
+export const headerFontSize = (fontSize: number): number => Math.max(8, fontSize - 2);
 let sharedContext: CanvasRenderingContext2D | null | undefined;
 export function measureText(text: string): number {
   if (sharedContext === undefined) {

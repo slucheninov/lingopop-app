@@ -137,3 +137,44 @@ test('language_pairs_hidden_without_auto_detect', async () => {
   await openMain();
   expect(screen.queryByRole('button', { name: 'Add language pair' })).toBeNull();
 });
+
+test('font_save_failure_restores_saved_value_and_retry_invokes_again', async () => {
+  mockIpc({ ui_update: "Couldn't save settings." });
+  vi.mocked(invoke).mockImplementation(async (command: string) => {
+    if (command === 'ui_update') throw "Couldn't save settings.";
+    return command === 'settings_get' ? baseView : undefined;
+  });
+  await openMain();
+  const slider = screen.getByRole('slider', { name: 'Result font size' }) as HTMLInputElement;
+  await fireEvent.input(slider, { target: { value: '16' } });
+  await waitFor(() => expect(screen.getByText('13 pt')).toBeTruthy());
+  expect(slider.value).toBe('13');
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  const uiCalls = () => vi.mocked(invoke).mock.calls.filter(call => call[0] === 'ui_update').length;
+  expect(uiCalls()).toBe(1);
+  await fireEvent.input(slider, { target: { value: '16' } });
+  expect(uiCalls()).toBe(2);   // not deduplicated away
+});
+
+test('mutations_are_sent_in_order_and_the_last_response_wins', async () => {
+  const resolvers: ((view: typeof baseView) => void)[] = [];
+  vi.mocked(invoke).mockImplementation(async (command: string) => {
+    if (command === 'settings_get') return baseView;
+    if (command === 'ui_update') return new Promise(resolve => { resolvers.push(resolve as never); });
+    return undefined;
+  });
+  await openMain();
+  const slider = screen.getByRole('slider', { name: 'Result font size' }) as HTMLInputElement;
+  await fireEvent.input(slider, { target: { value: '14' } });
+  await fireEvent.input(slider, { target: { value: '18' } });
+  const sent = () => vi.mocked(invoke).mock.calls.filter(call => call[0] === 'ui_update').map(call => (call[1] as { patch: { value: number } }).patch.value);
+  expect(sent()).toEqual([14]);   // the second waits for the first to settle
+  // A change event for the intermediate commit arrives before the responses.
+  listeners.get('settings://changed')!({ payload: { ...baseView, popupFontSize: 14 } });
+  resolvers[0]({ ...baseView, popupFontSize: 14 });
+  await waitFor(() => expect(sent()).toEqual([14, 18]));
+  expect(screen.getByText('18 pt')).toBeTruthy();   // the stale 14 response did not overwrite the control
+  resolvers[1]({ ...baseView, popupFontSize: 18 });
+  await waitFor(() => expect(slider.value).toBe('18'));
+  expect(screen.getByText('18 pt')).toBeTruthy();
+});

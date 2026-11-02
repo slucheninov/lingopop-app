@@ -29,23 +29,49 @@
 
   /** A rejection is a catalog key from the shell; anything else shows the generic save message. */
   const show = (error: unknown) => { failure = typeof error === 'string' ? error : "Couldn't save settings."; };
-  async function run(request: Promise<SettingsView>) {
+  async function load() {
     try {
-      const next = await request;
-      if (!disposed) { view = next; failure = null; }
+      const next = await getSettings();
+      if (!disposed) view = next;
     } catch (error) {
       if (!disposed) show(error);
     }
   }
-  const onPatch = (patch: SettingsPatch) => run(updateSetting(patch));
-  const onUiPatch = (patch: UiPatch) => run(updateUi(patch));
+  // Mutations are sent one at a time, in call order, and only the response of the LAST queued one is
+  // applied (the shell emits `settings://changed` for the intermediate commits in commit order), so the
+  // displayed view always ends on the last persisted state. A failure of the last one reloads the saved view.
+  let pending = 0;
+  let queue: Promise<unknown> = Promise.resolve();
+  /** Resolves `true` when the shell saved the change, `false` when it refused (the view is then the saved one). */
+  function mutate(send: () => Promise<SettingsView>): Promise<boolean> {
+    pending++;
+    const job = queue.then(async () => {
+      let next: SettingsView | null = null;
+      let rejection: unknown;
+      let saved = true;
+      try { next = await send(); } catch (error) { saved = false; rejection = error; }
+      pending--;
+      if (disposed) return saved;
+      if (saved) {
+        if (pending === 0) { view = next; failure = null; }
+      } else {
+        show(rejection);
+        if (pending === 0) { const message = failure; await load(); if (!disposed && message) failure = message; }
+      }
+      return saved;
+    });
+    queue = job;
+    return job;
+  }
+  const onPatch = (patch: SettingsPatch) => mutate(() => updateSetting(patch));
+  const onUiPatch = (patch: UiPatch) => mutate(() => updateUi(patch));
 
   onMount(() => {
     const registrations = [
       listen<SettingsView>('settings://changed', event => { if (!disposed) view = event.payload; }),
       listen<string>('settings://tab', event => { if (!disposed && isTab(event.payload)) active = event.payload; }),
     ];
-    void run(getSettings());
+    void load();
     return () => {
       disposed = true;
       for (const registration of registrations) void registration.then(unlisten => unlisten()).catch(() => {});

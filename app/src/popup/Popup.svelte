@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { ready, resized, sendAction } from '../lib/ipc';
-  import { panelWidth, rowAvailable, viewKey, measureText, REFERENCE_FONT_SIZE } from '../lib/actionRow';
+  import { panelWidth, rowAvailable, viewKey, measureText, headerFontSize, REFERENCE_FONT_SIZE } from '../lib/actionRow';
   import { bootstrap } from '../lib/bootstrap';
   import { createResizeReporter } from '../lib/resizeReporter';
   import { icons } from '../lib/icons';
@@ -54,7 +54,7 @@
   });
 </script>
 <svelte:window onkeydown={event => { if (event.key === 'Escape') sendAction({type:'close'}); }} />
-<main bind:this={content} style:width={`${width}px`} style:--result-font-size={`${fontSize}px`}>
+<main bind:this={content} style:width={`${width}px`} style:--result-font-size={`${fontSize}px`} style:--header-font-size={`${headerFontSize(fontSize)}px`}>
   {#if model}
     <button class="close" type="button" title={t('Close')} aria-label={t('Close')} onclick={() => sendAction({type:'close'})}>{@html icons.close}</button>
     {#key viewKey(model)}

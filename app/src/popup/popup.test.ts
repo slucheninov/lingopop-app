@@ -6,7 +6,7 @@ import Popup from './Popup.svelte';
 import ActionRow from './ActionRow.svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { t } from '../lib/i18n';
-import { isIconOnly, pickMode, popupWidth, rowWidth, panelWidth, viewKey } from '../lib/actionRow';
+import { headerFontSize, isIconOnly, pickMode, popupWidth, rowWidth, panelWidth, viewKey } from '../lib/actionRow';
 import { setLanguage } from '../lib/i18n';
 import { createResizeReporter } from '../lib/resizeReporter';
 import LoadingView from './LoadingView.svelte';
@@ -263,4 +263,17 @@ test('panelWidth_scales_text_term_with_font_size', () => {
   const wide = { ...result, text: 'x', actionRow: { preferred: 'full' as const, candidates: ['full' as const] } };
   expect(panelWidth(wide, m6, 11)).toBe(panelWidth(wide, m6, 20));
   expect(popupWidth({ phase: 'result', text: 'x'.repeat(100) }, 26)).toBe(400);
+});
+test('header_font_size_follows_result_font_size_like_mac', async () => {
+  vi.mocked(invoke).mockReset().mockResolvedValue(undefined);
+  const { container } = render(Popup);
+  const main = container.querySelector('main')!;
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('popup_ready'));
+  expect(main.style.getPropertyValue('--header-font-size')).toBe('11px');   // 13 - 2
+  for (const [size, header] of [[18, '16px'], [9, '8px'], [20, '18px']] as const) {   // 9 - 2 = 7 -> clamped to 8
+    uiChangedHandler()({ event: 'ui://changed', id: 3, payload: { popupFontSize: size, appLanguage: 'system' } });
+    await waitFor(() => expect(main.style.getPropertyValue('--header-font-size')).toBe(header));
+  }
+  expect(headerFontSize(13)).toBe(11);
+  expect(headerFontSize(7)).toBe(8);
 });
