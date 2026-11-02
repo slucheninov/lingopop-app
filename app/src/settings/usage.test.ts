@@ -85,6 +85,24 @@ test('reset_requires_confirmation', async () => {
   expect(invoke).toHaveBeenCalledWith('usage_reset');
 });
 
+test('cancel_returns_focus_to_reset', async () => {
+  await openUsage();
+  const reset = screen.getByRole('button', { name: 'Reset stats…' });
+  await fireEvent.click(reset);
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => expect(document.activeElement).toBe(reset));
+});
+
+test('escape_closes_confirm_and_returns_focus_to_reset', async () => {
+  await openUsage();
+  const reset = screen.getByRole('button', { name: 'Reset stats…' });
+  await fireEvent.click(reset);
+  await fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(reset));
+  expect(calls('usage_reset')).toHaveLength(0);
+});
+
 test('unavailable_store_shows_status_and_disables_reset', async () => {
   mockIpc({ usage_get: { ...usageView, unavailable: true } });
   render(Settings, { initialTab: 'usage' });

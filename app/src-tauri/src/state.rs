@@ -18,7 +18,7 @@ use lingopop_core::{
 };
 use lingopop_orchestrator::{ConfigSource, Persist};
 use lingopop_platform::Platform;
-use std::{fmt, io, path::PathBuf};
+use std::{io, path::PathBuf};
 use uuid::Uuid;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -42,30 +42,24 @@ pub struct ShellConfig {
     secrets: Option<Mutex<SecretStore>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SecretsErrorKind {
+    #[error("secrets could not be saved")]
     Io(io::ErrorKind),
+    #[error("secrets could not be protected")]
     Protect,
+    #[error("secrets could not be encoded")]
     Encode,
 }
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SecretsWriteError {
+    #[error("secrets are unavailable")]
     Unavailable,
+    #[error("provider settings are corrupt")]
     Corrupt,
+    #[error(transparent)]
     Store(SecretsErrorKind),
 }
-impl fmt::Display for SecretsWriteError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Unavailable => "secrets are unavailable",
-            Self::Corrupt => "provider settings are corrupt",
-            Self::Store(SecretsErrorKind::Io(_)) => "secrets could not be saved",
-            Self::Store(SecretsErrorKind::Protect) => "secrets could not be protected",
-            Self::Store(SecretsErrorKind::Encode) => "secrets could not be encoded",
-        })
-    }
-}
-impl std::error::Error for SecretsWriteError {}
 impl From<SecretsError> for SecretsWriteError {
     fn from(e: SecretsError) -> Self {
         Self::Store(match e {
@@ -128,7 +122,13 @@ impl ShellConfig {
                 map.extend(m);
             }
         }
-        map.remove(&provider).expect("all providers have defaults")
+        map.remove(&provider)
+            .unwrap_or_else(|| ProviderConnectionSettings {
+                base_url: String::new(),
+                model: String::new(),
+                referer: None,
+                region: None,
+            })
     }
     pub fn secrets_available(&self) -> bool {
         self.secrets.is_some()

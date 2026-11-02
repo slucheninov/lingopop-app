@@ -4,6 +4,7 @@
   import type { ProviderSummary } from '../lib/settingsTypes';
   import type { Provider } from '../lib/types';
   let { providers, active, selected, onSelect }: { providers: ProviderSummary[]; active: Provider; selected: Provider; onSelect: (provider: Provider) => void } = $props();
+  const nameOf = (provider: Provider) => providers.find(x => x.provider === provider)?.name ?? provider;
   const status = (p: ProviderSummary) => (!p.requiresKey ? t('No key needed') : p.hasKey ? t('Key set') : t('No key'));
   function onKeydown(event: KeyboardEvent, index: number) {
     const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
@@ -21,7 +22,7 @@
       <span class="glyph" style:color={providerColors[p.provider]}>{@html providerIcons[p.provider]}</span>
       <span class="text">
         <span class="title"><span class="name">{p.name}</span>{#if active === p.provider}<span class="star" role="img" aria-label={t('Active')}>{@html icons.star}</span>{/if}</span>
-        <span class="status"><span class:ok={!p.requiresKey || p.hasKey}>{status(p)}</span>{#if p.fallback}<span>· ↳ {p.fallback}</span>{/if}</span>
+        <span class="status"><span class:ok={!p.requiresKey || p.hasKey}>{status(p)}</span>{#if p.fallback}<span>· ↳ {nameOf(p.fallback)}</span>{/if}</span>
       </span>
     </button>
   {/each}

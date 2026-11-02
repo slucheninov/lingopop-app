@@ -208,6 +208,7 @@ pub fn install(
             Ok(service) => service,
             Err(error) => {
                 log::error!("hotkeys are unavailable: {error}");
+                current.apply(hotkeys);
                 return;
             }
         };

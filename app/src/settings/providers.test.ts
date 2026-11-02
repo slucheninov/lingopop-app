@@ -69,9 +69,10 @@ test('sidebar_lists_eight_in_order_with_status', async () => {
 test('sidebar_shows_the_fallback', async () => {
   const providers = summaries();
   providers[0] = { ...providers[0], fallback: 'OpenAI' };
+  providers[1] = { ...providers[1], name: 'OpenAI Display' };
   setup({}, viewWith({ activeProvider: 'Claude', providers }));
   await openProviders();
-  expect(within(sidebarOptions()[0]).getByText(/↳ OpenAI/)).toBeTruthy();
+  expect(within(sidebarOptions()[0]).getByText(/↳ OpenAI Display/)).toBeTruthy();
 });
 
 test('selecting_active_by_default', async () => {

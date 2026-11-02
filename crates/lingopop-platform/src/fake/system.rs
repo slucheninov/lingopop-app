@@ -20,7 +20,10 @@ impl FakeSystem {
         }
     }
     pub fn opened(&self) -> Vec<String> {
-        self.opened.lock().unwrap().clone()
+        self.opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
     pub fn set_process_exits(&self, exits: bool) {
         self.exits.store(exits, Ordering::SeqCst);
@@ -31,7 +34,10 @@ impl SystemInfo for FakeSystem {
         self.languages.clone()
     }
     fn open_url(&self, url: &str) -> Result<(), PlatformError> {
-        self.opened.lock().unwrap().push(url.into());
+        self.opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(url.into());
         Ok(())
     }
     fn wait_for_process_exit(&self, _pid: u32, _timeout: Duration) -> bool {

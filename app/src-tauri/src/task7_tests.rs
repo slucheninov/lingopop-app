@@ -95,11 +95,8 @@ impl SecretProtector for FailsAfterFirst {
 fn provider_save_key_write_failure_keeps_the_key_message() {
     let mut bundle = platform();
     bundle.protector = Arc::new(FailsAfterFirst(Default::default()));
-    let (c, _, _) = load(
-        &DataPaths::new(tempfile::tempdir().unwrap().path()),
-        &bundle,
-        Arc::new(SystemClock),
-    );
+    let d = tempfile::tempdir().unwrap();
+    let (c, _, _) = load(&DataPaths::new(d.path()), &bundle, Arc::new(SystemClock));
     let error = save_draft(&c, ProviderType::OpenAI, &draft("sk-1", "https://x")).unwrap_err();
     assert_eq!(error, KEY_KEY_NOT_SAVED);
 }
@@ -134,11 +131,8 @@ fn provider_save_response_and_logs_never_contain_key() {
     // A failing protector: the error value and every log line stay key-free.
     let mut failing = platform();
     failing.protector = Arc::new(FailingProtector);
-    let (c, _, _) = load(
-        &DataPaths::new(tempfile::tempdir().unwrap().path()),
-        &failing,
-        Arc::new(SystemClock),
-    );
+    let d2 = tempfile::tempdir().unwrap();
+    let (c, _, _) = load(&DataPaths::new(d2.path()), &failing, Arc::new(SystemClock));
     let error = save_draft(&c, ProviderType::OpenAI, &draft("sk-1", "https://x")).unwrap_err();
     assert!(!error.contains("sk-1"));
     // The connection write failed before the key was reached: the settings message, not the key one.

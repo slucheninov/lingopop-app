@@ -20,6 +20,7 @@ tauri-build = "=2.7.4"
 [dependencies]
 tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "=2.5.5"
+thiserror = "2"
 lingopop-core = { path = "../../crates/lingopop-core" }
 lingopop-orchestrator = { path = "../../crates/lingopop-orchestrator" }
 lingopop-platform = { path = "../../crates/lingopop-platform" }

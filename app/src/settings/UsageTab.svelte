@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { t } from '../lib/i18n';
   import { getUsage, resetUsage } from '../lib/settingsIpc';
@@ -19,7 +19,14 @@
   let usage = $state<UsageView | null>(null);
   let confirmReset = $state(false);
   let cancelButton = $state<HTMLButtonElement | null>(null);
+  let resetButton = $state<HTMLButtonElement | null>(null);
   let disposed = false;
+
+  async function closeConfirm() {
+    confirmReset = false;
+    await tick();
+    resetButton?.focus();
+  }
 
   $effect(() => {
     if (confirmReset) cancelButton?.focus();
@@ -68,13 +75,13 @@
         <button type="button" aria-pressed={period === item.id} onclick={() => choose(item.id)}>{t(item.label)}</button>
       {/each}
     </div>
-    <button type="button" class="reset" disabled={usage?.unavailable === true} onclick={() => { confirmReset = true; }}>{t('Reset stats…')}</button>
+    <button type="button" class="reset" bind:this={resetButton} disabled={usage?.unavailable === true} onclick={() => { confirmReset = true; }}>{t('Reset stats…')}</button>
   </div>
   {#if confirmReset}
-    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="usage-reset-title">
+    <div class="dialog" role="dialog" tabindex="-1" aria-labelledby="usage-reset-title" onkeydown={event => { if (event.key === 'Escape') { event.stopPropagation(); void closeConfirm(); } }}>
       <p id="usage-reset-title">{t('Delete all usage history?')}</p>
       <div class="actions">
-        <button type="button" bind:this={cancelButton} onclick={() => { confirmReset = false; }}>{t('Cancel')}</button>
+        <button type="button" bind:this={cancelButton} onclick={() => { void closeConfirm(); }}>{t('Cancel')}</button>
         <button type="button" class="danger" onclick={() => { void remove(); }}>{t('Delete')}</button>
       </div>
     </div>
