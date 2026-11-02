@@ -52,11 +52,13 @@ export interface SettingsView {
   languagePairs: Record<string, string>;
   autoCopyOCR: boolean;
   magicPrompt: string;
+  defaultMagicPrompt: string;
   quickLanguages: string[];
   popupFontSize: number;
   appLanguage: AppLanguage;
   launchedLanguage: Language;
   needsRelaunch: boolean;
+  version: string;
   latestVersion: string | null;
   providers: ProviderSummary[];
 }

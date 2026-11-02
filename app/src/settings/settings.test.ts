@@ -2,8 +2,6 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
 import { invoke } from '@tauri-apps/api/core';
 import Settings from './Settings.svelte';
-import MagicTab from './MagicTab.svelte';
-import AboutTab from './AboutTab.svelte';
 import History from '../history/History.svelte';
 import { bootstrap } from '../lib/bootstrap';
 import { setLanguage, t } from '../lib/i18n';
@@ -57,7 +55,7 @@ test('bootstrap_failure_falls_back_to_english', async () => {
 });
 
 test('placeholder_tabs_mount_without_invoke', () => {
-  for (const Tab of [MagicTab, AboutTab, History]) {
+  for (const Tab of [History]) {
     const { container, unmount } = render(Tab as never, { props: { view: baseView, onPatch: () => {}, onUiPatch: () => {} } } as never);
     const section = container.querySelector('section');
     expect(section).toBeTruthy();

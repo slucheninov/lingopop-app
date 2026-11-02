@@ -12,6 +12,7 @@ pub mod provider_cmds;
 pub mod settings_cmds;
 pub mod state;
 pub mod tray;
+pub mod updates;
 pub mod usage_cmds;
 pub mod windows;
 
@@ -19,7 +20,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use lingopop_core::http::{HttpTimeouts, ReqwestTransport};
+use lingopop_core::http::{HttpTimeouts, ReqwestTransport, Transport};
 use lingopop_core::paths::DataPaths;
 use lingopop_core::providers::ProviderRegistry;
 use lingopop_core::runner::OperationRunner;
@@ -167,10 +168,8 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     ));
 
     let registry = Arc::new(ProviderRegistry::standard());
-    let runner = OperationRunner::new(
-        ProviderRegistry::standard(),
-        Arc::new(ReqwestTransport::new(HttpTimeouts::default())?),
-    );
+    let transport: Arc<dyn Transport> = Arc::new(ReqwestTransport::new(HttpTimeouts::default())?);
+    let runner = OperationRunner::new(ProviderRegistry::standard(), transport.clone());
     let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
     #[cfg(windows)]
     lingopop_platform::set_dismiss_log(log.clone());
@@ -184,7 +183,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         stores: stores.clone(),
         popup: popup.clone(),
         gate: PlatformGate::new(GateTimeouts::default()),
-        clock,
+        clock: clock.clone(),
         log: Some(log),
         picker: Arc::new(picker::NoPicker),
     });
@@ -208,6 +207,8 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     shell_hooks.hotkeys = Some(hotkey_registry.clone());
     let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);
     apply_startup_login(hooks.as_ref(), config.settings().launch_at_login);
+    let update_state = Arc::new(updates::UpdateState::new(transport, ui.clone(), clock));
+    app.manage(update_state.clone());
     app.manage(ShellState {
         hotkeys: hotkey_registry.clone(),
         orchestrator: orchestrator.clone(),
@@ -227,6 +228,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     dismiss::spawn_forwarder(dismiss.as_ref(), orchestrator.clone());
     hotkeys::install(&hotkey_registry, orchestrator, &hotkeys);
     tray::build(app)?;
+    updates::spawn_loop(update_state, app.handle().clone());
     log::info!("LingoPop started");
     Ok(())
 }
@@ -268,6 +270,7 @@ pub fn run() {
             hotkeys::hotkeys_suspend,
             usage_cmds::usage_get,
             usage_cmds::usage_reset,
+            updates::updates_check,
             commands::app_relaunch
         ])
         .setup(move |app| setup(app, &data_dir))

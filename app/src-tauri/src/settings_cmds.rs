@@ -65,11 +65,13 @@ pub struct SettingsView {
     #[serde(rename = "autoCopyOCR")]
     pub auto_copy_ocr: bool,
     pub magic_prompt: String,
+    pub default_magic_prompt: &'static str,
     pub quick_languages: Vec<&'static str>,
     pub popup_font_size: u32,
     pub app_language: AppLanguage,
     pub launched_language: Language,
     pub needs_relaunch: bool,
+    pub version: &'static str,
     pub latest_version: Option<String>,
     pub providers: Vec<ProviderSummary>,
 }
@@ -130,12 +132,17 @@ pub fn settings_view_parts(
         language_pairs: s.language_pairs,
         auto_copy_ocr: s.auto_copy_ocr,
         magic_prompt: s.magic_prompt,
+        default_magic_prompt: lingopop_core::prompts::DEFAULT_MAGIC_PROMPT,
         quick_languages: lingopop_core::languages::quick_list(),
         popup_font_size: p.popup_font_size,
         app_language: p.app_language,
         launched_language: ui.launched,
         needs_relaunch: p.app_language.needs_relaunch(ui.launched, languages),
-        latest_version: p.latest_version,
+        version: lingopop_core::VERSION,
+        // An older or equal cached tag is not an update.
+        latest_version: p
+            .latest_version
+            .filter(|v| lingopop_core::updates::is_newer(v, lingopop_core::VERSION)),
         providers,
     }
 }

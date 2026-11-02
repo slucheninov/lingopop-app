@@ -1,0 +1,153 @@
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { invoke } from '@tauri-apps/api/core';
+import { setLanguage } from '../lib/i18n';
+import { countScalars, truncateScalars } from '../lib/scalars';
+import Settings from './Settings.svelte';
+import { baseView, mockIpc } from './testSupport';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
+
+const RELEASES_PAGE_URL = 'https://github.com/slucheninov/lingopop-app/releases/latest';
+const PRIVACY_URL = 'https://github.com/slucheninov/lingopop-app/blob/main/PRIVACY.md';
+const calls = (command: string) => vi.mocked(invoke).mock.calls.filter(call => call[0] === command);
+
+beforeEach(() => { vi.clearAllMocks(); setLanguage('en', {}); });
+afterEach(() => { cleanup(); setLanguage('en', {}); });
+
+async function openMagic(overrides: Record<string, unknown> = {}) {
+  mockIpc(overrides);
+  render(Settings, { initialTab: 'magic' });
+  return (await screen.findByRole('textbox', { name: 'System prompt' })) as HTMLTextAreaElement;
+}
+
+test('scalar_parity_table', () => {
+  // Same values as Rust `chars().count()`.
+  for (const [text, count] of [
+    ['', 0], ['abc', 3], ['a😀b', 3], ['é', 2], ['é', 1], ['\ud800', 1], ['👨‍👩‍👧', 5], ['Привіт', 6],
+  ] as [string, number][]) {
+    expect(countScalars(text)).toBe(count);
+  }
+  expect(truncateScalars('a😀b', 2)).toBe('a😀');
+  expect(truncateScalars('a😀b', 3)).toBe('a😀b');
+  expect(truncateScalars('abc', 0)).toBe('');
+  expect(truncateScalars('😀'.repeat(5), 4)).toBe('😀'.repeat(4));
+});
+
+test('counter_red_at_1900_and_truncates_at_2000', async () => {
+  const area = await openMagic();
+  const counter = () => screen.getByText(/ \/ 2000$/);
+  await fireEvent.input(area, { target: { value: 'x'.repeat(1899) } });
+  expect(counter().textContent).toBe('1899 / 2000');
+  expect(counter().classList.contains('warn')).toBe(false);
+  await fireEvent.input(area, { target: { value: 'x'.repeat(1900) } });
+  expect(counter().textContent).toBe('1900 / 2000');
+  expect(counter().classList.contains('warn')).toBe(true);
+  // Counted in scalars: 1999 ASCII + one emoji (two UTF-16 units) is exactly 2000, so nothing is cut.
+  await fireEvent.input(area, { target: { value: `${'x'.repeat(1999)}😀` } });
+  expect(countScalars(area.value)).toBe(2000);
+  await fireEvent.input(area, { target: { value: `${'y'.repeat(2500)}` } });
+  expect(area.value.length).toBe(2000);
+  expect(counter().textContent).toBe('2000 / 2000');
+  await fireEvent.input(area, { target: { value: `${'😀'.repeat(2100)}` } });
+  expect(countScalars(area.value)).toBe(2000);
+});
+
+test('reset_requires_confirmation_then_sets_default', async () => {
+  const area = await openMagic({ settings_update: { ...baseView, magicPrompt: baseView.defaultMagicPrompt } });
+  await fireEvent.input(area, { target: { value: 'mine' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
+  const dialog = screen.getByRole('dialog');
+  expect(dialog.textContent).toContain('Reset prompt?');
+  expect(dialog.textContent).toContain('This will replace your prompt with the default. Continue?');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+  expect(area.value).toBe('mine');
+  expect(calls('settings_update')).toHaveLength(0);
+  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(area.value).toBe('mine');
+  expect(calls('settings_update')).toHaveLength(0);
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset to default' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(area.value).toBe(baseView.defaultMagicPrompt);
+  // Like the Mac app, Reset saves the default at once.
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'magicPrompt', value: baseView.defaultMagicPrompt } }));
+});
+
+test('save_disabled_until_changed_then_sends_patch', async () => {
+  const area = await openMagic({
+    settings_get: { ...baseView, magicPrompt: 'saved' },
+    settings_update: { ...baseView, magicPrompt: 'edited' },
+  });
+  await waitFor(() => expect(area.value).toBe('saved'));
+  const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+  expect(save.disabled).toBe(true);
+  await fireEvent.input(area, { target: { value: 'edited\u0001' } });
+  expect(save.disabled).toBe(false);
+  await fireEvent.click(save);
+  expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'magicPrompt', value: 'edited\u0001' } });
+  // The draft becomes the sanitized saved value and Save is disabled again.
+  await waitFor(() => expect(area.value).toBe('edited'));
+  expect(save.disabled).toBe(true);
+});
+
+test('failed_save_keeps_the_draft', async () => {
+  const area = await openMagic({ settings_update: () => { throw "Couldn't save settings."; } });
+  await fireEvent.input(area, { target: { value: 'mine' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect((await screen.findByRole('alert')).textContent).toContain("Couldn't save settings.");
+  expect(area.value).toBe('mine');
+  expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+async function openAbout(overrides: Record<string, unknown> = {}) {
+  mockIpc(overrides);
+  render(Settings, { initialTab: 'about' });
+  await screen.findByRole('button', { name: 'Check for updates' });
+}
+
+test('about_shows_version_and_banner_on_update', async () => {
+  await openAbout({ settings_get: { ...baseView, version: '0.2.0', latestVersion: '9.9.9' }, open_url: undefined });
+  expect(screen.getByText('LingoPop')).toBeTruthy();
+  expect(screen.getByText('Version 0.2.0')).toBeTruthy();
+  expect(screen.getByText('Version 9.9.9 available')).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+  expect(invoke).toHaveBeenCalledWith('open_url', { url: RELEASES_PAGE_URL });
+  await fireEvent.click(screen.getByRole('button', { name: 'Privacy Policy' }));
+  expect(invoke).toHaveBeenCalledWith('open_url', { url: PRIVACY_URL });
+  expect(screen.getByText(/^Select text in any app/)).toBeTruthy();
+  expect(screen.getByText(/^Supports Claude, OpenAI/)).toBeTruthy();
+  const icon = document.querySelector('img') as HTMLImageElement;
+  expect([icon.getAttribute('src'), icon.width, icon.height, icon.alt]).toEqual(['/icon.png', 120, 120, '']);
+});
+
+test('no_banner_without_an_update', async () => {
+  await openAbout();
+  expect(screen.queryByText(/available$/)).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Download' })).toBeNull();
+});
+
+test('check_for_updates_invokes_and_stays_silent_on_null', async () => {
+  await openAbout({ updates_check: null });
+  await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('updates_check'));
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByText(/available$/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('check_for_updates_shows_banner_for_a_found_version', async () => {
+  await openAbout({ updates_check: '9.9.9' });
+  await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+  expect(await screen.findByText('Version 9.9.9 available')).toBeTruthy();
+});
+
+test('check_for_updates_rejection_is_silent', async () => {
+  await openAbout({ updates_check: new Error('boom') });
+  await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.queryByText(/boom/)).toBeNull();
+});

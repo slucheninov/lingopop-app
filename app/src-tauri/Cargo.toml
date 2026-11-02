@@ -23,7 +23,7 @@ tauri-plugin-single-instance = "=2.5.5"
 lingopop-core = { path = "../../crates/lingopop-core" }
 lingopop-orchestrator = { path = "../../crates/lingopop-orchestrator" }
 lingopop-platform = { path = "../../crates/lingopop-platform" }
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "time"] }
 uuid = "1"
 async-trait = "0.1.92"
 log = { version = "0.4", features = ["std"] }
@@ -38,3 +38,4 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt"] }
