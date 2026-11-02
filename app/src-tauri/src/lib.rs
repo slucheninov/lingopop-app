@@ -8,8 +8,10 @@ pub mod logging;
 pub mod paths;
 pub mod picker;
 pub mod popup_shell;
+pub mod settings_cmds;
 pub mod state;
 pub mod tray;
+pub mod windows;
 
 use std::error::Error;
 use std::sync::Arc;
@@ -21,7 +23,7 @@ use lingopop_core::runner::OperationRunner;
 use lingopop_core::time::{Clock, SystemClock};
 use lingopop_orchestrator::{ConfigSource, Deps, GateTimeouts, Orchestrator, PlatformGate};
 use lingopop_platform::LogFn;
-use tauri::{App, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{App, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
 use crate::commands::ShellState;
 use crate::popup_shell::{ShellPopup, POPUP_LABEL};
@@ -29,7 +31,7 @@ use crate::popup_shell::{ShellPopup, POPUP_LABEL};
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     let platform = lingopop_platform::native();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let (config, stores) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
+    let (config, stores, ui) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
 
     // Created hidden at startup so WebView2's first navigation (which can take focus) happens
     // long before the first hotkey.
@@ -67,11 +69,11 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     let hotkeys = config.settings().hotkeys;
     let dismiss = platform.dismiss.clone();
     let orchestrator = Orchestrator::new(Deps {
-        platform,
+        platform: platform.clone(),
         runner: Arc::new(runner),
         registry_has: Arc::new(move |provider| registry.get(provider).is_ok()),
-        config,
-        stores,
+        config: config.clone(),
+        stores: stores.clone(),
         popup: popup.clone(),
         gate: PlatformGate::new(GateTimeouts::default()),
         clock,
@@ -79,9 +81,26 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         picker: Arc::new(picker::NoPicker),
     });
 
+    let events = app.handle().clone();
+    stores.set_on_change(Arc::new(move |kind| {
+        let event = match kind {
+            state::StoreKind::History => "history://changed",
+            state::StoreKind::Usage => "usage://changed",
+        };
+        let _ = events.emit(event, ());
+    }));
     app.manage(ShellState {
         orchestrator: orchestrator.clone(),
         popup,
+        config,
+        stores,
+        ui,
+        platform,
+        hooks: Arc::new(settings_cmds::NoSettingsHooks),
+        window_locks: [windows::SETTINGS_LABEL, windows::HISTORY_LABEL]
+            .into_iter()
+            .map(|label| (label, tokio::sync::Mutex::new(())))
+            .collect(),
     });
 
     dismiss::spawn_forwarder(dismiss.as_ref(), orchestrator.clone());
@@ -102,12 +121,19 @@ pub fn run() {
     logging::init(&data_dir);
 
     let app = tauri::Builder::default()
-        // A second launch just exits (Phase 4b may open Settings here). Registered first.
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        // Registered first; callbacks only schedule window creation.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            windows::open_settings(app, None)
+        }))
         .invoke_handler(tauri::generate_handler![
             commands::popup_action,
             commands::popup_resized,
-            commands::popup_ready
+            commands::popup_ready,
+            settings_cmds::settings_get,
+            settings_cmds::settings_update,
+            settings_cmds::ui_update,
+            settings_cmds::ui_bootstrap,
+            settings_cmds::open_url
         ])
         .setup(move |app| setup(app, &data_dir))
         .build(tauri::generate_context!());
@@ -131,3 +157,6 @@ pub fn run() {
         }
     });
 }
+
+#[cfg(test)]
+mod task4_tests;

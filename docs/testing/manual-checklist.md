@@ -33,3 +33,11 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] With Google (Free) active, click Rewrite and Explain. Expected: a clear message that the provider does not support the operation (no crash, no empty popup).
 - [x] Start LingoPop normally and Notepad as administrator ("Run as administrator"). Select text in Notepad and press the hotkey. Expected: the message that LingoPop can't reach an app running as administrator (it closes by itself after ~6 s or with x); nothing is pasted or typed; the clipboard is unchanged.
 - [x] Start LingoPop as administrator too and repeat in elevated Notepad. Expected: capture and Replace work.
+
+### Phase 4b shell foundation
+
+- [ ] A second launch opens/focuses Settings; rapid requests create one settings window. Closing it destroys the window and a later request recreates it.
+- [ ] Settings is centered, fixed at 720x560; History starts at 540x480, resizes down to 480x360; both show localized titles. (Frontend routing arrives in later Phase 4b tasks.)
+- [ ] Opening Settings to About delivers the initial tab after bootstrap; reopening an already live settings window switches tabs via `settings://tab`.
+- [ ] Allowed release/documentation links launch the default browser; foreign URLs/traversal are refused without logging the URL.
+- [ ] With Windows UI language Ukrainian/German, system language resolves accordingly; explicit app language overrides it and changes require relaunch.

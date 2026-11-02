@@ -1021,3 +1021,9 @@ unsafe extern "system" fn escape_probe_proc(hwnd: HWND, msg: u32, w: WPARAM, l: 
     // SAFETY: forwards the original window-procedure arguments unchanged.
     unsafe { DefWindowProcW(hwnd, msg, w, l) }
 }
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn ui_languages_non_empty_on_desktop() {
+    assert!(!lingopop_platform::native().system.ui_languages().is_empty());
+}

@@ -63,3 +63,6 @@ pub use sleeper::{retry_busy, Sleeper, SystemSleeper};
 
 pub use dismiss::{classify_click, DismissEvent, DismissWatcher};
 pub use popup_window::NoActivateWindow;
+
+pub mod system;
+pub use system::SystemInfo;

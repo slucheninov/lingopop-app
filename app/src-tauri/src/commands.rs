@@ -18,6 +18,12 @@ use crate::popup_shell::ShellPopup;
 pub struct ShellState {
     pub orchestrator: Orchestrator,
     pub popup: Arc<ShellPopup>,
+    pub config: Arc<crate::state::ShellConfig>,
+    pub stores: Arc<crate::state::ShellStores>,
+    pub ui: Arc<crate::state::UiState>,
+    pub platform: lingopop_platform::Platform,
+    pub hooks: Arc<dyn crate::settings_cmds::SettingsHooks>,
+    pub window_locks: std::collections::BTreeMap<&'static str, tokio::sync::Mutex<()>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

@@ -108,6 +108,7 @@ fn rig_full(
         Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string()));
     let orch = Orchestrator::new(Deps {
         platform: Platform {
+            system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
             popup_window: Arc::new(FakePopupWindow::default()),
             dismiss: dismiss.clone(),
             clipboard: clip.clone(),

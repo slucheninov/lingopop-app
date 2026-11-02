@@ -169,6 +169,7 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         threads: Mutex::new(Vec::new()),
     });
     let platform = Platform {
+        system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
         popup_window: Arc::new(FakePopupWindow::default()),
         dismiss: Arc::new(FakeDismissWatcher::default()),
         clipboard: clipboard.clone(),

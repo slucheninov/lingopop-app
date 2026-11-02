@@ -113,5 +113,15 @@
     "de": "Wird verarbeitet…",
     "pl": "Przetwarzanie…",
     "uk": "Обробка…"
+  },
+  "Couldn't save settings.": {
+    "pl": "Nie udało się zapisać ustawień.",
+    "uk": "Не вдалося зберегти налаштування.",
+    "de": "Einstellungen konnten nicht gespeichert werden."
+  },
+  "Link not allowed.": {
+    "pl": "Link jest niedozwolony.",
+    "uk": "Посилання не дозволено.",
+    "de": "Link nicht erlaubt."
   }
 }

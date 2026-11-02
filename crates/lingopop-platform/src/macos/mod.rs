@@ -19,3 +19,6 @@ pub use ocr::MacOcr;
 mod popup_window;
 pub use popup_window::MacDismissWatcher;
 pub use popup_window::MacPopupWindow;
+
+mod system;
+pub use system::MacSystem;
