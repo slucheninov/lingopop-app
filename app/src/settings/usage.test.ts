@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { invoke } from '@tauri-apps/api/core';
@@ -146,6 +147,7 @@ test('stale_usage_response_does_not_overwrite_post_reset_data', async () => {
   const old = { ...usageView, tokensLabel: 'OLD' };
   const fresh = { ...usageView, tokensLabel: 'ZERO' };
   let release: (v: UsageView) => void = () => {};
+  let finishReset: () => void = () => {};
   let reads = 0;
   mockIpc({
     usage_get: () => {
@@ -154,7 +156,7 @@ test('stale_usage_response_does_not_overwrite_post_reset_data', async () => {
       if (reads === 2) return new Promise<UsageView>(resolve => { release = resolve; });
       return fresh;
     },
-    usage_reset: undefined,
+    usage_reset: () => new Promise<void>(resolve => { finishReset = resolve; }),
   });
   render(Settings, { initialTab: 'usage' });
   await screen.findByRole('button', { name: 'Reset stats…' });
@@ -163,9 +165,37 @@ test('stale_usage_response_does_not_overwrite_post_reset_data', async () => {
   await waitFor(() => expect(reads).toBe(2));
   await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-  await screen.findByText('ZERO');
+  await waitFor(() => expect(calls('usage_reset')).toHaveLength(1));
   release(old);
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await tick();
+  await new Promise(resolve => setTimeout(resolve, 0));
   expect(screen.queryByText('OLD')).toBeNull();
-  expect(screen.getByText('ZERO')).toBeTruthy();
+  finishReset();
+  await screen.findByText('ZERO');
+  expect(screen.queryByText('OLD')).toBeNull();
+});
+
+test('failed_reset_reloads_usage_discarded_by_the_generation_bump', async () => {
+  const loaded = { ...usageView, tokensLabel: 'LOADED' };
+  let release: (v: UsageView) => void = () => {};
+  let reads = 0;
+  mockIpc({
+    usage_get: () => {
+      reads += 1;
+      if (reads === 1) return new Promise<UsageView>(resolve => { release = resolve; });
+      return loaded;
+    },
+    usage_reset: () => { throw "Usage statistics couldn't be reset."; },
+  });
+  render(Settings, { initialTab: 'usage' });
+  await screen.findByRole('button', { name: 'Reset stats…' });
+  await waitFor(() => expect(reads).toBe(1));
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect((await screen.findByRole('alert')).textContent).toBe("Usage statistics couldn't be reset.");
+  await waitFor(() => expect(reads).toBe(2));
+  await screen.findByText('LOADED');
+  release({ ...usageView, tokensLabel: 'STALE' });
+  await tick();
+  expect(screen.queryByText('STALE')).toBeNull();
 });

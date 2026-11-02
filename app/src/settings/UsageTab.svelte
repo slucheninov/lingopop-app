@@ -63,7 +63,10 @@
       void load();
     } catch (error) {
       // A rejection is a catalog key. Keep the last view and do not log it.
-      if (!disposed) resetError = typeof error === 'string' ? error : "Usage statistics couldn't be reset.";
+      if (disposed) return;
+      resetError = typeof error === 'string' ? error : "Usage statistics couldn't be reset.";
+      // The generation bump above discarded any read in flight: replace it.
+      void load();
     }
   }
 
