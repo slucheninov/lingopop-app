@@ -25,7 +25,7 @@ impl SettingsHooks for NoSettingsHooks {
     fn launch_at_login(&self, _: bool) {}
     fn hotkeys(&self, _: &BTreeMap<AIOperation, Hotkey>) {}
 }
-#[derive(Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HotkeyStatus {
     Registered,
@@ -74,11 +74,13 @@ pub struct SettingsView {
     pub providers: Vec<ProviderSummary>,
 }
 pub fn settings_view(state: &ShellState) -> SettingsView {
-    settings_view_parts(
+    let mut view = settings_view_parts(
         &state.config,
         &state.ui,
         &state.platform.system.ui_languages(),
-    )
+    );
+    view.hotkey_status = state.hotkeys.status();
+    view
 }
 pub fn settings_view_parts(
     config: &ShellConfig,
@@ -187,6 +189,30 @@ pub enum UiPatch {
     PopupFontSize(u32),
     AppLanguage(AppLanguage),
 }
+pub fn error_with_args(key: &str, args: &[&str]) -> String {
+    std::iter::once(key)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join("|")
+}
+pub fn validate_patch(s: &Settings, patch: &SettingsPatch) -> Result<(), String> {
+    if let SettingsPatch::Hotkey {
+        operation,
+        hotkey: Some(h),
+    } = patch
+    {
+        if !h.is_valid() {
+            return Err(error_with_args("This shortcut can't be registered.", &[]));
+        }
+        if let Some(other) = lingopop_core::hotkey::duplicate_of(&s.hotkeys, h, *operation) {
+            return Err(error_with_args(
+                "Already used by %@.",
+                &[other.english_name()],
+            ));
+        }
+    }
+    Ok(())
+}
 pub fn apply_patch(s: &mut Settings, patch: SettingsPatch) {
     match patch {
         SettingsPatch::TargetLanguage(v) => s.target_language = v,
@@ -202,6 +228,24 @@ pub fn apply_patch(s: &mut Settings, patch: SettingsPatch) {
         SettingsPatch::Fallback { provider, fallback } => s.set_fallback(fallback, provider),
         SettingsPatch::Hotkey { operation, hotkey } => s.set_hotkey(operation, hotkey),
     }
+}
+/// Caller holds settings_write through validation, save and committed-state effects.
+pub(crate) fn save_patch(
+    config: &ShellConfig,
+    patch: SettingsPatch,
+    language: Language,
+) -> Result<(), String> {
+    validate_patch(&config.settings(), &patch)?;
+    config
+        .update_settings(|s| apply_patch(s, patch))
+        .map_err(|e| {
+            match e {
+                SettingsError::Io(e) => log::warn!("settings save failed: {:?}", e.kind()),
+                _ => log::warn!("settings save failed: encoding"),
+            };
+            i18n::t(language, "Couldn't save settings.", &[])
+        })?;
+    Ok(())
 }
 /// Called under ShellState.settings_write after the save, with no std config guard held.
 /// Re-read the committed settings so no effect consumes an earlier save result.
@@ -238,16 +282,7 @@ pub async fn settings_update(
     let trim = matches!(patch, SettingsPatch::MaxHistoryCount(_));
     let launch = matches!(patch, SettingsPatch::LaunchAtLogin(_));
     let hotkeys = matches!(patch, SettingsPatch::Hotkey { .. });
-    state
-        .config
-        .update_settings(|s| apply_patch(s, patch))
-        .map_err(|e| {
-            match e {
-                SettingsError::Io(e) => log::warn!("settings save failed: {:?}", e.kind()),
-                _ => log::warn!("settings save failed: encoding"),
-            };
-            i18n::t(state.ui.language(), "Couldn't save settings.", &[])
-        })?;
+    save_patch(&state.config, patch, state.ui.language())?;
     apply_settings_effects(
         &state.config,
         &state.stores,

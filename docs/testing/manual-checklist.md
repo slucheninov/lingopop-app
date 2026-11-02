@@ -53,3 +53,10 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Type `http://x` into Endpoint. Expected: the https message appears and Save is disabled; fix it and Save works.
 - [ ] Rename `secrets.dat` to something unreadable (e.g. replace its content with text) and restart. Expected: Providers shows the `secrets.dat is unreadable` message instead of the key field and Save is disabled; the file is not modified.
 - [ ] `How to get an API key` opens the matching section of `docs/api-keys.md` in the default browser.
+
+- [ ] Settings → Shortcuts: click a field, record a modified chord, and use the new chord immediately.
+- [ ] Record a chord owned by another app: the conflict line appears; the remaining shortcuts still work.
+- [ ] Record a chord already assigned to another operation: the duplicate line names that operation; the saved shortcut stays unchanged.
+- [ ] Press the Translate chord while recording: it is recorded instead of triggering a translation.
+- [ ] Start recording, then blur or close Settings: all saved shortcuts resume; closing after blur leaves them registered.
+- [ ] Assign Screen Translate a chord: it starts the flow and cancels silently at NoPicker until Task 13 supplies the region picker.

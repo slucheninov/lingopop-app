@@ -16,6 +16,7 @@ use crate::popup_shell::ShellPopup;
 
 /// Managed state shared by the commands.
 pub struct ShellState {
+    pub hotkeys: crate::hotkeys::HotkeyRegistry,
     pub orchestrator: Orchestrator,
     pub popup: Arc<ShellPopup>,
     pub config: Arc<crate::state::ShellConfig>,

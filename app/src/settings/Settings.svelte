@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { t } from '../lib/i18n';
+  import { renderError } from '../lib/ipcError';
   import { getSettings, updateSetting, updateUi } from '../lib/settingsIpc';
   import type { SettingsPatch, SettingsView, TabId, UiPatch } from '../lib/settingsTypes';
   import Tabs from './Tabs.svelte';
@@ -37,7 +38,7 @@
   let readQueued = false;
   let queue: Promise<unknown> = Promise.resolve();
   /** Resolves `true` when the call succeeded (a write: the shell saved the change). */
-  function enqueue(send: () => Promise<SettingsView>, kind: 'write' | 'read', reportFailure: boolean): Promise<boolean> {
+  function enqueue(send: () => Promise<SettingsView>, kind: 'write' | 'read', reportFailure: boolean, onError?: (key: string) => void): Promise<boolean> {
     pending++;
     const job = queue.then(async () => {
       if (kind === 'read') readQueued = false;
@@ -51,7 +52,10 @@
         if (pending === 0) view = next;
         if (reportFailure) failure = null;
       } else {
-        if (reportFailure) show(rejection);
+        if (reportFailure) {
+          if (onError) onError(typeof rejection === 'string' ? rejection : "Couldn't save settings.");
+          else show(rejection);
+        }
         if (kind === 'write' && pending === 0) {
           // The refused change is not persisted: show what is (outside the queue, which this job still holds).
           try { const saved = await getSettings(); if (!disposed && pending === 0) view = saved; } catch { /* keep the error */ }
@@ -65,7 +69,7 @@
   const load = () => enqueue(getSettings, 'read', true);
   const signal = () => { if (!readQueued) { readQueued = true; void enqueue(getSettings, 'read', false); } };
   const mutate = (send: () => Promise<SettingsView>) => enqueue(send, 'write', true);
-  const onPatch = (patch: SettingsPatch) => mutate(() => updateSetting(patch));
+  const onPatch = (patch: SettingsPatch, onError?: (key: string) => void) => enqueue(() => updateSetting(patch), 'write', true, onError);
   const onUiPatch = (patch: UiPatch) => mutate(() => updateUi(patch));
 
   onMount(() => {
@@ -83,7 +87,7 @@
 <div class="frame">
   <Tabs {active} onSelect={tab => { active = tab; }} />
   <div class="panel" role="tabpanel" id={`panel-${active}`} aria-labelledby={`tab-${active}`} aria-label={TITLES[active]()}>
-    {#if failure}<p class="error" role="alert">{t(failure)}</p>{/if}
+    {#if failure}<p class="error" role="alert">{renderError(failure)}</p>{/if}
     {#if view}
       {#key active}
         {#await BODIES[active]() then body}

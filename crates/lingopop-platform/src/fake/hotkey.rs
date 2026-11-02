@@ -1,7 +1,7 @@
 //! In-memory `HotkeyService`: registers chords, simulates conflicts and delivers fired events.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::{Receiver, Sender};
 use lingopop_core::hotkey::Hotkey;
@@ -9,9 +9,11 @@ use lingopop_core::hotkey::Hotkey;
 use crate::error::PlatformError;
 use crate::hotkey::{to_chord, HotkeyEvent, HotkeyId, HotkeyService};
 
+/// Clones share registrations and events, allowing tests to observe an installed service.
+#[derive(Clone)]
 pub struct FakeHotkeyService {
-    registered: Mutex<HashMap<u32, Hotkey>>,
-    blocked: Mutex<HashSet<u32>>,
+    registered: Arc<Mutex<HashMap<u32, Hotkey>>>,
+    blocked: Arc<Mutex<HashSet<u32>>>,
     tx: Sender<HotkeyEvent>,
     rx: Receiver<HotkeyEvent>,
 }
@@ -32,11 +34,18 @@ impl FakeHotkeyService {
     pub fn new() -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
         Self {
-            registered: Mutex::default(),
-            blocked: Mutex::default(),
+            registered: Arc::default(),
+            blocked: Arc::default(),
             tx,
             rx,
         }
+    }
+
+    pub fn registered_count(&self) -> usize {
+        self.registered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// Simulates another application owning this chord: registering it is a `HotkeyConflict`.

@@ -143,5 +143,10 @@
     "pl": "Nieprawidłowe ustawienia dostawcy.",
     "uk": "Некоректні налаштування провайдера.",
     "de": "Ungültige Anbietereinstellungen."
+  },
+  "Clear %@": {
+    "pl": "Wyczyść %@",
+    "uk": "Очистити %@",
+    "de": "%@ löschen"
   }
 }

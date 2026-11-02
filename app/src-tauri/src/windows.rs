@@ -45,7 +45,25 @@ async fn open_window(app: AppHandle, label: &'static str) {
             .min_inner_size(480.0, 360.0)
             .resizable(true)
     };
-    if builder.build().is_err() {
-        log::warn!("window creation failed: {label}");
+    match builder.build() {
+        Ok(window) if label == SETTINGS_LABEL => {
+            let registry = state.hotkeys.clone();
+            window.on_window_event(move |event| on_settings_window_event(&registry, event));
+        }
+        Ok(_) => {}
+        Err(_) => log::warn!("window creation failed: {label}"),
+    }
+}
+
+/// Synchronous window callbacks only post a registry transition; they never wait or create windows.
+pub fn on_settings_window_event(
+    registry: &crate::hotkeys::HotkeyRegistry,
+    event: &tauri::WindowEvent,
+) {
+    if matches!(
+        event,
+        tauri::WindowEvent::Destroyed | tauri::WindowEvent::Focused(false)
+    ) {
+        registry.suspend(false);
     }
 }

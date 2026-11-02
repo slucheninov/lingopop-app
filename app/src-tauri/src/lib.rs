@@ -57,6 +57,7 @@ impl LoginSpawn for InlineLogin {
 }
 
 pub(crate) struct ShellHooks {
+    hotkeys: Option<hotkeys::HotkeyRegistry>,
     login: Arc<dyn lingopop_platform::LoginItem>,
     spawn: Arc<dyn LoginSpawn>,
     serial: Arc<std::sync::Mutex<()>>,
@@ -65,6 +66,7 @@ pub(crate) struct ShellHooks {
 impl ShellHooks {
     pub(crate) fn new(login: Arc<dyn lingopop_platform::LoginItem>) -> Self {
         Self {
+            hotkeys: None,
             login,
             spawn: Arc::new(BlockingLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
@@ -75,6 +77,7 @@ impl ShellHooks {
     #[cfg(test)]
     pub(crate) fn synchronous(login: Arc<dyn lingopop_platform::LoginItem>) -> Self {
         Self {
+            hotkeys: None,
             login,
             spawn: Arc::new(InlineLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
@@ -105,11 +108,14 @@ impl SettingsHooks for ShellHooks {
 
     fn hotkeys(
         &self,
-        _hotkeys: &std::collections::BTreeMap<
+        hotkeys: &std::collections::BTreeMap<
             lingopop_core::operation::AIOperation,
             lingopop_core::hotkey::Hotkey,
         >,
     ) {
+        if let Some(registry) = &self.hotkeys {
+            registry.apply(hotkeys.clone());
+        }
     }
 }
 
@@ -190,9 +196,19 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         };
         let _ = events.emit(event, ());
     }));
-    let hooks: Arc<dyn SettingsHooks> = Arc::new(ShellHooks::new(platform.login_item.clone()));
+    let events = app.handle().clone();
+    let hotkey_registry = hotkeys::HotkeyRegistry::new(
+        Arc::new(hotkeys::TauriMainThread(app.handle().clone())),
+        Arc::new(move || {
+            let _ = events.emit("settings://changed", ());
+        }),
+    );
+    let mut shell_hooks = ShellHooks::new(platform.login_item.clone());
+    shell_hooks.hotkeys = Some(hotkey_registry.clone());
+    let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);
     apply_startup_login(hooks.as_ref(), config.settings().launch_at_login);
     app.manage(ShellState {
+        hotkeys: hotkey_registry.clone(),
         orchestrator: orchestrator.clone(),
         popup,
         config,
@@ -208,10 +224,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     });
 
     dismiss::spawn_forwarder(dismiss.as_ref(), orchestrator.clone());
-    // `setup` runs on the event-loop thread, as `GlobalHotkeyService` requires.
-    if let Err(e) = hotkeys::install(orchestrator, &hotkeys) {
-        log::error!("hotkeys are unavailable: {e}");
-    }
+    hotkeys::install(&hotkey_registry, orchestrator, &hotkeys);
     tray::build(app)?;
     log::info!("LingoPop started");
     Ok(())
@@ -251,6 +264,7 @@ pub fn run() {
             provider_cmds::provider_validate,
             provider_cmds::provider_save,
             provider_cmds::provider_clear_key,
+            hotkeys::hotkeys_suspend,
             commands::app_relaunch
         ])
         .setup(move |app| setup(app, &data_dir))
