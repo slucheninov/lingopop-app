@@ -76,6 +76,34 @@ impl SecretProtector for FailingProtector {
     }
 }
 
+/// Lets the first (connection) write through and fails every later one (the key write).
+struct FailsAfterFirst(std::sync::atomic::AtomicUsize);
+impl SecretProtector for FailsAfterFirst {
+    fn protect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            Ok(d.to_vec())
+        } else {
+            Err(ProtectError::Failed("protect boom".into()))
+        }
+    }
+    fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+        Ok(d.to_vec())
+    }
+}
+
+#[test]
+fn provider_save_key_write_failure_keeps_the_key_message() {
+    let mut bundle = platform();
+    bundle.protector = Arc::new(FailsAfterFirst(Default::default()));
+    let (c, _, _) = load(
+        &DataPaths::new(tempfile::tempdir().unwrap().path()),
+        &bundle,
+        Arc::new(SystemClock),
+    );
+    let error = save_draft(&c, ProviderType::OpenAI, &draft("sk-1", "https://x")).unwrap_err();
+    assert_eq!(error, KEY_KEY_NOT_SAVED);
+}
+
 static LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 struct Capture;
 impl log::Log for Capture {
@@ -113,6 +141,8 @@ fn provider_save_response_and_logs_never_contain_key() {
     );
     let error = save_draft(&c, ProviderType::OpenAI, &draft("sk-1", "https://x")).unwrap_err();
     assert!(!error.contains("sk-1"));
+    // The connection write failed before the key was reached: the settings message, not the key one.
+    assert_eq!(error, KEY_SETTINGS_NOT_SAVED);
     let lines = LINES.lock().unwrap().clone();
     assert!(!lines.is_empty(), "the failure is logged");
     for line in &lines {
@@ -278,6 +308,7 @@ fn provider_error_keys_are_translated_in_every_catalog() {
         KEY_INVALID,
         KEY_UNREADABLE,
         KEY_KEY_NOT_SAVED,
+        KEY_SETTINGS_NOT_SAVED,
         "Base URL must start with https://",
         "Referer must not contain control characters",
         "Region may only contain letters, digits, '-' and '_'",

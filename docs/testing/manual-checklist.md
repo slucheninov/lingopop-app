@@ -42,6 +42,13 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Allowed release/documentation links launch the default browser; foreign URLs/traversal are refused without logging the URL.
 - [ ] With Windows UI language Ukrainian/German, system language resolves accordingly; explicit app language overrides it and changes require relaunch.
 
+### Settings: second launch and Main tab
+
+- [ ] With Settings closed, launch `lingopop.exe` a second time. Expected: the second process exits and the Settings window opens; with Settings already open, a further launch focuses it instead of creating another one.
+- [ ] Settings > Main: change the target language, auto-detect, language pairs, limits and Launch at login, quit from the tray and start again. Expected: every value is still as set.
+- [ ] Move the popup font size slider (11 to 20), then trigger a translation. Expected: the result text and the header (provider / language line) use the new size, the header two points smaller; with a popup already visible the size changes live.
+- [ ] Change the app language (for example to Polski). Expected: the `Relaunch` prompt appears at once; click Relaunch. Expected: LingoPop restarts (no second tray icon) and Settings and the popup now show Polish.
+
 ### Launch at login
 
 - [ ] Enable Launch at login, sign out and in: LingoPop starts; disable: it does not; move the exe and start it: the Run value is rewritten to the new path.

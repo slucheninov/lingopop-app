@@ -202,7 +202,11 @@ pub fn error_with_args(key: &str, args: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join("|")
 }
-pub fn validate_patch(s: &Settings, patch: &SettingsPatch) -> Result<(), String> {
+pub fn validate_patch(
+    s: &Settings,
+    patch: &SettingsPatch,
+    language: Language,
+) -> Result<(), String> {
     if let SettingsPatch::Hotkey {
         operation,
         hotkey: Some(h),
@@ -212,10 +216,9 @@ pub fn validate_patch(s: &Settings, patch: &SettingsPatch) -> Result<(), String>
             return Err(error_with_args("This shortcut can't be registered.", &[]));
         }
         if let Some(other) = lingopop_core::hotkey::duplicate_of(&s.hotkeys, h, *operation) {
-            return Err(error_with_args(
-                "Already used by %@.",
-                &[other.english_name()],
-            ));
+            // The operation name is a mac catalog key: show it in the launched language.
+            let name = i18n::t(language, other.english_name(), &[]);
+            return Err(error_with_args("Already used by %@.", &[name.as_str()]));
         }
     }
     Ok(())
@@ -242,7 +245,7 @@ pub(crate) fn save_patch(
     patch: SettingsPatch,
     language: Language,
 ) -> Result<(), String> {
-    validate_patch(&config.settings(), &patch)?;
+    validate_patch(&config.settings(), &patch, language)?;
     config
         .update_settings(|s| apply_patch(s, patch))
         .map_err(|e| {

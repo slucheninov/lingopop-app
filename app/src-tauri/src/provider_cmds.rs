@@ -20,6 +20,8 @@ pub const KEY_INVALID: &str = "Invalid provider settings.";
 pub const KEY_UNREADABLE: &str = "Provider settings can't be saved because secrets.dat is unreadable. Remove or rename it and enter your keys again.";
 pub const KEY_KEY_NOT_SAVED: &str =
     "Couldn't save the API key. Check that the data folder is writable.";
+/// The connection write failed before the key was reached.
+pub const KEY_SETTINGS_NOT_SAVED: &str = "Couldn't save settings.";
 
 const KEY_GUIDE_BASE: &str =
     "https://github.com/slucheninov/lingopop-app/blob/main/docs/api-keys.md#";
@@ -145,7 +147,7 @@ pub fn save_draft(
             }
             SecretsWriteError::Store(_) => {
                 log_write_failure("save", &e);
-                KEY_KEY_NOT_SAVED
+                KEY_SETTINGS_NOT_SAVED
             }
         })?;
     if let Some(key) = draft.trimmed_api_key() {

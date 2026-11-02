@@ -226,6 +226,19 @@ test('secrets_unavailable_disables_key_entry', async () => {
   expect(saveButton().disabled).toBe(true);
 });
 
+test('secrets_unavailable_blocks_a_keyless_provider_with_the_reason_once', async () => {
+  setup({ provider_state: providerState({ secretsUnavailable: true }) }, viewWith({ activeProvider: 'Google (Free)' }));
+  await openProviders();
+  expect(await screen.findAllByText(/secrets\.dat is unreadable/)).toHaveLength(1);
+  expect(saveButton().disabled).toBe(true);
+});
+
+test('secrets_unavailable_shows_the_reason_once_for_a_key_provider', async () => {
+  setup({ provider_state: providerState({ secretsUnavailable: true }) });
+  await openProviders();
+  expect(await screen.findAllByText(/secrets\.dat is unreadable/)).toHaveLength(1);
+});
+
 test('corrupt_connections_block_save', async () => {
   setup({ provider_state: providerState({ connectionsCorrupt: true }) });
   await openProviders();

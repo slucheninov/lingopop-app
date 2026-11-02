@@ -28,7 +28,7 @@ test('recorder_suspends_while_recording_and_recorded_chord_sends_hotkey_patch', 
   expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'hotkey', value: { operation: 'explain', hotkey: { key: 'KeyE', modifiers: ['ctrl', 'alt'] } } } });
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('hotkeys_suspend', { suspended: false }));
   await fireEvent.click(field); await fireEvent.blur(field);
-  expect(vi.mocked(invoke).mock.calls.filter(c => c[0] === 'hotkeys_suspend' && (c[1] as {suspended: boolean}).suspended === false)).toHaveLength(2);
+  await waitFor(() => expect(vi.mocked(invoke).mock.calls.filter(c => c[0] === 'hotkeys_suspend' && (c[1] as {suspended: boolean}).suspended === false)).toHaveLength(2));
 });
 test('clear_button_only_when_set_and_sends_null', async () => {
   await open();
@@ -52,5 +52,31 @@ test('escape_and_unmount_resume', async () => {
   await fireEvent.keyDown(field, { code: 'Escape' });
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('hotkeys_suspend', { suspended: false }));
   await fireEvent.click(field); cleanup();
-  expect(vi.mocked(invoke).mock.calls.filter(c => c[0] === 'hotkeys_suspend' && (c[1] as {suspended: boolean}).suspended === false)).toHaveLength(2);
+  await waitFor(() => expect(vi.mocked(invoke).mock.calls.filter(c => c[0] === 'hotkeys_suspend' && (c[1] as {suspended: boolean}).suspended === false)).toHaveLength(2));
+});
+test('blur_during_the_suspend_request_resumes_only_after_it_settled', async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const field = await open({ hotkeys_suspend: (args: { suspended: boolean }) => (args.suspended ? gate : undefined) });
+  const suspends = () => vi.mocked(invoke).mock.calls.filter(c => c[0] === 'hotkeys_suspend').map(c => (c[1] as { suspended: boolean }).suspended);
+  await fireEvent.click(field);
+  await waitFor(() => expect(suspends()).toEqual([true]));
+  await fireEvent.blur(field);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(suspends()).toEqual([true]);
+  release();
+  await waitFor(() => expect(suspends()).toEqual([true, false]));
+});
+test('unmount_while_the_suspend_request_is_pending_still_resumes_after_it', async () => {
+  let release: () => void = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const field = await open({ hotkeys_suspend: (args: { suspended: boolean }) => (args.suspended ? gate : undefined) });
+  const suspends = () => vi.mocked(invoke).mock.calls.filter(c => c[0] === 'hotkeys_suspend').map(c => (c[1] as { suspended: boolean }).suspended);
+  await fireEvent.click(field);
+  await waitFor(() => expect(suspends()).toEqual([true]));
+  cleanup();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(suspends()).toEqual([true]);
+  release();
+  await waitFor(() => expect(suspends()).toEqual([true, false]));
 });

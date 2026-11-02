@@ -10,10 +10,18 @@
   let busy = $state(false);
   let failure = $state<string | null>(null);
   let disposed = false;
+  // Suspend calls are chained: each waits for the previous one to settle, so a `false` (blur, Esc, unmount)
+  // can never reach the shell before the `true` it undoes, whatever order the async Tauri tasks would run in.
+  let inFlight: Promise<unknown> = Promise.resolve();
+  function suspend(suspended: boolean): Promise<unknown> {
+    const run = inFlight.then(() => invoke('hotkeys_suspend', { suspended }));
+    inFlight = run.catch(() => {});
+    return run;
+  }
   async function stop() {
     if (!recording) return;
     recording = false;
-    try { await invoke('hotkeys_suspend', { suspended: false }); }
+    try { await suspend(false); }
     catch (e) { if (!disposed) failure = typeof e === 'string' ? e : "Couldn't save settings."; }
   }
   async function toggle() {
@@ -22,7 +30,7 @@
     recording = true;
     failure = null;
     busy = true;
-    try { await invoke('hotkeys_suspend', { suspended: true }); }
+    try { await suspend(true); }
     catch (e) { recording = false; failure = typeof e === 'string' ? e : "Couldn't save settings."; }
     finally { busy = false; }
   }

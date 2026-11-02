@@ -208,6 +208,21 @@ fn settings_update_hotkey_rejects_duplicate() {
     );
 }
 #[test]
+fn settings_update_hotkey_duplicate_names_the_operation_in_the_launched_language() {
+    use lingopop_core::ui_prefs::Language;
+    for (language, name) in [
+        (Language::Pl, "Tłumacz"),
+        (Language::Uk, "Перекласти"),
+        (Language::De, "Übersetzen"),
+    ] {
+        rejected_patch_in(
+            Hotkey::new("KeyT", [Modifier::Alt, Modifier::Ctrl]),
+            &format!("Already used by %@.|{name}"),
+            language,
+        );
+    }
+}
+#[test]
 fn settings_update_hotkey_rejects_invalid() {
     rejected_patch_keeps_settings(
         Hotkey::new("KeyT", []),
@@ -215,6 +230,9 @@ fn settings_update_hotkey_rejects_invalid() {
     );
 }
 fn rejected_patch_keeps_settings(hotkey: Hotkey, error: &str) {
+    rejected_patch_in(hotkey, error, lingopop_core::ui_prefs::Language::En);
+}
+fn rejected_patch_in(hotkey: Hotkey, error: &str, language: lingopop_core::ui_prefs::Language) {
     let dir = tempfile::tempdir().unwrap();
     let (config, _, _) = crate::task4_tests::rig(dir.path());
     config.update_settings(|_| {}).unwrap();
@@ -225,7 +243,7 @@ fn rejected_patch_keeps_settings(hotkey: Hotkey, error: &str) {
         hotkey: Some(hotkey),
     };
     assert_eq!(
-        crate::settings_cmds::save_patch(&config, patch, lingopop_core::ui_prefs::Language::En),
+        crate::settings_cmds::save_patch(&config, patch, language),
         Err(error.into())
     );
     assert_eq!(config.settings().to_json_bytes().unwrap(), before);

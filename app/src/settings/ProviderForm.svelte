@@ -125,9 +125,7 @@
     {#if info.requiresKey}
       <section>
         <h3>{t('API key')}</h3>
-        {#if blocked}
-          <p class="field-error">{t("Provider settings can't be saved because secrets.dat is unreadable. Remove or rename it and enter your keys again.")}</p>
-        {:else}
+        {#if !blocked}
           <div class="row">
             <span class="keystate" class:stored={info.hasKey}>{@html info.hasKey ? icons.check : icons.key}<span>{info.hasKey ? t('A key is stored') : t('No key set')}</span></span>
             {#if info.hasKey}<button type="button" onclick={clearKey}>{t('Clear')}</button>{/if}
@@ -208,6 +206,7 @@
 
     <div class="footer">
       {#if saved}<span class="saved">{@html icons.check}{t('Saved')}</span>{/if}
+      {#if blocked}<p class="field-error">{t("Provider settings can't be saved because secrets.dat is unreadable. Remove or rename it and enter your keys again.")}</p>{/if}
       {#if !info.requiresKey}{@render errorLine()}{/if}
       <span class="spacer"></span>
       <button type="submit" class="primary" disabled={blocked || invalid || saving}>{t('Save')}</button>
