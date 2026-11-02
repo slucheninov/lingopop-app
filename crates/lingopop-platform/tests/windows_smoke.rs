@@ -1116,8 +1116,10 @@ fn query_sz(subkey: &str, value: &str) -> Result<String, u32> {
         }
         buf.truncate(got as usize);
         let units: Vec<u16> = buf
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_le_bytes(*chunk))
             .take_while(|unit| *unit != 0)
             .collect();
         Ok(String::from_utf16_lossy(&units))
