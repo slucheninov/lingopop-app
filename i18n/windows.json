@@ -148,5 +148,10 @@
     "pl": "Wyczyść %@",
     "uk": "Очистити %@",
     "de": "%@ löschen"
+  },
+  "Usage statistics couldn't be read.": {
+    "de": "Nutzungsstatistiken konnten nicht gelesen werden.",
+    "pl": "Nie udało się odczytać statystyk użycia.",
+    "uk": "Не вдалося прочитати статистику використання."
   }
 }

@@ -18,7 +18,12 @@
   let period = $state<UsagePeriod>('days30');
   let usage = $state<UsageView | null>(null);
   let confirmReset = $state(false);
+  let cancelButton = $state<HTMLButtonElement | null>(null);
   let disposed = false;
+
+  $effect(() => {
+    if (confirmReset) cancelButton?.focus();
+  });
 
   async function load() {
     const requested = period;
@@ -38,7 +43,12 @@
 
   async function remove() {
     confirmReset = false;
-    try { await resetUsage(); } catch { /* the store hook refetches when the reset landed */ }
+    try {
+      await resetUsage();
+      if (!disposed) void load();
+    } catch {
+      // A rejection is a catalog key. Keep the last view and do not log it.
+    }
   }
 
   onMount(() => {
@@ -58,8 +68,20 @@
         <button type="button" aria-pressed={period === item.id} onclick={() => choose(item.id)}>{t(item.label)}</button>
       {/each}
     </div>
-    <button type="button" class="reset" onclick={() => { confirmReset = true; }}>{t('Reset stats…')}</button>
+    <button type="button" class="reset" disabled={usage?.unavailable === true} onclick={() => { confirmReset = true; }}>{t('Reset stats…')}</button>
   </div>
+  {#if confirmReset}
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="usage-reset-title">
+      <p id="usage-reset-title">{t('Delete all usage history?')}</p>
+      <div class="actions">
+        <button type="button" bind:this={cancelButton} onclick={() => { confirmReset = false; }}>{t('Cancel')}</button>
+        <button type="button" class="danger" onclick={() => { void remove(); }}>{t('Delete')}</button>
+      </div>
+    </div>
+  {/if}
+  {#if usage?.unavailable}
+    <p class="status" role="status">{t("Usage statistics couldn't be read.")}</p>
+  {/if}
   {#if usage}
     <div class="cards">
       <article>
@@ -107,15 +129,6 @@
       </table>
     </section>
   {/if}
-  {#if confirmReset}
-    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="usage-reset-title">
-      <p id="usage-reset-title">{t('Delete all usage history?')}</p>
-      <div class="actions">
-        <button type="button" onclick={() => { confirmReset = false; }}>{t('Cancel')}</button>
-        <button type="button" class="danger" onclick={() => { void remove(); }}>{t('Delete')}</button>
-      </div>
-    </div>
-  {/if}
 </div>
 <style>
   .usage { display: flex; flex-direction: column; gap: 12px; }
@@ -128,6 +141,8 @@
   .segments button:last-child { border-radius: 0 5px 5px 0; }
   .segments button[aria-pressed='true'] { background: #3478cf; color: #fff; border-color: #3478cf; position: relative; }
   .reset { margin-left: auto; border: 0; background: none; color: #596574; }
+  .reset:disabled { opacity: 0.45; cursor: default; }
+  .status { margin: 0; font-size: 12px; color: #7a2a12; }
   .cards { display: flex; gap: 10px; }
   article, .box { flex: 1; background: #fff; border: 1px solid #e1e5ea; border-radius: 8px; padding: 10px 12px; }
   .value { margin: 3px 0 0; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }

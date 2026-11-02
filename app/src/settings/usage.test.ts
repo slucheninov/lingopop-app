@@ -70,14 +70,36 @@ test('chart_has_text_alternative', () => {
 test('reset_requires_confirmation', async () => {
   await openUsage();
   await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
-  expect(screen.getByRole('dialog')).toBeTruthy();
+  const dialog = screen.getByRole('dialog');
+  expect(dialog).toBeTruthy();
   expect(screen.getByText('Delete all usage history?')).toBeTruthy();
-  await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  const toolbar = document.querySelector('.toolbar');
+  expect(toolbar?.nextElementSibling).toBe(dialog);
+  const cancel = screen.getByRole('button', { name: 'Cancel' });
+  await waitFor(() => expect(document.activeElement).toBe(cancel));
+  await fireEvent.click(cancel);
   expect(calls('usage_reset')).toHaveLength(0);
   expect(screen.queryByRole('dialog')).toBeNull();
   await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
   expect(invoke).toHaveBeenCalledWith('usage_reset');
+});
+
+test('unavailable_store_shows_status_and_disables_reset', async () => {
+  mockIpc({ usage_get: { ...usageView, unavailable: true } });
+  render(Settings, { initialTab: 'usage' });
+  expect(await screen.findByRole('status')).toHaveProperty('textContent', "Usage statistics couldn't be read.");
+  expect(screen.getByRole('button', { name: 'Reset stats…' })).toHaveProperty('disabled', true);
+});
+
+test('reset_refetches_after_success', async () => {
+  await openUsage();
+  await waitFor(() => expect(calls('usage_get').length).toBeGreaterThan(0));
+  const before = calls('usage_get').length;
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset stats…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(calls('usage_reset')).toHaveLength(1));
+  await waitFor(() => expect(calls('usage_get').length).toBeGreaterThan(before));
 });
 
 test('usage_changed_event_refetches', async () => {

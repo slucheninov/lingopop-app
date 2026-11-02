@@ -51,7 +51,7 @@ fn text(language: Language, key: &str) -> String {
 
 fn cost_label(language: Language, cost: Option<f64>) -> String {
     match cost {
-        Some(amount) => text(language, &format_cost(amount)),
+        Some(amount) => format_cost(amount),
         None => text(language, "~$?"),
     }
 }
@@ -101,8 +101,8 @@ pub fn usage_view(
                     provider,
                     name,
                     colour,
-                    input_label: text(language, &format_tokens(row.input_tokens)),
-                    output_label: text(language, &format_tokens(row.output_tokens)),
+                    input_label: format_tokens(row.input_tokens),
+                    output_label: format_tokens(row.output_tokens),
                     calls: row.calls,
                     cost_label: cost_label(language, row.cost),
                 },
@@ -121,10 +121,7 @@ pub fn usage_view(
     UsageView {
         period,
         cost_label: cost_label(language, totals.cost),
-        tokens_label: text(
-            language,
-            &format_tokens(totals.input_tokens + totals.output_tokens),
-        ),
+        tokens_label: format_tokens(totals.input_tokens + totals.output_tokens),
         in_out_label: i18n::t(language, "in %@ · out %@", &[&input, &output]),
         calls_label,
         period_label: text(language, period_key(period)),
