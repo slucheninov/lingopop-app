@@ -105,8 +105,9 @@ test('startup_toggles_send_patches', async () => {
 
 test('save_failure_shows_message_and_changed_event_refreshes_view', async () => {
   mockIpc({ settings_update: new Error("x") });
+  let persisted = baseView;
   vi.mocked(invoke).mockImplementation(async (command: string) => {
-    if (command === 'settings_get') return baseView;
+    if (command === 'settings_get') return persisted;
     if (command === 'settings_update') throw "Couldn't save settings.";
     return undefined;
   });
@@ -114,7 +115,8 @@ test('save_failure_shows_message_and_changed_event_refreshes_view', async () => 
   await fireEvent.click(await screen.findByRole('switch', { name: 'Launch at login' }));
   expect(await screen.findByRole('alert')).toBeTruthy();
   await waitFor(() => expect(listeners.has('settings://changed')).toBe(true));
-  listeners.get('settings://changed')!({ payload: { ...baseView, targetLanguage: 'Polish' } });
+  persisted = { ...baseView, targetLanguage: 'Polish' };   // the event is a signal: the view is re-read
+  listeners.get('settings://changed')!({ payload: null });
   await waitFor(() => expect((screen.getByRole('combobox', { name: 'Target' }) as HTMLSelectElement).value).toBe('Polish'));
 });
 
@@ -158,8 +160,9 @@ test('font_save_failure_restores_saved_value_and_retry_invokes_again', async () 
 
 test('mutations_are_sent_in_order_and_the_last_response_wins', async () => {
   const resolvers: ((view: typeof baseView) => void)[] = [];
+  let persisted = baseView;
   vi.mocked(invoke).mockImplementation(async (command: string) => {
-    if (command === 'settings_get') return baseView;
+    if (command === 'settings_get') return persisted;
     if (command === 'ui_update') return new Promise(resolve => { resolvers.push(resolve as never); });
     return undefined;
   });
@@ -170,11 +173,39 @@ test('mutations_are_sent_in_order_and_the_last_response_wins', async () => {
   const sent = () => vi.mocked(invoke).mock.calls.filter(call => call[0] === 'ui_update').map(call => (call[1] as { patch: { value: number } }).patch.value);
   expect(sent()).toEqual([14]);   // the second waits for the first to settle
   // A change event for the intermediate commit arrives before the responses.
-  listeners.get('settings://changed')!({ payload: { ...baseView, popupFontSize: 14 } });
-  resolvers[0]({ ...baseView, popupFontSize: 14 });
+  listeners.get('settings://changed')!({ payload: { ...baseView, popupFontSize: 14 } });   // a signal: queues one read
+  persisted = { ...baseView, popupFontSize: 14 };
+  resolvers[0](persisted);
   await waitFor(() => expect(sent()).toEqual([14, 18]));
   expect(screen.getByText('18 pt')).toBeTruthy();   // the stale 14 response did not overwrite the control
-  resolvers[1]({ ...baseView, popupFontSize: 18 });
+  persisted = { ...baseView, popupFontSize: 18 };
+  resolvers[1](persisted);
   await waitFor(() => expect(slider.value).toBe('18'));
   expect(screen.getByText('18 pt')).toBeTruthy();
+});
+
+test('stale_changed_event_after_the_final_response_does_not_win', async () => {
+  const resolvers: ((view: typeof baseView) => void)[] = [];
+  let persisted = baseView;
+  vi.mocked(invoke).mockImplementation(async (command: string) => {
+    if (command === 'settings_get') return persisted;
+    if (command === 'ui_update') return new Promise(resolve => { resolvers.push(resolve as never); });
+    return undefined;
+  });
+  await openMain();
+  const slider = screen.getByRole('slider', { name: 'Result font size' }) as HTMLInputElement;
+  const reads = () => vi.mocked(invoke).mock.calls.filter(call => call[0] === 'settings_get').length;
+  await fireEvent.input(slider, { target: { value: '18' } });
+  persisted = { ...baseView, popupFontSize: 18 };
+  resolvers[0](persisted);
+  await waitFor(() => expect(screen.getByText('18 pt')).toBeTruthy());
+  const before = reads();
+  // An event emitted by an EARLIER commit (font 13) is delivered after the final response: payload ignored.
+  listeners.get('settings://changed')!({ payload: { ...baseView, popupFontSize: 13 } });
+  listeners.get('settings://changed')!({ payload: { ...baseView, popupFontSize: 13 } });
+  await waitFor(() => expect(reads()).toBeGreaterThan(before));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(reads()).toBe(before + 1);   // consecutive signals collapse into one read
+  expect(screen.getByText('18 pt')).toBeTruthy();
+  expect(slider.value).toBe('18');
 });

@@ -29,46 +29,48 @@
 
   /** A rejection is a catalog key from the shell; anything else shows the generic save message. */
   const show = (error: unknown) => { failure = typeof error === 'string' ? error : "Couldn't save settings."; };
-  async function load() {
-    try {
-      const next = await getSettings();
-      if (!disposed) view = next;
-    } catch (error) {
-      if (!disposed) show(error);
-    }
-  }
-  // Mutations are sent one at a time, in call order, and only the response of the LAST queued one is
-  // applied (the shell emits `settings://changed` for the intermediate commits in commit order), so the
-  // displayed view always ends on the last persisted state. A failure of the last one reloads the saved view.
+  // One serialized queue for every read and write of the view. Only the result of the LAST queued job is
+  // applied, so the display always ends on a read or response taken after the last commit. A
+  // `settings://changed` event is only a SIGNAL (events and command responses travel on different channels
+  // with no ordering guarantee, so its payload may be older than what is displayed): it queues one fresh read.
   let pending = 0;
+  let readQueued = false;
   let queue: Promise<unknown> = Promise.resolve();
-  /** Resolves `true` when the shell saved the change, `false` when it refused (the view is then the saved one). */
-  function mutate(send: () => Promise<SettingsView>): Promise<boolean> {
+  /** Resolves `true` when the call succeeded (a write: the shell saved the change). */
+  function enqueue(send: () => Promise<SettingsView>, kind: 'write' | 'read', reportFailure: boolean): Promise<boolean> {
     pending++;
     const job = queue.then(async () => {
+      if (kind === 'read') readQueued = false;
       let next: SettingsView | null = null;
       let rejection: unknown;
-      let saved = true;
-      try { next = await send(); } catch (error) { saved = false; rejection = error; }
+      let ok = true;
+      try { next = await send(); } catch (error) { ok = false; rejection = error; }
       pending--;
-      if (disposed) return saved;
-      if (saved) {
-        if (pending === 0) { view = next; failure = null; }
+      if (disposed) return ok;
+      if (ok) {
+        if (pending === 0) view = next;
+        if (reportFailure) failure = null;
       } else {
-        show(rejection);
-        if (pending === 0) { const message = failure; await load(); if (!disposed && message) failure = message; }
+        if (reportFailure) show(rejection);
+        if (kind === 'write' && pending === 0) {
+          // The refused change is not persisted: show what is (outside the queue, which this job still holds).
+          try { const saved = await getSettings(); if (!disposed && pending === 0) view = saved; } catch { /* keep the error */ }
+        }
       }
-      return saved;
+      return ok;
     });
     queue = job;
     return job;
   }
+  const load = () => enqueue(getSettings, 'read', true);
+  const signal = () => { if (!readQueued) { readQueued = true; void enqueue(getSettings, 'read', false); } };
+  const mutate = (send: () => Promise<SettingsView>) => enqueue(send, 'write', true);
   const onPatch = (patch: SettingsPatch) => mutate(() => updateSetting(patch));
   const onUiPatch = (patch: UiPatch) => mutate(() => updateUi(patch));
 
   onMount(() => {
     const registrations = [
-      listen<SettingsView>('settings://changed', event => { if (!disposed) view = event.payload; }),
+      listen<unknown>('settings://changed', () => { if (!disposed) signal(); }),
       listen<string>('settings://tab', event => { if (!disposed && isTab(event.payload)) active = event.payload; }),
     ];
     void load();
