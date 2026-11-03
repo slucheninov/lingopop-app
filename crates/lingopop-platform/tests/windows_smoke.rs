@@ -1423,11 +1423,22 @@ fn overlay_creates_and_destroys_window() {
     assert!(overlay_test::window().is_none());
 }
 fn overlay_thread_windows(id: u32) -> usize {
-    use windows::{core::BOOL, Win32::UI::WindowsAndMessaging::EnumThreadWindows};
-    unsafe extern "system" fn count(_: HWND, l: LPARAM) -> BOOL {
-        // SAFETY: EnumThreadWindows forwards our live usize pointer synchronously.
-        unsafe {
-            *(l.0 as *mut usize) += 1;
+    use windows::{
+        core::BOOL,
+        Win32::UI::WindowsAndMessaging::{EnumThreadWindows, GetClassNameW},
+    };
+    // Counts only overlay-class windows: the thread also owns system windows
+    // such as the default IME window.
+    unsafe extern "system" fn count(hwnd: HWND, l: LPARAM) -> BOOL {
+        let mut buf = [0u16; 64];
+        // SAFETY: hwnd comes from EnumThreadWindows; buf is a live local buffer.
+        let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+        let len = usize::try_from(len).unwrap_or(0);
+        if String::from_utf16_lossy(&buf[..len]) == "LingoPopRegionOverlay" {
+            // SAFETY: EnumThreadWindows forwards our live usize pointer synchronously.
+            unsafe {
+                *(l.0 as *mut usize) += 1;
+            }
         }
         BOOL(1)
     }
