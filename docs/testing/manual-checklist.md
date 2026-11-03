@@ -45,7 +45,7 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Click Clear on a stored key. Expected: `No key set`, the sidebar shows `No key`; Google (Free) shows `No key needed` and has no key field.
 - [ ] Type `http://x` into Endpoint. Expected: the https message appears and Save is disabled; fix it and Save works.
 - [ ] Rename `secrets.dat` to something unreadable (e.g. replace its content with text) and restart. Expected: Providers shows the `secrets.dat is unreadable` message instead of the key field and Save is disabled; the file is not modified.
-- [ ] `How to get an API key` opens the matching section of `docs/api-keys.md` in the default browser; other (foreign) links are never opened.
+- [ ] Click `How to get an API key`, Privacy Policy and Download. Expected: the matching `docs/api-keys.md` section, `PRIVACY.md` and the releases page open in the default browser; a foreign or traversal URL is refused and never written to `lingopop.log`.
 - [ ] Settings > About > `Check for updates` while no stable release is newer than this build. Expected: a brief spinner, then nothing visible (no banner, no error); with a newer stable release the `Version ... available` banner and `Download` appear.
 
 ## Shortcuts
@@ -78,7 +78,7 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Run an operation, then force an error (for example with no network). Expected: the tray icon animates while working and turns red for 3 seconds on an error; a new operation cancels the error reset.
 - [ ] Select text in Notepad, open the tray menu and click Translate. Expected: the popup shows the translation of the Notepad selection (Notepad is brought back to the front first, the clipboard is restored afterwards).
 - [ ] Sign in fresh (or restart LingoPop with no other window ever opened), open the tray menu and click Translate. Expected: the "nothing selected" message.
-- [ ] Tray menu, History. Expected: the History window opens (540x480, resizes down to 480x360); search, Copy original / Copy translation, Delete and Clear work, and changes refresh the tray rows and an open History window.
+- [ ] Tray menu, History. Expected: the History window opens with a localized title (540x480, resizes down to 480x360); search, Copy original / Copy translation, Delete and Clear work, and changes refresh the tray rows and an open History window.
 
 ## Startup and language
 
