@@ -26,6 +26,7 @@ pub(crate) fn platform() -> lingopop_platform::Platform {
     let sleeper = Arc::new(FakeSleeper::new());
     let clipboard = FakeClipboard::new(sleeper.clone());
     Platform {
+        overlay: Arc::new(lingopop_platform::fake::FakeOverlay::new(Ok(None))),
         system: Arc::new(FakeSystem::new(vec!["uk-UA".into()])),
         login_item: Arc::new(FakeLoginItem::new()),
         popup_window: Arc::new(FakePopupWindow::default()),
@@ -33,6 +34,7 @@ pub(crate) fn platform() -> lingopop_platform::Platform {
         keys: FakeKeys::new(clipboard.clone(), sleeper.clone()),
         clipboard,
         foreground: FakeForeground::new(None),
+        last_foreground: lingopop_platform::fake::FakeLastForeground::new(None),
         monitors: Arc::new(FakeMonitors::new(Point { x: 0, y: 0 }, vec![])),
         capture: Arc::new(FakeCapture::new([0; 4])),
         ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
@@ -202,9 +204,9 @@ fn stores_change_hook_fires_on_every_mutation() {
     let e = entry();
     let id = e.id;
     s.add_history(e, 10);
-    s.remove_history(id);
+    s.remove_history(id).unwrap();
     s.trim_history(2);
-    s.clear_history();
+    s.clear_history().unwrap();
     let record=serde_json::from_value(serde_json::json!({"id":"00000000-0000-0000-0000-000000000002","timestamp":0,"provider":"Claude","model":"m","operation":"translate","inputTokens":1,"outputTokens":1})).unwrap();
     s.append_usage(record);
     s.reset_usage().unwrap();

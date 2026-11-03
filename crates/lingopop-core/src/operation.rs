@@ -41,6 +41,18 @@ impl AIOperation {
         Self::ALL.into_iter().find(|op| op.raw_value() == raw)
     }
 
+    /// History label (the mac `AIOperation.shortName` catalog key).
+    pub fn short_name(self) -> &'static str {
+        match self {
+            Self::Translate => "Translation",
+            Self::GrammarFix => "Grammar fix",
+            Self::Rewrite => "Rewrite",
+            Self::Explain => "Explanation",
+            Self::ScreenTranslate => "Screen Translation",
+            Self::Magic => "Magic",
+        }
+    }
+
     /// English UI name (the mac `AIOperation.displayName` key); localized later.
     pub fn english_name(self) -> &'static str {
         match self {
@@ -104,6 +116,30 @@ mod tests {
                 "Magic"
             ]
         );
+    }
+
+    #[test]
+    fn short_names_match_mac_history_labels() {
+        assert_eq!(
+            AIOperation::ALL.map(|op| op.short_name()),
+            [
+                "Translation",
+                "Grammar fix",
+                "Rewrite",
+                "Explanation",
+                "Screen Translation",
+                "Magic"
+            ]
+        );
+        for language in [
+            crate::ui_prefs::Language::Pl,
+            crate::ui_prefs::Language::Uk,
+            crate::ui_prefs::Language::De,
+        ] {
+            for op in AIOperation::ALL {
+                assert!(crate::i18n::catalog(language).contains_key(op.short_name()));
+            }
+        }
     }
 
     #[test]

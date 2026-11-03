@@ -5,6 +5,7 @@ mod clipboard;
 mod foreground;
 mod hotkey;
 mod keys;
+mod last_foreground;
 mod log;
 mod monitors;
 mod ocr;
@@ -15,6 +16,7 @@ pub use clipboard::{ClipboardCall, FakeClipboard, FakeOp, Mutation};
 pub use foreground::FakeForeground;
 pub use hotkey::FakeHotkeyService;
 pub use keys::{CopyBehavior, FakeKeys, KeyCall};
+pub use last_foreground::FakeLastForeground;
 pub use log::{Event, EventLog, LoggedEvent};
 pub use monitors::FakeMonitors;
 pub use ocr::FakeOcr;
@@ -32,3 +34,6 @@ pub use system::FakeSystem;
 
 mod login_item;
 pub use login_item::FakeLoginItem;
+
+mod overlay;
+pub use overlay::FakeOverlay;

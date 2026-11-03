@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Added
+
+- History window (from the tray menu): search, copy the original or the translation, delete one entry or clear all.
+- Tray menu with the recent history, the six operations with their hotkeys, the target language and Settings / History / About; the tray icon animates while an operation runs and turns red for 3 seconds after an error. An operation started from the tray menu works on the text you had selected in your last window.
+- Screen Translate: a native selection overlay (dimmed screen, crosshair, size label; Esc or a tiny selection cancels) opened by the Screen Translate hotkey or the tray menu, then OCR and translation in the popup.
+
 ## [0.2.0-alpha.6] - 2026-11-03
 
 ### Added

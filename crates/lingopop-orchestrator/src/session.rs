@@ -58,6 +58,8 @@ impl std::fmt::Debug for Session {
 
 #[derive(Debug)]
 pub(crate) struct SessionState {
+    pub working: bool,
+    pub status_sent: bool,
     pub generation: u64,
     pub current: Option<AbortHandle>,
     pub session: Option<Session>,
@@ -71,6 +73,8 @@ pub(crate) struct SessionState {
 impl SessionState {
     pub fn new() -> Self {
         Self {
+            working: false,
+            status_sent: false,
             generation: 0,
             current: None,
             session: None,

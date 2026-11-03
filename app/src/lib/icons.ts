@@ -1,6 +1,7 @@
 // Hand-drawn, static SVG only. Never interpolate model text into these strings.
 const svg = (paths: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 export const icons = {
+  trash: svg('<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>'),
   copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>'),
   replace: svg('<path d="M4 7h15m-4-4 4 4-4 4M20 17H5m4-4-4 4 4 4"/>'),
   rewrite: svg('<path d="m4 16 11-11 4 4L8 20H4v-4ZM13 7l4 4"/>'),

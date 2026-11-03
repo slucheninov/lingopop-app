@@ -129,6 +129,10 @@ impl Orchestrator {
         let region = match d.picker.pick().await {
             Ok(Some(region)) => region,
             Ok(None) => return,
+            Err(PlatformError::Unsupported(_)) => {
+                self.log("region picker unsupported");
+                return;
+            }
             Err(e) => {
                 self.log("screen translate: region picker failed");
                 self.present_error(generation, platform_message(&e));

@@ -159,6 +159,8 @@ impl Persist for FakePersist {
 
 /// A picker that returns a preset result and counts its calls.
 pub struct FakePicker {
+    blocked: std::sync::atomic::AtomicBool,
+    cancelled: AtomicUsize,
     result: Mutex<Result<Option<Rect>, PlatformError>>,
     calls: AtomicUsize,
 }
@@ -166,6 +168,8 @@ pub struct FakePicker {
 impl FakePicker {
     pub fn new(result: Result<Option<Rect>, PlatformError>) -> Self {
         Self {
+            blocked: false.into(),
+            cancelled: 0.into(),
             result: Mutex::new(result),
             calls: AtomicUsize::new(0),
         }
@@ -175,6 +179,12 @@ impl FakePicker {
         *lock(&self.result) = result;
     }
 
+    pub fn block_forever(&self) {
+        self.blocked.store(true, Ordering::SeqCst);
+    }
+    pub fn cancelled(&self) -> usize {
+        self.cancelled.load(Ordering::SeqCst)
+    }
     pub fn calls(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
@@ -184,6 +194,31 @@ impl FakePicker {
 impl RegionPicker for FakePicker {
     async fn pick(&self) -> Result<Option<Rect>, PlatformError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.blocked.load(Ordering::SeqCst) {
+            struct Cancel<'a>(&'a AtomicUsize);
+            impl Drop for Cancel<'_> {
+                fn drop(&mut self) {
+                    self.0.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            let _guard = Cancel(&self.cancelled);
+            std::future::pending::<()>().await;
+        }
         lock(&self.result).clone()
+    }
+}
+
+#[derive(Default)]
+pub struct FakeStatus {
+    statuses: Mutex<Vec<crate::TrayStatus>>,
+}
+impl FakeStatus {
+    pub fn statuses(&self) -> Vec<crate::TrayStatus> {
+        lock(&self.statuses).clone()
+    }
+}
+impl crate::StatusSink for FakeStatus {
+    fn status(&self, status: crate::TrayStatus) {
+        lock(&self.statuses).push(status);
     }
 }
