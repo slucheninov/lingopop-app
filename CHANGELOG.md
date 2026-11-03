@@ -1,10 +1,15 @@
 # Changelog
 
-All notable changes to LingoPop for Windows are documented here. Each release also has auto-generated notes on the [Releases page](https://github.com/slucheninov/lingopop-app/releases).
+All notable changes to LingoPop for Windows and macOS are documented here. Each release also has auto-generated notes on the [Releases page](https://github.com/slucheninov/lingopop-app/releases).
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) and the project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
+
+### Changed
+
+- The repository now covers both the Windows and the macOS version; README and AGENTS.md describe the shared codebase and the cross-platform plan.
+- The manual checklist file is removed; release-time manual checks are recorded in the PR instead.
 
 ## [0.2.0-alpha.7] - 2026-11-03
 
