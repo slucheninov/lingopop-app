@@ -65,7 +65,7 @@ Record each task's exact focused command, runner-summary lines, review result an
 
 ## Plan self-review
 
-- [x] Every approved spec section maps to a numbered task or a global constraint (localization ownership → Task 6; folder limitation text and README/AGENTS/design scope update → Tasks 5 and 20; old-app login item/hotkey hint → Task 18 UI).
+- [x] Every approved spec section maps to a numbered task or a global constraint (localization ownership → Task 6; folder limitation text → Task 5 (Task 20 confirms it and mirrors it in `docs/migration-from-swift.md`); README/AGENTS/design scope update → done in the planning PR, Task 20 only refreshes it for the final shipped state; old-app login item/hotkey hint → Task 18 UI).
 - [x] Cross-plan interfaces are explicit: `RecordFile`/`FileRevision`/`HostKind`/`RecordsWriter` live in core (Task 1); `JournalKind::{FolderSwitch, SwiftImport}` and the startup order are declared in Task 3 and filled by Task 18; `SwiftSource::is_running` is shared by Tasks 9 and 18; `prepare_shutdown` (Task 5) gains the Hide-ack wait in Task 13.
 - [x] The five review-focus classes have concrete named RED tests with fixture descriptions, not placeholders.
 - [x] Native API choices are fixed before RED (NSPanel via `object_setClass`, cached `NSScreen` topology, `CGDisplayCreateImageForRect` + preflight for macOS 13, `objc2-vision`, `SMAppService`, Keychain attributes, AES-256-GCM format); anything the pinned crates do not expose is reported as `NEEDS_CONTEXT`, never guessed.
