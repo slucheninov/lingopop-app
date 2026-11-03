@@ -117,11 +117,38 @@ impl Hotkey {
     }
 }
 
+/// Finds another operation using the same normalized chord.
+pub fn duplicate_of(
+    hotkeys: &std::collections::BTreeMap<crate::operation::AIOperation, Hotkey>,
+    candidate: &Hotkey,
+    for_operation: crate::operation::AIOperation,
+) -> Option<crate::operation::AIOperation> {
+    let candidate = Hotkey::new(&candidate.key, candidate.modifiers.clone());
+    hotkeys.iter().find_map(|(operation, hotkey)| {
+        (*operation != for_operation
+            && Hotkey::new(&hotkey.key, hotkey.modifiers.clone()) == candidate)
+            .then_some(*operation)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::operation::AIOperation;
     use crate::settings::Settings;
+
+    #[test]
+    fn duplicate_of_finds_other_operation() {
+        let map = [(AIOperation::Translate, Hotkey::default_translate())].into();
+        assert_eq!(
+            duplicate_of(&map, &Hotkey::default_translate(), AIOperation::Explain),
+            Some(AIOperation::Translate)
+        );
+        assert_eq!(
+            duplicate_of(&map, &Hotkey::default_translate(), AIOperation::Translate),
+            None
+        );
+    }
 
     #[test]
     fn serde_shape() {
