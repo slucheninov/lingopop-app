@@ -192,6 +192,7 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
     };
     let config = Arc::new(FakeConfig::new(settings, snapshot_with(opts.keys_for)));
     let deps = Deps {
+        status: None,
         platform,
         runner: Arc::new(OperationRunner::new(
             ProviderRegistry::standard(),

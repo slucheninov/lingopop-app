@@ -47,6 +47,7 @@ pub trait Persist: Send + Sync {
 pub const INPUT_BLOCKED_AUTO_CLOSE: std::time::Duration = std::time::Duration::from_secs(6);
 
 pub struct Deps {
+    pub status: Option<Arc<dyn crate::StatusSink>>,
     pub platform: Platform,
     pub runner: Arc<OperationRunner>,
     pub registry_has: Arc<dyn Fn(ProviderType) -> bool + Send + Sync>,
@@ -162,6 +163,10 @@ impl Orchestrator {
     {
         let (handle, generation) = {
             let mut st = self.state();
+            if st.working {
+                self.set_status_locked(&mut st, crate::TrayStatus::Idle);
+            }
+            st.status_sent = false;
             st.generation += 1;
             let generation = st.generation;
             if let Some(previous) = st.current.take() {
@@ -184,6 +189,18 @@ impl Orchestrator {
                 );
             }
             Err(_) => {}
+        }
+        let mut st = self.state();
+        if st.generation == generation && (st.working || !st.status_sent) {
+            self.set_status_locked(&mut st, crate::TrayStatus::Idle);
+        }
+    }
+
+    pub(crate) fn set_status_locked(&self, st: &mut SessionState, status: crate::TrayStatus) {
+        st.status_sent = true;
+        st.working = status == crate::TrayStatus::Working;
+        if let Some(sink) = &self.deps().status {
+            sink.status(status);
         }
     }
 
@@ -227,6 +244,12 @@ impl Orchestrator {
     }
 
     fn present_inner(&self, st: &mut SessionState, model: &PopupViewModel, reposition: bool) {
+        match model.phase {
+            PopupPhase::Loading { .. } => self.set_status_locked(st, crate::TrayStatus::Working),
+            PopupPhase::Error(_) => self.set_status_locked(st, crate::TrayStatus::Error),
+            PopupPhase::Result(_) => self.set_status_locked(st, crate::TrayStatus::Idle),
+            _ => {}
+        }
         // After a Replace of unknown outcome no later Result offers Replace again.
         let replace_disabled = st.session.as_ref().is_some_and(|s| s.replace_disabled);
         let hidden;
@@ -685,6 +708,7 @@ mod commit_tests {
             api_keys: Default::default(),
         };
         let me = Orchestrator::new(Deps {
+            status: None,
             platform: test_platform(),
             runner: Arc::new(OperationRunner::new(
                 ProviderRegistry::standard(),

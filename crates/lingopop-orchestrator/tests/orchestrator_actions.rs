@@ -107,6 +107,7 @@ fn rig_full(
     let log: Arc<lingopop_platform::LogFn> =
         Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string()));
     let orch = Orchestrator::new(Deps {
+        status: None,
         platform: Platform {
             system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
             login_item: Arc::new(FakeLoginItem::new()),

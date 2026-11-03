@@ -67,3 +67,12 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Press the Translate chord while recording: it is recorded instead of triggering a translation.
 - [ ] Start recording, then blur or close Settings: all saved shortcuts resume; closing after blur leaves them registered.
 - [ ] Assign Screen Translate a chord: it starts the flow and cancels silently at NoPicker until Task 13 supplies the region picker.
+
+### Task 11: History and tray
+
+- [ ] Tray history rows copy the translation to the clipboard.
+- [ ] Digit mnemonics select recent rows; if `&1` … `&0` render literally on Windows, drop the mnemonic prefix.
+- [ ] `Target:` submenu checks the current language and saves the selected language.
+- [ ] About LingoPop opens Settings on the About tab.
+- [ ] Tray icon animates while working and turns red for 3 seconds on an error; a new operation cancels the error reset.
+- [ ] History window search, Copy original / Copy translation, Delete and Clear work; changes refresh the tray and open History window.

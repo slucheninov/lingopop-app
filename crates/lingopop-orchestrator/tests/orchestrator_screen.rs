@@ -73,6 +73,7 @@ impl Ocr for TestOcr {
 }
 
 struct Rig {
+    status: Arc<lingopop_orchestrator::fake::FakeStatus>,
     orch: Orchestrator,
     popup: Arc<FakePopup>,
     dismiss: Arc<FakeDismissWatcher>,
@@ -170,7 +171,9 @@ fn rig_gated(
         ..Settings::default()
     };
     let config = Arc::new(FakeConfig::new(settings, snapshot(keys_for, fallbacks)));
+    let status = Arc::new(lingopop_orchestrator::fake::FakeStatus::default());
     let orch = Orchestrator::new(Deps {
+        status: Some(status.clone()),
         platform,
         runner: Arc::new(OperationRunner::new(
             ProviderRegistry::standard(),
@@ -186,6 +189,7 @@ fn rig_gated(
         picker: picker.clone(),
     });
     Rig {
+        status,
         orch,
         popup,
         dismiss,
@@ -741,4 +745,29 @@ async fn failed_reposition_hides_popup_and_stops_dismissal() {
         r.popup.as_ref()
     ));
     assert_eq!(r.dismiss.calls().last(), Some(&DismissCall::Stop));
+}
+
+#[tokio::test]
+async fn screen_translate_working_starts_after_pick() {
+    use lingopop_orchestrator::TrayStatus::{Idle, Working};
+    let cancelled = rig_full(
+        Ok(None),
+        ocr_ok(OCR_TEXT),
+        Arc::new(FakeTransport::json(200, CLAUDE_OK)),
+        &[ProviderType::Claude],
+        &[],
+    );
+    cancelled.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(cancelled.status.statuses(), vec![Idle]);
+    let picked = rig_full(
+        Ok(Some(REGION)),
+        ocr_ok(OCR_TEXT),
+        Arc::new(FakeTransport::json(200, CLAUDE_OK)),
+        &[ProviderType::Claude],
+        &[],
+    );
+    assert!(picked.status.statuses().is_empty());
+    picked.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(picked.status.statuses().first(), Some(&Working));
+    assert_eq!(picked.status.statuses().last(), Some(&Idle));
 }

@@ -3,6 +3,7 @@
 
 pub mod commands;
 pub mod dismiss;
+mod history_cmds;
 pub mod hotkeys;
 pub mod logging;
 pub mod paths;
@@ -185,7 +186,11 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     lingopop_platform::set_dismiss_log(log.clone());
     let hotkeys = config.settings().hotkeys;
     let dismiss = platform.dismiss.clone();
+    let tray_sink = Arc::new(tray::TraySink::default());
+    let (tray_changes, tray_rx) = tokio::sync::watch::channel(());
+    let history_changes = tray_changes.clone();
     let orchestrator = Orchestrator::new(Deps {
+        status: Some(tray_sink.clone()),
         platform: platform.clone(),
         runner: Arc::new(runner),
         registry_has: Arc::new(move |provider| registry.get(provider).is_ok()),
@@ -205,6 +210,9 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
             state::StoreKind::Usage => "usage://changed",
         };
         let _ = events.emit(event, ());
+        if matches!(kind, state::StoreKind::History) {
+            let _ = history_changes.send(());
+        }
     }));
     let events = app.handle().clone();
     let hotkey_registry = hotkeys::HotkeyRegistry::new(
@@ -237,7 +245,9 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
 
     dismiss::spawn_forwarder(dismiss.as_ref(), orchestrator.clone());
     hotkeys::install(&hotkey_registry, orchestrator, &hotkeys);
-    tray::build(app)?;
+    let tray = tray::TrayController::build(app.handle(), app.state::<ShellState>().ui.language())?;
+    let _ = tray_sink.0.set(tray.clone());
+    tray::watch(app.handle(), tray, tray_rx, tray_changes);
     updates::spawn_loop(update_state, app.handle().clone());
     log::info!("LingoPop started");
     Ok(())
@@ -278,6 +288,10 @@ pub fn run() {
             provider_cmds::provider_save,
             provider_cmds::provider_clear_key,
             hotkeys::hotkeys_suspend,
+            history_cmds::history_list,
+            history_cmds::history_remove,
+            history_cmds::history_clear,
+            history_cmds::clipboard_write,
             usage_cmds::usage_get,
             usage_cmds::usage_reset,
             updates::updates_check,

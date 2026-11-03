@@ -29,3 +29,6 @@ pub use view_model::{
     ActionRowView, ErrorView, FallbackView, PopupPhase, PopupViewModel, ResultView, RetryProvider,
     UserMessageView,
 };
+
+pub mod status;
+pub use status::{StatusSink, TrayStatus};

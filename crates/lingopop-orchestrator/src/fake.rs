@@ -187,3 +187,18 @@ impl RegionPicker for FakePicker {
         lock(&self.result).clone()
     }
 }
+
+#[derive(Default)]
+pub struct FakeStatus {
+    statuses: Mutex<Vec<crate::TrayStatus>>,
+}
+impl FakeStatus {
+    pub fn statuses(&self) -> Vec<crate::TrayStatus> {
+        lock(&self.statuses).clone()
+    }
+}
+impl crate::StatusSink for FakeStatus {
+    fn status(&self, status: crate::TrayStatus) {
+        lock(&self.statuses).push(status);
+    }
+}
