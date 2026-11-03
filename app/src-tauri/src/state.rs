@@ -179,6 +179,12 @@ impl ShellStores {
             .map(|s| s.entries().to_vec())
             .unwrap_or_default()
     }
+    /// Clone only the selected entry; the store lock is released before clipboard work.
+    pub fn history_entry(&self, id: uuid::Uuid) -> Option<HistoryEntry> {
+        lock(&self.history)
+            .as_ref()
+            .and_then(|s| s.entries().iter().find(|entry| entry.id == id).cloned())
+    }
     pub fn usage_records(&self) -> Vec<UsageRecord> {
         lock(&self.usage)
             .as_ref()

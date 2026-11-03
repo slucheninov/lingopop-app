@@ -21,7 +21,7 @@ fn row(entry: HistoryEntry, language: Language) -> HistoryRow {
     let operation = entry.operation_type();
     let operation_name = i18n::t(
         language,
-        operation.map_or(entry.operation.as_str(), |o| o.english_name()),
+        operation.map_or(entry.operation.as_str(), |o| o.short_name()),
         &[],
     );
     let provider_name = entry
@@ -88,6 +88,8 @@ mod tests {
             lingopop_core::time::Timestamp::from_unix_seconds(1_700_000_000.0),
         );
         assert_eq!(row(e.clone(), Language::En).provider_name, "DeepL");
+        assert_eq!(row(e.clone(), Language::En).operation_name, "Translation");
+        assert_eq!(row(e.clone(), Language::De).operation_name, "Übersetzung");
         e.provider = "X".into();
         let r = row(e, Language::En);
         assert_eq!(r.provider_name, "X");

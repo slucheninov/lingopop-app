@@ -38,11 +38,19 @@ impl NativeIcon {
                     Frame::Error => include_bytes!("../icons/tray/error.png"),
                 };
                 let tray = tray.clone();
-                let _ = app.run_on_main_thread(move || {
-                    if let Ok(icon) = tauri::image::Image::from_bytes(bytes) {
-                        let _ = tray.set_icon(Some(icon));
-                    }
-                });
+                if app
+                    .run_on_main_thread(move || match tauri::image::Image::from_bytes(bytes) {
+                        Ok(icon) => {
+                            if tray.set_icon(Some(icon)).is_err() {
+                                log::warn!("tray icon update failed");
+                            }
+                        }
+                        Err(_) => log::warn!("tray icon decode failed"),
+                    })
+                    .is_err()
+                {
+                    log::warn!("tray icon dispatch failed");
+                }
             }
         });
         Self(tx)
@@ -151,7 +159,11 @@ pub fn menu_label(text: &str) -> String {
 }
 pub fn menu_row_text(index: usize, original: &str, translated: &str) -> String {
     fn side(s: &str) -> String {
-        let s = s.trim().replace('\n', " ");
+        let s = s
+            .split(|c: char| c.is_whitespace() || c.is_control())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut out: String = s.chars().take(40).collect();
         if s.chars().count() > 40 {
             out.push('…');
@@ -177,7 +189,9 @@ fn target_items(current: &str) -> Vec<String> {
 }
 impl TrayController {
     pub fn build(app: &AppHandle, language: Language) -> tauri::Result<Arc<Self>> {
+        let idle = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/idle.png"))?;
         let tray = TrayIconBuilder::new()
+            .icon(idle)
             .tooltip("LingoPop")
             .on_menu_event(|app, event| {
                 let app = app.clone();
@@ -189,14 +203,18 @@ impl TrayController {
                             state.orchestrator.trigger(op).await;
                         }
                     } else if let Some(raw) = id.strip_prefix("hist:") {
-                        let text = state
-                            .stores
-                            .history_entries()
-                            .into_iter()
-                            .find(|e| e.id.to_string() == raw)
-                            .map(|e| e.translated);
-                        if let Some(text) = text {
-                            let _ = state.orchestrator.write_clipboard(text).await;
+                        let entry = uuid::Uuid::parse_str(raw)
+                            .ok()
+                            .and_then(|id| state.stores.history_entry(id));
+                        if let Some(entry) = entry {
+                            if state
+                                .orchestrator
+                                .write_clipboard(entry.translated)
+                                .await
+                                .is_err()
+                            {
+                                log::warn!("tray copy failed");
+                            }
                         }
                     } else if let Some(lang) = id.strip_prefix("lang:") {
                         let _ = settings_cmds::settings_update(
@@ -225,6 +243,7 @@ impl TrayController {
             icons,
         });
         me.set_status(TrayStatus::Idle);
+        // Setup runs on the main thread: Tauri executes menu operations inline here.
         me.rebuild()?;
         Ok(me)
     }
@@ -317,7 +336,13 @@ pub fn watch(
         while changes.changed().await.is_ok() {
             tokio::time::sleep(Duration::from_millis(100)).await;
             changes.borrow_and_update();
-            if tray.rebuild().is_err() {
+            // Native menu calls wait for main-thread roundtrips. Keep those waits
+            // off async workers, and never move this entire rebuild to the main loop.
+            let tray = tray.clone();
+            if !matches!(
+                tauri::async_runtime::spawn_blocking(move || tray.rebuild()).await,
+                Ok(Ok(()))
+            ) {
                 log::warn!("tray menu rebuild failed");
             }
         }
@@ -402,6 +427,8 @@ mod tests {
             menu_row_text(0, &"a".repeat(50), " b\nc "),
             format!("&1 {}… → b c", "a".repeat(40))
         );
+        assert_eq!(menu_row_text(10, "a\r\nb", "c\td"), "a b → c d");
+        assert_eq!(menu_row_text(10, " a\t \r\nb ", "c\0\x07d"), "a b → c d");
         assert!(menu_row_text(9, "a", "b").starts_with("&0 "));
         assert_eq!(menu_row_text(10, "a", "b"), "a → b");
     }

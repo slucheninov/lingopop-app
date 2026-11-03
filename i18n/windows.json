@@ -173,5 +173,15 @@
     "pl": "Nie udało się zaktualizować historii.",
     "uk": "Не вдалося оновити історію.",
     "de": "Der Verlauf konnte nicht aktualisiert werden."
+  },
+  "History couldn't be read.": {
+    "pl": "Nie udało się odczytać historii.",
+    "uk": "Не вдалося прочитати історію.",
+    "de": "Der Verlauf konnte nicht gelesen werden."
+  },
+  "History actions": {
+    "pl": "Działania historii",
+    "uk": "Дії з історією",
+    "de": "Verlaufsaktionen"
   }
 }
