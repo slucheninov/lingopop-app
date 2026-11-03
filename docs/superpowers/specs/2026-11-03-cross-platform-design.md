@@ -136,7 +136,7 @@ Mac preview packaging must use a consistent signing strategy that permits repeat
 
 General availability requires either Developer ID signed/notarized artifacts or an explicitly owner-approved ad-hoc distribution exception. This is a release-readiness choice, not a requirement to buy anything during implementation.
 
-Release jobs build and validate all selected platform assets before publishing the combined release. Updates choose the current OS/architecture asset and remain within this repository. Initial previews do not auto-replace Swift installations. Repository description, support documentation, screenshots/manual checklist and privacy/security documents must describe the actual shipped platforms and local/cloud-folder behavior accurately.
+Release jobs build and validate all selected platform assets before publishing the combined release. Updates choose the current OS/architecture asset and remain within this repository. Initial previews do not auto-replace Swift installations. Repository description, support documentation, screenshots/PR-recorded release checks and privacy/security documents must describe the actual shipped platforms and local/cloud-folder behavior accurately.
 
 ## Verification and rollout boundaries
 
