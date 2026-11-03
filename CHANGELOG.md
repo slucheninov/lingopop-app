@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.6] - 2026-11-03
+
+### Added
+
+- Settings window (a second launch opens it) with the Main, Providers, Shortcuts, Usage, Magic and About tabs, ported from the macOS app.
+- Main: target language with auto-detect and language pairs, popup font size, app language (English, Polish, Ukrainian, German; takes effect after a restart), input limits and launch at login.
+- Providers: API keys (stored with DPAPI, never shown again), base URL, model, Referer and region per provider, the active provider and its fallback.
+- Shortcuts: record, clear and validate the six global hotkeys, with conflict and invalid-chord messages.
+- Usage: token and cost statistics for 1, 7 and 30 days with a chart and a per-provider table, and a reset.
+- Magic: edit the Magic prompt (2000 characters) or reset it to the default.
+- About: version, update check against GitHub releases (also every three hours in the background) and the privacy policy link.
+- The popup and the Settings window are localized in Polish, Ukrainian and German.
+
 ## [0.2.0-alpha.5] - 2026-11-01
 
 ### Fixed
