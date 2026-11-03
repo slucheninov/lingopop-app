@@ -44,7 +44,7 @@ pub fn native() -> Platform {
     let sleeper: Arc<dyn Sleeper> = Arc::new(SystemSleeper::new());
     Platform {
         overlay: Arc::new(crate::WindowsOverlay::new()),
-        system: Arc::new(crate::windows::WindowsSystem),
+        system: native_system(),
         login_item: Arc::new(crate::windows::WindowsLoginItem::new()),
         popup_window: Arc::new(crate::WindowsPopupWindow),
         dismiss: Arc::new(crate::WindowsDismissWatcher::new()),
@@ -74,7 +74,7 @@ pub fn native() -> Platform {
 
     Platform {
         overlay: Arc::new(crate::MacOverlay),
-        system: Arc::new(crate::macos::MacSystem),
+        system: native_system(),
         login_item: Arc::new(crate::macos::MacLoginItem),
         popup_window: Arc::new(crate::MacPopupWindow),
         dismiss: Arc::new(crate::MacDismissWatcher::default()),
@@ -88,4 +88,16 @@ pub fn native() -> Platform {
         protector: Arc::new(DevPlaintextProtector::new()),
         sleeper: Arc::new(SystemSleeper::new()),
     }
+}
+
+/// Construct only the system service, without starting trackers or installing hooks.
+#[cfg(windows)]
+pub fn native_system() -> Arc<dyn crate::SystemInfo> {
+    Arc::new(crate::windows::WindowsSystem)
+}
+
+/// The system-only macOS dev service for the relaunch wait path.
+#[cfg(target_os = "macos")]
+pub fn native_system() -> Arc<dyn crate::SystemInfo> {
+    Arc::new(crate::macos::MacSystem)
 }

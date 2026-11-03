@@ -37,13 +37,13 @@ impl RegionOverlay for WindowsOverlay {
                 let _flush = FlushAfterCleanup;
                 run(cancel)
             })
-            .map_err(|_| PlatformError::Os {
-                api: "overlay thread",
-                code: 0,
+            .map_err(|e| PlatformError::Os {
+                api: "overlay thread spawn",
+                code: e.raw_os_error().unwrap_or(0),
             })?
             .join()
             .map_err(|_| PlatformError::Os {
-                api: "overlay thread",
+                api: "overlay thread panicked",
                 code: 0,
             })?
     }
@@ -57,15 +57,8 @@ impl Drop for FlushAfterCleanup {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
-#[derive(Clone, Copy)]
-enum Input {
-    Down(Point),
-    Move(Point),
-    Up(Point),
-    Escape,
-}
-thread_local! { static INPUT: RefCell<Vec<Input>> = const { RefCell::new(Vec::new()) }; }
-fn queue_input(event: Input) {
+thread_local! { static INPUT: RefCell<Vec<OverlayInput>> = const { RefCell::new(Vec::new()) }; }
+fn queue_input(event: OverlayInput) {
     INPUT.with(|q| q.borrow_mut().push(event));
     // SAFETY: LL hooks execute on the installing thread, whose message queue already exists.
     // Wake GetMessageW even when the hook swallows the native input; timer remains a fallback.
@@ -80,15 +73,15 @@ unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
             y: m.pt.y,
         };
         let event = match w.0 as u32 {
-            WM_LBUTTONDOWN => Some(Input::Down(p)),
+            WM_LBUTTONDOWN => Some(OverlayInput::Down(p)),
             WM_MOUSEMOVE => {
                 // SAFETY: standard system cursor, no owned resource.
                 unsafe {
                     SetCursor(LoadCursorW(None, IDC_CROSS).ok());
                 }
-                Some(Input::Move(p))
+                Some(OverlayInput::Move(p))
             }
-            WM_LBUTTONUP => Some(Input::Up(p)),
+            WM_LBUTTONUP => Some(OverlayInput::Up(p)),
             _ => None,
         };
         if let Some(event) = event {
@@ -109,7 +102,7 @@ unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         let k = unsafe { &*(l.0 as *const KBDLLHOOKSTRUCT) };
         if k.vkCode == u32::from(VK_ESCAPE.0) {
             if matches!(w.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN) {
-                queue_input(Input::Escape);
+                queue_input(OverlayInput::Escape);
             }
             return LRESULT(1);
         }
@@ -489,20 +482,10 @@ fn run(cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, Platform
             }
         }
         let events = INPUT.with(|q| std::mem::take(&mut *q.borrow_mut()));
-        for event in events {
-            let p = match event {
-                Input::Escape => return Ok(None),
-                Input::Down(p) => {
-                    start = Some(p);
-                    p
-                }
-                Input::Move(p) | Input::Up(p) => p,
-            };
-            if let Some(s) = start {
-                let r = selection_rect(s, p);
-                if matches!(event, Input::Up(_)) {
-                    return Ok(selection_accepted(r).then_some(r));
-                }
+        match fold_input_batch(&mut start, events) {
+            InputBatch::Finish(result) => return Ok(result),
+            InputBatch::Unchanged => {}
+            InputBatch::Redraw(r) => {
                 let scale = monitor_at(
                     Point {
                         x: r.right(),

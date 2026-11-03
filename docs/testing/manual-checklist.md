@@ -71,6 +71,7 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 
 ## Tray and History
 
+- [ ] Keep the tray menu open while an operation finishes. Expected: the menu may close or redraw once (rebuilt with the new history); reopening shows the new row.
 - [ ] Open the tray menu. Expected: the header, the recent history rows, the operations with their hotkeys, the `Target:` submenu, History, Settings, About and Quit.
 - [ ] Click a history row in the tray menu. Expected: the translation is on the clipboard.
 - [ ] Press the digit mnemonics of the recent rows. Expected: the matching row is selected; if `&1` ... `&0` render literally on Windows, drop the mnemonic prefix.

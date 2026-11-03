@@ -59,9 +59,9 @@ pub use monitors::{
     clamp_to_work_area, monitor_at, physical_size, validate_region, virtual_screen, MonitorInfo,
     Monitors, Point, Rect, Size,
 };
-#[cfg(any(windows, target_os = "macos"))]
-pub use native::native;
 pub use native::Platform;
+#[cfg(any(windows, target_os = "macos"))]
+pub use native::{native, native_system};
 pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
 pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};

@@ -83,6 +83,9 @@ impl Icons {
     }
     fn set(self: &Arc<Self>, status: TrayStatus) {
         let mut st = self.state.lock().unwrap();
+        if status == TrayStatus::Idle && st.current == TrayStatus::Idle && st.task.is_none() {
+            return;
+        }
         st.generation += 1;
         let generation = st.generation;
         st.current = status;
@@ -117,6 +120,7 @@ impl Icons {
                         }
                         if status == TrayStatus::Error {
                             st.current = TrayStatus::Idle;
+                            st.task = None;
                             me.sink.set_icon(Frame::Idle);
                             return;
                         }
@@ -371,6 +375,19 @@ mod tests {
         tokio::task::yield_now().await;
     }
     #[tokio::test(start_paused = true)]
+    async fn repeated_idle_sends_no_frames() {
+        let (icons, sink) = rig();
+        icons.set(TrayStatus::Idle);
+        icons.set(TrayStatus::Idle);
+        advance(5000).await;
+        assert!(sink.0.lock().unwrap().is_empty());
+        icons.set(TrayStatus::Working);
+        icons.set(TrayStatus::Idle);
+        icons.set(TrayStatus::Idle);
+        advance(5000).await;
+        assert_eq!(*sink.0.lock().unwrap(), [Frame::Working1, Frame::Idle]);
+    }
+    #[tokio::test(start_paused = true)]
     async fn working_alternates_frames() {
         let (icons, sink) = rig();
         icons.set(TrayStatus::Working);
@@ -398,6 +415,9 @@ mod tests {
         advance(2999).await;
         assert_eq!(*sink.0.lock().unwrap(), [Frame::Error]);
         advance(1).await;
+        assert_eq!(*sink.0.lock().unwrap(), [Frame::Error, Frame::Idle]);
+        icons.set(TrayStatus::Idle);
+        advance(5000).await;
         assert_eq!(*sink.0.lock().unwrap(), [Frame::Error, Frame::Idle]);
     }
     #[tokio::test(start_paused = true)]

@@ -45,3 +45,57 @@ pub fn label_origin(sel: Rect, label: Size, bounds: Rect) -> Point {
 pub fn size_label(r: Rect) -> String {
     format!("{} × {}", r.width, r.height)
 }
+
+/// Ordered hook input, shared with portable batch-reduction tests.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub enum OverlayInput {
+    Down(Point),
+    Move(Point),
+    Up(Point),
+    Escape,
+}
+
+#[doc(hidden)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum InputBatch {
+    Unchanged,
+    Redraw(Rect),
+    Finish(Option<Rect>),
+}
+
+/// Fold in arrival order, keeping only the final pending geometry for one upload.
+/// Down resets the anchor; Up uses its own (latest) point. Terminal events stop
+/// the batch immediately, so later moves cannot change a finished selection.
+/// A finishing overlay is removed without uploading an intermediate frame.
+#[doc(hidden)]
+pub fn fold_input_batch(
+    start: &mut Option<Point>,
+    events: impl IntoIterator<Item = OverlayInput>,
+) -> InputBatch {
+    let mut pending = None;
+    for event in events {
+        let current = match event {
+            OverlayInput::Escape => return InputBatch::Finish(None),
+            OverlayInput::Down(p) => {
+                *start = Some(p);
+                p
+            }
+            OverlayInput::Move(p) => p,
+            OverlayInput::Up(p) => {
+                if let Some(anchor) = *start {
+                    let r = selection_rect(anchor, p);
+                    return InputBatch::Finish(selection_accepted(r).then_some(r));
+                }
+                continue;
+            }
+        };
+        if start.is_some() {
+            pending = Some(current);
+        }
+    }
+    match (*start, pending) {
+        (Some(anchor), Some(current)) => InputBatch::Redraw(selection_rect(anchor, current)),
+        _ => InputBatch::Unchanged,
+    }
+}

@@ -260,11 +260,8 @@ pub fn run() {
     }
     logging::init(&data_dir);
     if let Some(pid) = parse_wait_pid(&std::env::args().collect::<Vec<_>>()) {
-        let platform = lingopop_platform::native();
-        if !platform
-            .system
-            .wait_for_process_exit(pid, Duration::from_secs(10))
-        {
+        let system = lingopop_platform::native_system();
+        if !system.wait_for_process_exit(pid, Duration::from_secs(10)) {
             log::warn!("previous instance still running");
         }
     }

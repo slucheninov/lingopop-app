@@ -45,3 +45,63 @@ fn label_origin_stays_inside_bounds() {
 fn size_label_uses_multiplication_sign() {
     assert_eq!(size_label(Rect::new(0, 0, 120, 40)), "120 × 40");
 }
+
+fn point(x: i32, y: i32) -> Point {
+    Point { x, y }
+}
+#[test]
+fn batch_coalesces_a_move_backlog_to_one_redraw() {
+    let mut start = Some(point(0, 0));
+    let moves = (1..=10_000).map(|n| OverlayInput::Move(point(n, n)));
+    assert_eq!(
+        fold_input_batch(&mut start, moves),
+        InputBatch::Redraw(Rect::new(0, 0, 10_000, 10_000))
+    );
+    assert_eq!(fold_input_batch(&mut start, []), InputBatch::Unchanged);
+}
+#[test]
+fn batch_preserves_down_order_and_up_position_across_batches() {
+    use OverlayInput::*;
+    let mut start = None;
+    assert_eq!(
+        fold_input_batch(&mut start, [Move(point(99, 99)), Up(point(99, 99))]),
+        InputBatch::Unchanged
+    );
+    assert_eq!(
+        fold_input_batch(
+            &mut start,
+            [
+                Down(point(0, 0)),
+                Move(point(80, 80)),
+                Down(point(50, 50)),
+                Move(point(30, 30))
+            ]
+        ),
+        InputBatch::Redraw(Rect::new(30, 30, 20, 20))
+    );
+    assert_eq!(
+        fold_input_batch(
+            &mut start,
+            [
+                Move(point(20, 20)),
+                Up(point(10, 10)),
+                Move(point(99, 99)),
+                Escape
+            ]
+        ),
+        InputBatch::Finish(Some(Rect::new(10, 10, 40, 40)))
+    );
+}
+#[test]
+fn batch_terminal_events_discard_pending_redraw() {
+    use OverlayInput::*;
+    let mut start = Some(point(0, 0));
+    assert_eq!(
+        fold_input_batch(&mut start, [Move(point(50, 50)), Escape, Up(point(90, 90))]),
+        InputBatch::Finish(None)
+    );
+    assert_eq!(
+        fold_input_batch(&mut start, [Move(point(50, 50)), Up(point(9, 10))]),
+        InputBatch::Finish(None)
+    );
+}

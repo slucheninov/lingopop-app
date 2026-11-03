@@ -28,7 +28,7 @@ impl RegionPicker for OverlayPicker {
             overlay.pick(rx)
         });
         let out = task.await.map_err(|_| PlatformError::Os {
-            api: "overlay worker",
+            api: "overlay worker join",
             code: 0,
         })?;
         drop(tx);
@@ -61,7 +61,7 @@ mod tests {
         assert_eq!(
             picker.pick().await,
             Err(PlatformError::Os {
-                api: "overlay worker",
+                api: "overlay worker join",
                 code: 0
             })
         );
