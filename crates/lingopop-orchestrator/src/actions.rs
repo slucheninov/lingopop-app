@@ -11,6 +11,14 @@ use crate::{
 };
 
 impl Orchestrator {
+    pub async fn write_clipboard(&self, text: String) -> Result<(), GateError> {
+        let clipboard = self.deps().platform.clipboard.clone();
+        self.deps()
+            .gate
+            .run(move || clipboard.write_text(&text))
+            .await
+    }
+
     pub async fn copy(&self) {
         self.start(|me, generation| async move {
             let text = {
@@ -145,6 +153,7 @@ impl Orchestrator {
     fn end_session(&self, generation: u64) {
         let mut st = self.state();
         if st.generation == generation {
+            self.set_status_locked(&mut st, crate::TrayStatus::Idle);
             st.session = None;
         }
     }
@@ -255,6 +264,7 @@ impl Orchestrator {
             if st.generation != generation {
                 return;
             }
+            me.set_status_locked(&mut st, crate::TrayStatus::Idle);
             me.deps().popup.hide();
             me.deps().platform.dismiss.stop();
             st.session = None;

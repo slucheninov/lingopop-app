@@ -16,6 +16,7 @@ use crate::sleeper::Sleeper;
 /// Windows and must be created on the event-loop thread with `GlobalHotkeyService::new()`.
 #[derive(Clone)]
 pub struct Platform {
+    pub overlay: Arc<dyn crate::RegionOverlay>,
     pub system: Arc<dyn crate::SystemInfo>,
     pub login_item: Arc<dyn crate::LoginItem>,
     pub popup_window: Arc<dyn crate::NoActivateWindow>,
@@ -23,6 +24,7 @@ pub struct Platform {
     pub clipboard: Arc<dyn Clipboard>,
     pub keys: Arc<dyn KeySynth>,
     pub foreground: Arc<dyn ForegroundWindow>,
+    pub last_foreground: Arc<dyn crate::LastForeground>,
     pub monitors: Arc<dyn Monitors>,
     pub capture: Arc<dyn ScreenCapture>,
     pub ocr: Arc<dyn Ocr>,
@@ -41,13 +43,22 @@ pub fn native() -> Platform {
 
     let sleeper: Arc<dyn Sleeper> = Arc::new(SystemSleeper::new());
     Platform {
-        system: Arc::new(crate::windows::WindowsSystem),
+        overlay: Arc::new(crate::WindowsOverlay::new()),
+        system: native_system(),
         login_item: Arc::new(crate::windows::WindowsLoginItem::new()),
         popup_window: Arc::new(crate::WindowsPopupWindow),
         dismiss: Arc::new(crate::WindowsDismissWatcher::new()),
         clipboard: Arc::new(WindowsClipboard::new(sleeper.clone())),
         keys: Arc::new(WindowsKeys::new()),
         foreground: Arc::new(WindowsForeground::new()),
+        // A failed hook only loses tray-triggered operations; the hotkey flow never needs it.
+        last_foreground: match crate::windows::WindowsLastForeground::new() {
+            Ok(tracker) => Arc::new(tracker),
+            Err(e) => {
+                crate::error::platform_log(&format!("last-foreground tracker unavailable: {e}"));
+                Arc::new(crate::last_foreground::NoLastForeground)
+            }
+        },
         monitors: Arc::new(WindowsMonitors::new()),
         capture: Arc::new(WindowsCapture::new()),
         ocr: Arc::new(WindowsOcr::new()),
@@ -65,17 +76,31 @@ pub fn native() -> Platform {
     use crate::sleeper::SystemSleeper;
 
     Platform {
-        system: Arc::new(crate::macos::MacSystem),
+        overlay: Arc::new(crate::MacOverlay),
+        system: native_system(),
         login_item: Arc::new(crate::macos::MacLoginItem),
         popup_window: Arc::new(crate::MacPopupWindow),
         dismiss: Arc::new(crate::MacDismissWatcher::default()),
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),
         foreground: Arc::new(MacForeground::new()),
+        last_foreground: Arc::new(crate::macos::MacLastForeground::new()),
         monitors: Arc::new(MacMonitors::new()),
         capture: Arc::new(MacCapture::new()),
         ocr: Arc::new(MacOcr::new()),
         protector: Arc::new(DevPlaintextProtector::new()),
         sleeper: Arc::new(SystemSleeper::new()),
     }
+}
+
+/// Construct only the system service, without starting trackers or installing hooks.
+#[cfg(windows)]
+pub fn native_system() -> Arc<dyn crate::SystemInfo> {
+    Arc::new(crate::windows::WindowsSystem)
+}
+
+/// The system-only macOS dev service for the relaunch wait path.
+#[cfg(target_os = "macos")]
+pub fn native_system() -> Arc<dyn crate::SystemInfo> {
+    Arc::new(crate::macos::MacSystem)
 }

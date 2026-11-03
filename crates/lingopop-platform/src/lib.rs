@@ -16,6 +16,7 @@ pub mod foreground;
 pub mod hotkey;
 pub mod inject;
 pub mod keys;
+pub mod last_foreground;
 pub mod login_item;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
@@ -32,34 +33,35 @@ mod windows;
 
 #[cfg(target_os = "macos")]
 pub use crate::macos::{
-    MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLoginItem, MacMonitors,
-    MacOcr, MacPopupWindow,
+    MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
+    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPopupWindow,
 };
 #[cfg(windows)]
 pub use crate::windows::{
-    set_dismiss_log, WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground,
-    WindowsKeys, WindowsLoginItem, WindowsMonitors, WindowsOcr, WindowsPopupWindow,
-    WindowsProtector,
+    WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground, WindowsKeys,
+    WindowsLastForeground, WindowsLoginItem, WindowsMonitors, WindowsOcr, WindowsOverlay,
+    WindowsPopupWindow, WindowsProtector,
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
 #[cfg(not(windows))]
 pub use dev_protector::DevPlaintextProtector;
-pub use error::{LogFn, PlatformError};
+pub use error::{set_platform_log, LogFn, PlatformError};
 pub use foreground::{ForegroundWindow, WindowHandle};
 pub use hotkey::{to_chord, HotkeyEvent, HotkeyId, HotkeyService};
 #[cfg(any(windows, target_os = "macos"))]
 pub use hotkey::{to_global_hotkey, GlobalHotkeyService};
-pub use inject::{replace_selection, ReplaceOptions, ReplaceOutcome};
+pub use inject::{bring_to_front, replace_selection, ReplaceOptions, ReplaceOutcome};
 pub use keys::KeySynth;
+pub use last_foreground::{LastForeground, NoLastForeground};
 pub use login_item::{run_value, LoginItem};
 pub use monitors::{
     clamp_to_work_area, monitor_at, physical_size, validate_region, virtual_screen, MonitorInfo,
     Monitors, Point, Rect, Size,
 };
-#[cfg(any(windows, target_os = "macos"))]
-pub use native::native;
 pub use native::Platform;
+#[cfg(any(windows, target_os = "macos"))]
+pub use native::{native, native_system};
 pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
 pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};
@@ -69,3 +71,6 @@ pub use popup_window::NoActivateWindow;
 
 pub mod system;
 pub use system::SystemInfo;
+
+pub mod overlay;
+pub use overlay::RegionOverlay;

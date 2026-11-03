@@ -5,7 +5,7 @@ import Settings from './Settings.svelte';
 import History from '../history/History.svelte';
 import { bootstrap } from '../lib/bootstrap';
 import { setLanguage, t } from '../lib/i18n';
-import { baseView, baseBootstrap, listeners, mockIpc } from './testSupport';
+import { baseBootstrap, listeners, mockIpc } from './testSupport';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
@@ -54,14 +54,9 @@ test('bootstrap_failure_falls_back_to_english', async () => {
   expect(t('Close')).toBe('Close');
 });
 
-test('placeholder_tabs_mount_without_invoke', () => {
-  for (const Tab of [History]) {
-    const { container, unmount } = render(Tab as never, { props: { view: baseView, onPatch: () => {}, onUiPatch: () => {} } } as never);
-    const section = container.querySelector('section');
-    expect(section).toBeTruthy();
-    expect(section!.childElementCount).toBe(0);
-    expect(section!.textContent).toBe('');
-    unmount();
-  }
-  expect(invoke).not.toHaveBeenCalled();
+test('history_mounts_and_reads_rows', async () => {
+  mockIpc({ history_list: [] });
+  render(History);
+  expect(screen.getByPlaceholderText('Search history')).toBeTruthy();
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('history_list'));
 });

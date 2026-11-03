@@ -107,7 +107,9 @@ fn rig_full(
     let log: Arc<lingopop_platform::LogFn> =
         Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string()));
     let orch = Orchestrator::new(Deps {
+        status: None,
         platform: Platform {
+            overlay: Arc::new(lingopop_platform::fake::FakeOverlay::new(Ok(None))),
             system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
             login_item: Arc::new(FakeLoginItem::new()),
             popup_window: Arc::new(FakePopupWindow::default()),
@@ -115,6 +117,7 @@ fn rig_full(
             clipboard: clip.clone(),
             keys: keys.clone(),
             foreground: fg.clone(),
+            last_foreground: lingopop_platform::fake::FakeLastForeground::new(None),
             monitors: Arc::new(FakeMonitors::new(
                 cursor,
                 vec![MonitorInfo {

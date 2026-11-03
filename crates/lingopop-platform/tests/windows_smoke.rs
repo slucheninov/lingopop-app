@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 
 use lingopop_platform::{
     capture_selection, virtual_screen, CaptureOptions, CapturedImage, Clipboard, ClipboardFormat,
-    ClipboardSnapshot, ForegroundWindow, KeySynth, Monitors, Ocr, OcrText, PlatformError, Rect,
-    ScreenCapture, SystemSleeper, WindowHandle, WindowsCapture, WindowsClipboard,
-    WindowsForeground, WindowsKeys, WindowsMonitors, WindowsOcr,
+    ClipboardSnapshot, ForegroundWindow, KeySynth, LastForeground, Monitors, Ocr, OcrText,
+    PlatformError, Rect, ScreenCapture, SystemSleeper, WindowHandle, WindowsCapture,
+    WindowsClipboard, WindowsForeground, WindowsKeys, WindowsLastForeground, WindowsMonitors,
+    WindowsOcr,
 };
 use windows::core::PCWSTR;
 use windows::Media::Ocr::OcrEngine;
@@ -1014,8 +1015,14 @@ fn dismiss_watcher_reports_injected_outside_click() {
 }
 
 static ESCAPES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static OVERLAY_PROBE_CLICKS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 unsafe extern "system" fn escape_probe_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     use windows::Win32::UI::{Input::KeyboardAndMouse::VK_ESCAPE, WindowsAndMessaging::WM_KEYDOWN};
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN {
+        OVERLAY_PROBE_CLICKS.fetch_add(1, Ordering::SeqCst);
+    }
     if msg == WM_KEYDOWN && w.0 == usize::from(VK_ESCAPE.0) {
         ESCAPES.fetch_add(1, Ordering::SeqCst);
     }
@@ -1162,4 +1169,319 @@ fn login_item_disable_when_absent_is_ok() {
         query_sz(&subkey, "LingoPop").expect_err("still absent"),
         ERROR_FILE_NOT_FOUND.0
     );
+}
+
+// ---- Last-foreground tracker -------------------------------------------------------------------
+//
+// The tracker hooks with WINEVENT_SKIPOWNPROCESS, so the "external" windows below belong to
+// helper PROCESSES (`tests/foreground_helper.rs`, built with `--test foreground_helper`) that the
+// test spawns and that end when their stdin closes.
+
+/// A `foreground_helper` process with one topmost window. Killed on drop.
+struct Helper {
+    child: std::process::Child,
+    hwnd: u64,
+}
+
+fn helper_exe() -> std::path::PathBuf {
+    let dir = std::env::current_exe()
+        .expect("current_exe")
+        .parent()
+        .expect("exe dir")
+        .to_path_buf();
+    let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(&dir).expect("read exe dir").flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if !(name.starts_with("foreground_helper-") && name.ends_with(".exe")) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().is_none_or(|(t, _)| modified > *t) {
+            best = Some((modified, path));
+        }
+    }
+    best.map(|(_, p)| p).unwrap_or_else(|| {
+        panic!(
+            "foreground_helper-*.exe not found in {}: run the test with `--test foreground_helper` too",
+            dir.display()
+        )
+    })
+}
+
+impl Helper {
+    fn spawn(title: &str) -> Self {
+        use std::io::BufRead;
+        use std::process::{Command, Stdio};
+        let mut child = Command::new(helper_exe())
+            .args(["--window", title])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("spawn foreground_helper");
+        let stdout = child.stdout.take().expect("helper stdout");
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut line = String::new();
+            let _ = std::io::BufReader::new(stdout).read_line(&mut line);
+            let _ = tx.send(line);
+        });
+        let mut helper = Self { child, hwnd: 0 };
+        let line = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("helper printed READY within 10 s");
+        helper.hwnd = line
+            .trim()
+            .strip_prefix("READY ")
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("unexpected helper output: {line:?}"));
+        helper
+    }
+
+    fn handle(&self) -> WindowHandle {
+        WindowHandle(self.hwnd)
+    }
+
+    /// Closes stdin (the helper then exits) and waits up to `timeout` for the process to end.
+    fn close_and_wait(&mut self, timeout: Duration) -> bool {
+        drop(self.child.stdin.take());
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+}
+
+impl Drop for Helper {
+    fn drop(&mut self) {
+        if !self.close_and_wait(Duration::from_secs(2)) {
+            let _ = self.child.kill();
+            // Bounded: an unbounded wait() could hang the whole test run, and Drop must not panic.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if !matches!(self.child.try_wait(), Ok(None)) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+}
+
+/// Polls `cond` for up to `timeout` (generous: the hook is asynchronous).
+fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if cond() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    cond()
+}
+
+/// Brings `w` to the front. The foreground lock may refuse a process that has not received the
+/// last input, so each retry first taps Shift (it opens no menu), which grants that right.
+fn force_foreground(fg: &WindowsForeground, w: WindowHandle) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_SHIFT};
+    for _ in 0..3 {
+        let _ = fg.restore(w);
+        if wait_until(Duration::from_millis(700), || fg.current() == Some(w)) {
+            return;
+        }
+        // SAFETY: a plain synthesized Shift press and release, no pointers involved.
+        unsafe {
+            keybd_event(VK_SHIFT.0 as u8, 0, Default::default(), 0);
+            keybd_event(VK_SHIFT.0 as u8, 0, KEYEVENTF_KEYUP, 0);
+        }
+    }
+    panic!("could not bring window {} to the foreground", w.0);
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn tracker_remembers_foreground_switch_between_external_windows() {
+    let tracker = WindowsLastForeground::new().expect("tracker");
+    let fg = WindowsForeground::new();
+    let a = Helper::spawn("lingopop-tracker-a");
+    let b = Helper::spawn("lingopop-tracker-b");
+    for target in [&a, &b, &a] {
+        force_foreground(&fg, target.handle());
+        assert!(
+            wait_until(Duration::from_secs(2), || tracker.last_external()
+                == Some(target.handle())),
+            "last_external() = {:?}, expected {:?}",
+            tracker.last_external(),
+            target.handle()
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn tracker_ignores_own_process_windows() {
+    let tracker = WindowsLastForeground::new().expect("tracker");
+    let fg = WindowsForeground::new();
+    let external = Helper::spawn("lingopop-tracker-external");
+    force_foreground(&fg, external.handle());
+    assert!(
+        wait_until(Duration::from_secs(2), || tracker.last_external()
+            == Some(external.handle())),
+        "helper window not remembered: {:?}",
+        tracker.last_external()
+    );
+
+    let own = desktop_test_window(500);
+    force_foreground(&fg, own.handle());
+    // Give a (wrong) update every chance to arrive.
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        tracker.last_external(),
+        Some(external.handle()),
+        "a window of our own process replaced the remembered one"
+    );
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn tracker_returns_none_after_window_destroyed() {
+    let tracker = WindowsLastForeground::new().expect("tracker");
+    let fg = WindowsForeground::new();
+    let mut external = Helper::spawn("lingopop-tracker-gone");
+    let handle = external.handle();
+    force_foreground(&fg, handle);
+    assert!(
+        wait_until(Duration::from_secs(2), || tracker.last_external()
+            == Some(handle)),
+        "helper window not remembered: {:?}",
+        tracker.last_external()
+    );
+
+    assert!(
+        external.close_and_wait(Duration::from_secs(5)),
+        "helper did not exit after its stdin closed"
+    );
+    // The destroyed window is never reported. Windows may hand the foreground to another
+    // external window at that moment (which is then remembered), so `None` is not guaranteed.
+    assert!(
+        wait_until(Duration::from_secs(2), || tracker.last_external()
+            != Some(handle)),
+        "destroyed window still reported: {:?}",
+        tracker.last_external()
+    );
+}
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn two_trackers_do_not_share_state() {
+    let first = WindowsLastForeground::new().expect("first tracker");
+    let second = WindowsLastForeground::new().expect("second tracker");
+    let fg = WindowsForeground::new();
+    let a = Helper::spawn("lingopop-tracker-shared-a");
+    let b = Helper::spawn("lingopop-tracker-shared-b");
+
+    force_foreground(&fg, a.handle());
+    for tracker in [&first, &second] {
+        assert!(
+            wait_until(Duration::from_secs(2), || tracker.last_external()
+                == Some(a.handle())),
+            "a tracker missed the first switch"
+        );
+    }
+
+    drop(first);
+    force_foreground(&fg, b.handle());
+    assert!(
+        wait_until(Duration::from_secs(2), || second.last_external()
+            == Some(b.handle())),
+        "the surviving tracker stopped updating after the other was dropped"
+    );
+    drop(second);
+
+    // Creating and dropping in a row neither hangs nor panics.
+    for _ in 0..5 {
+        drop(WindowsLastForeground::new().expect("tracker"));
+    }
+}
+
+#[path = "support/overlay.rs"]
+mod overlay_test;
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn overlay_creates_and_destroys_window() {
+    let pick = overlay_test::Pick::start();
+    let hwnd = overlay_test::window().unwrap();
+    // SAFETY: pure thread-id query for a live overlay window.
+    let id =
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, None) };
+    assert!(id != 0);
+    assert_eq!(overlay_thread_windows(id), 1);
+    pick.cancel.send(()).unwrap();
+    assert_eq!(pick.finish(), None);
+    assert!(overlay_test::window().is_none());
+}
+fn overlay_thread_windows(id: u32) -> usize {
+    use windows::{
+        core::BOOL,
+        Win32::UI::WindowsAndMessaging::{EnumThreadWindows, GetClassNameW},
+    };
+    // Counts only overlay-class windows: the thread also owns system windows
+    // such as the default IME window.
+    unsafe extern "system" fn count(hwnd: HWND, l: LPARAM) -> BOOL {
+        let mut buf = [0u16; 64];
+        // SAFETY: hwnd comes from EnumThreadWindows; buf is a live local buffer.
+        let len = unsafe { GetClassNameW(hwnd, &mut buf) };
+        let len = usize::try_from(len).unwrap_or(0);
+        if String::from_utf16_lossy(&buf[..len]) == "LingoPopRegionOverlay" {
+            // SAFETY: EnumThreadWindows forwards our live usize pointer synchronously.
+            unsafe {
+                *(l.0 as *mut usize) += 1;
+            }
+        }
+        BOOL(1)
+    }
+    let mut n = 0usize;
+    // SAFETY: synchronous enumeration; count's out pointer remains live through the call.
+    let _ = unsafe { EnumThreadWindows(id, Some(count), LPARAM((&mut n as *mut usize) as isize)) };
+    n
+}
+#[test]
+#[ignore = "needs interactive desktop"]
+fn overlay_destroys_window_on_cancel() {
+    let probe = test_window(100, false, true);
+    let fg = WindowsForeground::new();
+    fg.restore(probe.handle()).unwrap();
+    ESCAPES.store(0, Ordering::SeqCst);
+    OVERLAY_PROBE_CLICKS.store(0, Ordering::SeqCst);
+    let pick = overlay_test::Pick::start();
+    pick.cancel.send(()).unwrap();
+    assert_eq!(pick.finish(), None);
+    assert!(overlay_test::window().is_none());
+    overlay_test::escape();
+    assert!(wait_until(Duration::from_secs(1), || ESCAPES
+        .load(Ordering::SeqCst)
+        > 0));
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    overlay_test::mouse(200, 120, MOUSEEVENTF_LEFTDOWN);
+    overlay_test::mouse(200, 120, MOUSEEVENTF_LEFTUP);
+    assert!(wait_until(Duration::from_secs(1), || OVERLAY_PROBE_CLICKS
+        .load(Ordering::SeqCst)
+        > 0));
+}
+#[test]
+#[ignore = "needs interactive desktop"]
+fn overlay_window_origin_is_virtual_screen_origin() {
+    let pick = overlay_test::Pick::start();
+    assert_eq!(overlay_test::window_rect(), overlay_test::bounds());
+    pick.cancel.send(()).unwrap();
+    assert_eq!(pick.finish(), None);
 }

@@ -6,6 +6,7 @@ mod clipboard;
 mod dpapi;
 mod foreground;
 mod keys;
+mod last_foreground;
 mod monitors;
 mod ocr;
 mod util;
@@ -15,16 +16,20 @@ pub use clipboard::WindowsClipboard;
 pub use dpapi::WindowsProtector;
 pub use foreground::WindowsForeground;
 pub use keys::WindowsKeys;
+pub use last_foreground::WindowsLastForeground;
 pub use monitors::WindowsMonitors;
 pub use ocr::WindowsOcr;
 
 mod popup_window;
 pub use popup_window::WindowsPopupWindow;
 mod dismiss;
-pub use dismiss::{set_dismiss_log, WindowsDismissWatcher};
+pub use dismiss::WindowsDismissWatcher;
 
 mod system;
 pub use system::WindowsSystem;
 
 mod login_item;
 pub use login_item::WindowsLoginItem;
+
+mod overlay;
+pub use overlay::WindowsOverlay;

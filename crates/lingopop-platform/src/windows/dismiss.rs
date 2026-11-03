@@ -1,9 +1,9 @@
 //! One shared process-lifetime hook thread. Every handle controls the same backend.
 //! start/stop post commands; callbacks use only atomics and bounded try_send, never a lock.
-//! Installation failures are logged (see `set_dismiss_log`) as a fixed API name and numeric code, and returned by
+//! Installation failures are logged (see `set_platform_log`) as a fixed API name and numeric code, and returned by
 //! the next start. Construction waits only for message-queue readiness, never for hooks.
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use ::windows::core::PCWSTR;
 use ::windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
@@ -21,20 +21,9 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::util::{map_err, os_err};
-use crate::{classify_click, DismissEvent, DismissWatcher, LogFn, PlatformError, Point, Rect};
+use crate::{classify_click, DismissEvent, DismissWatcher, PlatformError, Point, Rect};
 
-static LOG: OnceLock<Arc<LogFn>> = OnceLock::new();
-
-/// Routes the hook thread's fixed-text diagnostics (API name and code only) to `log`.
-/// Set once at startup; later calls are ignored. Without it the lines are dropped.
-pub fn set_dismiss_log(log: Arc<LogFn>) {
-    let _ = LOG.set(log);
-}
-fn log_line(line: &str) {
-    if let Some(log) = LOG.get() {
-        log(line);
-    }
-}
+use crate::error::platform_log as log_line;
 
 const START: u32 = WM_APP + 41;
 const STOP: u32 = WM_APP + 42;

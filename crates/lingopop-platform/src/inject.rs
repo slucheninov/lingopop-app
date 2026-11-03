@@ -80,7 +80,9 @@ pub fn replace_selection(
     Ok(ReplaceOutcome::Pasted)
 }
 
-fn bring_to_front(
+/// Restores `target` and polls `current()` until it is the foreground window or
+/// `opts.foreground_timeout` passes (through the injected sleeper). `false` = could not.
+pub fn bring_to_front(
     fg: &dyn ForegroundWindow,
     sleeper: &dyn Sleeper,
     target: WindowHandle,

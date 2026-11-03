@@ -158,5 +158,35 @@
     "de": "Die Nutzungsstatistik konnte nicht zurückgesetzt werden.",
     "pl": "Nie udało się zresetować statystyk użycia.",
     "uk": "Не вдалося скинути статистику використання."
+  },
+  "%@ → %@": {
+    "pl": "%@ → %@",
+    "uk": "%@ → %@",
+    "de": "%@ → %@"
+  },
+  "Couldn't copy.": {
+    "pl": "Nie udało się skopiować.",
+    "uk": "Не вдалося скопіювати.",
+    "de": "Kopieren fehlgeschlagen."
+  },
+  "History couldn't be updated.": {
+    "pl": "Nie udało się zaktualizować historii.",
+    "uk": "Не вдалося оновити історію.",
+    "de": "Der Verlauf konnte nicht aktualisiert werden."
+  },
+  "History couldn't be read.": {
+    "pl": "Nie udało się odczytać historii.",
+    "uk": "Не вдалося прочитати історію.",
+    "de": "Der Verlauf konnte nicht gelesen werden."
+  },
+  "History actions": {
+    "pl": "Działania historii",
+    "uk": "Дії з історією",
+    "de": "Verlaufsaktionen"
+  },
+  "Invalid id.": {
+    "pl": "Nieprawidłowy identyfikator.",
+    "uk": "Недійсний ідентифікатор.",
+    "de": "Ungültige ID."
   }
 }

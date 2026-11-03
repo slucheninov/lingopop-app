@@ -51,6 +51,13 @@ impl FakeForeground {
         }
     }
 
+    /// Changes what `current()` reports, as if the user switched windows.
+    pub fn set_current(&self, window: Option<WindowHandle>) {
+        let mut s = self.state();
+        s.current = window;
+        s.pending = None;
+    }
+
     pub fn fail_restore(&self, fail: bool) {
         self.state().fail_restore = fail;
     }
