@@ -204,9 +204,9 @@ fn stores_change_hook_fires_on_every_mutation() {
     let e = entry();
     let id = e.id;
     s.add_history(e, 10);
-    s.remove_history(id);
+    s.remove_history(id).unwrap();
     s.trim_history(2);
-    s.clear_history();
+    s.clear_history().unwrap();
     let record=serde_json::from_value(serde_json::json!({"id":"00000000-0000-0000-0000-000000000002","timestamp":0,"provider":"Claude","model":"m","operation":"translate","inputTokens":1,"outputTokens":1})).unwrap();
     s.append_usage(record);
     s.reset_usage().unwrap();

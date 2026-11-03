@@ -157,6 +157,15 @@ impl ConfigSource for ShellConfig {
     }
 }
 
+/// Why a command-facing history mutation failed. Carries no user data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum HistoryWriteError {
+    #[error("history is unavailable")]
+    Unavailable,
+    #[error("history could not be saved")]
+    Write,
+}
+
 #[derive(Clone, Copy)]
 pub enum StoreKind {
     History,
@@ -173,11 +182,14 @@ impl ShellStores {
     pub fn set_on_change(&self, f: ChangeHook) {
         *lock(&self.on_change) = Some(f);
     }
+    /// Entries for best-effort readers (tray menu): an unavailable store reads as empty.
     pub fn history_entries(&self) -> Vec<HistoryEntry> {
-        lock(&self.history)
-            .as_ref()
-            .map(|s| s.entries().to_vec())
-            .unwrap_or_default()
+        self.history_entries_checked().unwrap_or_default()
+    }
+    /// `None` when `history.json` could not be opened, so callers can tell "unavailable" from
+    /// "empty" (`Some(vec![])`).
+    pub fn history_entries_checked(&self) -> Option<Vec<HistoryEntry>> {
+        lock(&self.history).as_ref().map(|s| s.entries().to_vec())
     }
     /// Clone only the selected entry; the store lock is released before clipboard work.
     pub fn history_entry(&self, id: uuid::Uuid) -> Option<HistoryEntry> {
@@ -223,11 +235,30 @@ impl ShellStores {
             h(StoreKind::Usage);
         }
     }
-    pub fn remove_history(&self, id: Uuid) {
-        self.mutate_history(|s| s.remove(id));
+    /// Like `mutate_history`, but reports the failure; the change hook fires only after a save.
+    fn mutate_history_checked(
+        &self,
+        f: impl FnOnce(&mut HistoryStore) -> Result<(), StoreError>,
+    ) -> Result<(), HistoryWriteError> {
+        let hook = {
+            let mut guard = lock(&self.history);
+            let s = guard.as_mut().ok_or(HistoryWriteError::Unavailable)?;
+            if f(s).is_err() {
+                log::warn!("history write failed");
+                return Err(HistoryWriteError::Write);
+            }
+            lock(&self.on_change).clone()
+        };
+        if let Some(h) = hook {
+            h(StoreKind::History);
+        }
+        Ok(())
     }
-    pub fn clear_history(&self) {
-        self.mutate_history(HistoryStore::clear);
+    pub fn remove_history(&self, id: Uuid) -> Result<(), HistoryWriteError> {
+        self.mutate_history_checked(|s| s.remove(id))
+    }
+    pub fn clear_history(&self) -> Result<(), HistoryWriteError> {
+        self.mutate_history_checked(HistoryStore::clear)
     }
     pub fn trim_history(&self, max: u32) {
         self.mutate_history(|s| s.trim(max));

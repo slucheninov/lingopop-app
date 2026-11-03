@@ -46,8 +46,11 @@
     const registration = listen('history://changed', () => {
       if (!disposed) void load();
     });
-    void registration.catch(() => {});
-    void load();
+    // Listener first, then the initial read: a change between the two is never missed. A failed
+    // registration must not block the read.
+    void registration.catch(() => {}).then(() => {
+      if (!disposed) void load();
+    });
     return () => {
       disposed = true;
       ++generation;

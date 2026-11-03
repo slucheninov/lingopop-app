@@ -169,3 +169,23 @@ test('row_menu_accessibility_and_dismissal', async () => {
   expect(screen.queryByRole('group')).toBeNull();
   expect(trigger.getAttribute('aria-expanded')).toBe('false');
 });
+
+test('listener_is_registered_before_the_first_history_list_call', async () => {
+  const order: string[] = [];
+  let release: (unlisten: () => void) => void = () => {};
+  vi.mocked(listen).mockImplementationOnce(() => {
+    order.push('listen');
+    return new Promise(resolve => { release = resolve; });
+  });
+  vi.mocked(invoke).mockImplementation(async command => {
+    order.push(String(command));
+    return [row];
+  });
+  render(History);
+  await waitFor(() => expect(order).toEqual(['listen']));
+  // The read waits for the registration to settle.
+  expect(invoke).not.toHaveBeenCalled();
+  release(() => {});
+  await screen.findByText('Hallo');
+  expect(order).toEqual(['listen', 'history_list']);
+});

@@ -1,5 +1,5 @@
 //! History's webview projection: timestamps are Unix seconds and names are display names.
-use crate::commands::ShellState;
+use crate::{commands::ShellState, state::ShellStores};
 use lingopop_core::{i18n, operation::AIOperation, records::HistoryEntry, ui_prefs::Language};
 use serde::Serialize;
 use tauri::State;
@@ -47,26 +47,39 @@ fn parse_id(language: Language, id: &str) -> Result<Uuid, String> {
 fn copy_error(language: Language) -> String {
     i18n::t(language, "Couldn't copy.", &[])
 }
+fn read_error(language: Language) -> String {
+    i18n::t(language, "History couldn't be read.", &[])
+}
+fn update_error(language: Language) -> String {
+    i18n::t(language, "History couldn't be updated.", &[])
+}
+// An unavailable store is an error, never an empty list (the window would show the empty state).
+fn list_rows(stores: &ShellStores, language: Language) -> Result<Vec<HistoryRow>, String> {
+    stores
+        .history_entries_checked()
+        .map(|entries| entries.into_iter().map(|e| row(e, language)).collect())
+        .ok_or_else(|| read_error(language))
+}
+fn remove_row(stores: &ShellStores, language: Language, id: &str) -> Result<(), String> {
+    let id = parse_id(language, id)?;
+    stores
+        .remove_history(id)
+        .map_err(|_| update_error(language))
+}
+fn clear_rows(stores: &ShellStores, language: Language) -> Result<(), String> {
+    stores.clear_history().map_err(|_| update_error(language))
+}
 #[tauri::command]
 pub async fn history_list(state: State<'_, ShellState>) -> Result<Vec<HistoryRow>, String> {
-    Ok(state
-        .stores
-        .history_entries()
-        .into_iter()
-        .map(|e| row(e, state.ui.language()))
-        .collect())
+    list_rows(&state.stores, state.ui.language())
 }
 #[tauri::command]
 pub async fn history_remove(state: State<'_, ShellState>, id: String) -> Result<(), String> {
-    state
-        .stores
-        .remove_history(parse_id(state.ui.language(), &id)?);
-    Ok(())
+    remove_row(&state.stores, state.ui.language(), &id)
 }
 #[tauri::command]
 pub async fn history_clear(state: State<'_, ShellState>) -> Result<(), String> {
-    state.stores.clear_history();
-    Ok(())
+    clear_rows(&state.stores, state.ui.language())
 }
 #[tauri::command]
 pub async fn clipboard_write(state: State<'_, ShellState>, text: String) -> Result<(), String> {
@@ -89,6 +102,77 @@ mod tests {
         assert_eq!(copy_error(Language::En), "Couldn't copy.");
         assert_eq!(copy_error(Language::Pl), "Nie udało się skopiować.");
         assert_eq!(copy_error(Language::Uk), "Не вдалося скопіювати.");
+    }
+    fn unavailable_stores(dir: &std::path::Path) -> std::sync::Arc<ShellStores> {
+        // A directory where `history.json` should be makes the store fail to open.
+        std::fs::create_dir(dir.join("history.json")).unwrap();
+        let (_, stores, _) = crate::task4_tests::rig(dir);
+        assert!(stores.history_entries_checked().is_none());
+        stores
+    }
+    #[test]
+    fn history_list_rejects_an_unavailable_store_but_accepts_an_empty_one() {
+        let d = tempfile::tempdir().unwrap();
+        let (_, opened, _) = crate::task4_tests::rig(d.path());
+        assert!(list_rows(&opened, Language::En).unwrap().is_empty());
+        let d = tempfile::tempdir().unwrap();
+        let stores = unavailable_stores(d.path());
+        assert_eq!(
+            list_rows(&stores, Language::En).err().unwrap(),
+            "History couldn't be read."
+        );
+        assert_eq!(
+            list_rows(&stores, Language::De).err().unwrap(),
+            "Der Verlauf konnte nicht gelesen werden."
+        );
+        // The best-effort tray reader still sees an empty list.
+        assert!(stores.history_entries().is_empty());
+    }
+    #[test]
+    fn history_remove_and_clear_reject_an_unavailable_store() {
+        let d = tempfile::tempdir().unwrap();
+        let stores = unavailable_stores(d.path());
+        let id = "00000000-0000-0000-0000-000000000001";
+        assert_eq!(
+            remove_row(&stores, Language::En, id).unwrap_err(),
+            "History couldn't be updated."
+        );
+        assert_eq!(
+            clear_rows(&stores, Language::Pl).unwrap_err(),
+            "Nie udało się zaktualizować historii."
+        );
+        assert_eq!(
+            remove_row(&stores, Language::En, "bad").unwrap_err(),
+            "Invalid id."
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn history_remove_and_clear_report_a_failed_save_without_firing_the_hook() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let d = tempfile::tempdir().unwrap();
+        let (_, stores, _) = crate::task4_tests::rig(d.path());
+        let e: HistoryEntry = serde_json::from_value(serde_json::json!({"id":"00000000-0000-0000-0000-000000000001","timestamp":0,"original":"a","translated":"b","operation":"translate","provider":"Claude","targetLanguage":"German"})).unwrap();
+        let id = e.id;
+        lingopop_orchestrator::Persist::add_history(&*stores, e, 10);
+        let fired = std::sync::Arc::new(AtomicUsize::new(0));
+        let f = fired.clone();
+        stores.set_on_change(std::sync::Arc::new(move |_| {
+            f.fetch_add(1, Ordering::SeqCst);
+        }));
+        let mode = std::fs::metadata(d.path()).unwrap().permissions().mode();
+        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let removed = remove_row(&stores, Language::En, &id.to_string());
+        let cleared = clear_rows(&stores, Language::En);
+        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+        assert_eq!(removed.unwrap_err(), "History couldn't be updated.");
+        assert_eq!(cleared.unwrap_err(), "History couldn't be updated.");
+        assert_eq!(fired.load(Ordering::SeqCst), 0);
+        // The failed saves left the entry in memory; a retry now succeeds and fires the hook.
+        assert_eq!(stores.history_entries().len(), 1);
+        remove_row(&stores, Language::En, &id.to_string()).unwrap();
+        assert_eq!(fired.load(Ordering::SeqCst), 1);
     }
     #[test]
     fn history_row_uses_display_names_and_unix() {
