@@ -21,7 +21,7 @@ use lingopop_platform::Platform;
 use std::{io, path::PathBuf};
 use uuid::Uuid;
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

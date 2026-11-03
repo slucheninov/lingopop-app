@@ -2,6 +2,7 @@
 use crate::{
     commands::ShellState,
     settings_cmds::{self, SettingsPatch},
+    state::lock,
     windows,
 };
 use lingopop_core::{
@@ -82,7 +83,7 @@ impl Icons {
         })
     }
     fn set(self: &Arc<Self>, status: TrayStatus) {
-        let mut st = self.state.lock().unwrap();
+        let mut st = lock(&self.state);
         if status == TrayStatus::Idle && st.current == TrayStatus::Idle && st.task.is_none() {
             return;
         }
@@ -114,7 +115,7 @@ impl Icons {
                         })
                         .await;
                         let Some(me) = weak.upgrade() else { return };
-                        let mut st = me.state.lock().unwrap();
+                        let mut st = lock(&me.state);
                         if st.generation != generation {
                             return;
                         }

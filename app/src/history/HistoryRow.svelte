@@ -36,6 +36,7 @@
 
   async function act(command: string, args: Record<string, string>) {
     menu = false;
+    trigger.focus();
     try {
       await invoke(command, args);
       onsuccess();
@@ -54,12 +55,12 @@
     <span class="badge">{row.providerName}</span>
     <time>{formatHistoryDate(row.timestampUnix, currentLanguage())}</time>
     <div class="actions" bind:this={actions}>
-      <button bind:this={trigger} aria-haspopup="menu" aria-label={t('History actions')} aria-controls={menu ? menuId : undefined} aria-expanded={menu} onclick={() => menu = !menu}>…</button>
+      <button bind:this={trigger} aria-label={t('History actions')} aria-controls={menu ? menuId : undefined} aria-expanded={menu} onclick={() => menu = !menu}>…</button>
       {#if menu}
-        <div class="menu" role="menu" id={menuId} aria-label={t('History actions')}>
-          <button role="menuitem" onclick={() => act('clipboard_write', { text: row.original })}>{t('Copy original')}</button>
-          <button role="menuitem" onclick={() => act('clipboard_write', { text: row.translated })}>{t('Copy translation')}</button>
-          <button role="menuitem" onclick={() => act('history_remove', { id: row.id })}>{t('Delete')}</button>
+        <div class="menu" role="group" id={menuId} aria-label={t('History actions')}>
+          <button onclick={() => act('clipboard_write', { text: row.original })}>{t('Copy original')}</button>
+          <button onclick={() => act('clipboard_write', { text: row.translated })}>{t('Copy translation')}</button>
+          <button onclick={() => act('history_remove', { id: row.id })}>{t('Delete')}</button>
         </div>
       {/if}
     </div>

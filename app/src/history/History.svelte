@@ -69,10 +69,12 @@
     <p role="status">{t("History couldn't be read.")}</p>
   {/if}
   {#if !rows.length}
-    <div class="empty">
-      <p>{t('No translations yet.')}</p>
-      <small>{t('Press your hotkey on selected text to translate.')}</small>
-    </div>
+    {#if !readError}
+      <div class="empty">
+        <p>{t('No translations yet.')}</p>
+        <small>{t('Press your hotkey on selected text to translate.')}</small>
+      </div>
+    {/if}
   {:else if !filtered.length}
     <div class="empty">{t('No matches for “%@”.', [query.trim()])}</div>
   {:else}
