@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.7] - 2026-11-03
+
 ### Added
 
 - History window (from the tray menu): search, copy the original or the translation, delete one entry or clear all.
