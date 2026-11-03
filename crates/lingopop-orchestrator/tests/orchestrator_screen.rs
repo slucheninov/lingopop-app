@@ -263,11 +263,11 @@ async fn cancelled_pick_shows_nothing() {
 }
 
 #[tokio::test]
-async fn pick_error_shows_message() {
+async fn pick_os_error_logs_failure_and_shows_generic_message() {
     let r = rig_full(
         Err(PlatformError::Os {
-            api: "picker",
-            code: 1,
+            api: "overlay thread",
+            code: 0,
         }),
         ocr_ok(OCR_TEXT),
         ok_transport(),
@@ -275,6 +275,11 @@ async fn pick_error_shows_message() {
         &[],
     );
     r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let logs = r.logs.lock().unwrap().clone();
+    assert!(logs
+        .iter()
+        .any(|line| line == "screen translate: region picker failed"));
+    assert!(!logs.iter().any(|line| line == "region picker unsupported"));
     let calls = r.popup.calls();
     assert_eq!(calls.len(), 1, "{calls:?}");
     let PopupCall::ShowAt(origin, m) = &calls[0] else {

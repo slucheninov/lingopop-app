@@ -87,6 +87,8 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 
 - [ ] Overlay dims all monitors, including a negative-origin mixed-DPI arrangement; the taskbar is covered.
 - [ ] Cursor is a crosshair throughout selection; the size label and white border scale with the monitor.
+- [ ] Drag a selection with a physical mouse/touchpad. Expected: the cursor moves freely.
+- [ ] Press and hold the left button without dragging. Expected: no border or `0 × 0` label.
 - [ ] Drag in either direction: the label shows physical width × height, with a black shadow.
 - [ ] Esc cancels silently and the underlying app receives no Esc; afterward its normal Esc handling works.
 - [ ] A selection smaller than 10 px in either dimension cancels silently and returns the tray to Idle.

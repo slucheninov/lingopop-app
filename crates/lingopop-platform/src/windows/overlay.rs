@@ -12,7 +12,7 @@ use ::windows::{
     Win32::{
         Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM},
         Graphics::{Dwm::DwmFlush, Gdi::*},
-        System::LibraryLoader::GetModuleHandleW,
+        System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{Input::KeyboardAndMouse::VK_ESCAPE, WindowsAndMessaging::*},
     },
 };
@@ -37,9 +37,15 @@ impl RegionOverlay for WindowsOverlay {
                 let _flush = FlushAfterCleanup;
                 run(cancel)
             })
-            .map_err(|_| PlatformError::Unsupported("overlay thread unavailable"))?
+            .map_err(|_| PlatformError::Os {
+                api: "overlay thread",
+                code: 0,
+            })?
             .join()
-            .map_err(|_| PlatformError::Unsupported("overlay thread failed"))?
+            .map_err(|_| PlatformError::Os {
+                api: "overlay thread",
+                code: 0,
+            })?
     }
 }
 // Declared outside run so native guards unwind before this one, including on panic.
@@ -59,6 +65,12 @@ enum Input {
     Escape,
 }
 thread_local! { static INPUT: RefCell<Vec<Input>> = const { RefCell::new(Vec::new()) }; }
+fn queue_input(event: Input) {
+    INPUT.with(|q| q.borrow_mut().push(event));
+    // SAFETY: LL hooks execute on the installing thread, whose message queue already exists.
+    // Wake GetMessageW even when the hook swallows the native input; timer remains a fallback.
+    let _ = unsafe { PostThreadMessageW(GetCurrentThreadId(), WM_APP, WPARAM(0), LPARAM(0)) };
+}
 unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0 {
         // SAFETY: Windows provides this structure for nonnegative low-level hook codes.
@@ -80,20 +92,24 @@ unsafe extern "system" fn mouse(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
             _ => None,
         };
         if let Some(event) = event {
-            INPUT.with(|q| q.borrow_mut().push(event));
-            return LRESULT(1);
+            queue_input(event);
+            // Mouse moves must pass through so relative mice can move the system cursor.
+            if w.0 as u32 != WM_MOUSEMOVE {
+                return LRESULT(1);
+            }
         }
     }
     // SAFETY: forwards unchanged hook parameters.
     unsafe { CallNextHookEx(None, code, w, l) }
 }
+/// Escape cancels and is swallowed even with modifiers (including Ctrl+Esc and Alt+Esc).
 unsafe extern "system" fn keyboard(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code >= 0 {
         // SAFETY: Windows provides a valid keyboard record for nonnegative codes.
         let k = unsafe { &*(l.0 as *const KBDLLHOOKSTRUCT) };
         if k.vkCode == u32::from(VK_ESCAPE.0) {
             if matches!(w.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN) {
-                INPUT.with(|q| q.borrow_mut().push(Input::Escape));
+                queue_input(Input::Escape);
             }
             return LRESULT(1);
         }
@@ -244,6 +260,9 @@ impl Surface {
             now
         };
         self.fill(dirty, (DIM_ALPHA as u32) << 24);
+        if r.is_empty() {
+            return;
+        }
         self.fill(r, 1 << 24); // Alpha 1 keeps the hole hit-testable.
         let n = border_px(scale);
         self.fill(Rect::new(r.x, r.y, r.width, n), 0xffffffff);
@@ -461,10 +480,13 @@ fn run(cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, Platform
         if result == 0 {
             return Ok(None);
         }
-        // SAFETY: dispatches this thread's retrieved message.
-        unsafe {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        // WM_APP is our thread wake-up; drain INPUT below without window dispatch.
+        if msg.message != WM_APP {
+            // SAFETY: dispatches this thread's retrieved message.
+            unsafe {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
         }
         let events = INPUT.with(|q| std::mem::take(&mut *q.borrow_mut()));
         for event in events {

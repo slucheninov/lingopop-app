@@ -54,6 +54,8 @@ impl Pick {
 impl Drop for Pick {
     fn drop(&mut self) {
         let _ = self.cancel.try_send(());
+        // Wait for native cleanup even when a test unwinds before finish().
+        let _ = self.result.recv_timeout(Duration::from_secs(1));
     }
 }
 pub fn bounds() -> Rect {

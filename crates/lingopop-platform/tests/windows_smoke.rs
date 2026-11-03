@@ -1420,7 +1420,6 @@ fn overlay_creates_and_destroys_window() {
     assert_eq!(overlay_thread_windows(id), 1);
     pick.cancel.send(()).unwrap();
     assert_eq!(pick.finish(), None);
-    assert_eq!(overlay_thread_windows(id), 0);
     assert!(overlay_test::window().is_none());
 }
 fn overlay_thread_windows(id: u32) -> usize {

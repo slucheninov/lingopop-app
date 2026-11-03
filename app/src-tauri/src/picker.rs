@@ -27,9 +27,10 @@ impl RegionPicker for OverlayPicker {
             let _done = done;
             overlay.pick(rx)
         });
-        let out = task
-            .await
-            .map_err(|_| PlatformError::Unsupported("overlay worker unavailable"))?;
+        let out = task.await.map_err(|_| PlatformError::Os {
+            api: "overlay worker",
+            code: 0,
+        })?;
         drop(tx);
         out
     }
@@ -47,6 +48,32 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+    struct PanickingOverlay;
+    impl RegionOverlay for PanickingOverlay {
+        fn pick(&self, _: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, PlatformError> {
+            panic!("test overlay worker panic");
+        }
+    }
+    #[tokio::test]
+    async fn worker_panic_is_a_platform_error() {
+        let picker = OverlayPicker::new(Arc::new(PanickingOverlay));
+        assert_eq!(
+            picker.pick().await,
+            Err(PlatformError::Os {
+                api: "overlay worker",
+                code: 0
+            })
+        );
+    }
+    #[tokio::test]
+    async fn overlay_os_error_is_preserved() {
+        let error = PlatformError::Os {
+            api: "overlay thread",
+            code: 0,
+        };
+        let picker = OverlayPicker::new(Arc::new(FakeOverlay::new(Err(error.clone()))));
+        assert_eq!(picker.pick().await, Err(error));
     }
     #[tokio::test]
     async fn overlay_pick_returns_none_when_cancel_sender_drops() {
