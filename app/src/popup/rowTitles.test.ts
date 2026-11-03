@@ -1,4 +1,4 @@
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/svelte';
 import ActionRow from './ActionRow.svelte';
 import ResultView from './ResultView.svelte';
@@ -8,7 +8,10 @@ import type { ResultModel } from '../lib/types';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(undefined) }));
 // Every catalog key is "translated" to a marked string, so a hard-coded English label shows up.
 vi.mock('../lib/i18n', () => ({ t: (key: string) => `«${key}»` }));
-afterEach(cleanup);
+beforeEach(() => {
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ font: '', measureText: (text: string) => ({ width: text.length * 7 }) } as unknown as CanvasRenderingContext2D);
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const result: ResultModel = {
   phase: 'result', text: 'Hello', operation: 'translate', provider: 'OpenAI', providerName: 'OpenAI',

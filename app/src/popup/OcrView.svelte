@@ -13,3 +13,7 @@
 <header><strong>{t('Recognized text')}</strong></header>
 <div class="text">{model.text}</div>
 <ActionRow row={model.actionRow} {buttons} retryProviders={model.retryProviders} translateProviders={model.translateProviders} {available} />
+<style>
+  header { font-size:var(--header-font-size, 11px); }
+  .text { font-size:var(--result-font-size, 13px); }
+</style>

@@ -8,28 +8,149 @@ pub mod logging;
 pub mod paths;
 pub mod picker;
 pub mod popup_shell;
+pub mod provider_cmds;
+pub mod settings_cmds;
 pub mod state;
 pub mod tray;
+pub mod updates;
+pub mod usage_cmds;
+pub mod windows;
 
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use lingopop_core::http::{HttpTimeouts, ReqwestTransport};
+use lingopop_core::http::{HttpTimeouts, ReqwestTransport, Transport};
 use lingopop_core::paths::DataPaths;
 use lingopop_core::providers::ProviderRegistry;
 use lingopop_core::runner::OperationRunner;
 use lingopop_core::time::{Clock, SystemClock};
 use lingopop_orchestrator::{ConfigSource, Deps, GateTimeouts, Orchestrator, PlatformGate};
 use lingopop_platform::LogFn;
-use tauri::{App, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{App, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
 use crate::commands::ShellState;
 use crate::popup_shell::{ShellPopup, POPUP_LABEL};
+use crate::settings_cmds::SettingsHooks;
+
+/// Runs a login-item update off the caller. Production uses the Tauri blocking pool.
+trait LoginSpawn: Send + Sync {
+    fn spawn_login(&self, job: Box<dyn FnOnce() + Send>);
+}
+
+struct BlockingLogin;
+
+impl LoginSpawn for BlockingLogin {
+    fn spawn_login(&self, job: Box<dyn FnOnce() + Send>) {
+        drop(tauri::async_runtime::spawn_blocking(job));
+    }
+}
+
+/// Test executor: the registry write finishes before `launch_at_login` returns, so
+/// `FakeLoginItem::calls` is visible without a Tauri runtime.
+#[cfg(test)]
+struct InlineLogin;
+
+#[cfg(test)]
+impl LoginSpawn for InlineLogin {
+    fn spawn_login(&self, job: Box<dyn FnOnce() + Send>) {
+        job();
+    }
+}
+
+pub(crate) struct ShellHooks {
+    hotkeys: Option<hotkeys::HotkeyRegistry>,
+    login: Arc<dyn lingopop_platform::LoginItem>,
+    spawn: Arc<dyn LoginSpawn>,
+    serial: Arc<std::sync::Mutex<()>>,
+    /// Newest requested value; an older queued job that lost the race skips its write.
+    latest_login: Arc<AtomicBool>,
+}
+
+impl ShellHooks {
+    pub(crate) fn new(login: Arc<dyn lingopop_platform::LoginItem>) -> Self {
+        Self {
+            hotkeys: None,
+            login,
+            spawn: Arc::new(BlockingLogin),
+            serial: Arc::new(std::sync::Mutex::new(())),
+            latest_login: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Same as [`Self::new`], but runs `set_enabled` on the calling thread.
+    #[cfg(test)]
+    pub(crate) fn synchronous(login: Arc<dyn lingopop_platform::LoginItem>) -> Self {
+        Self {
+            hotkeys: None,
+            login,
+            spawn: Arc::new(InlineLogin),
+            serial: Arc::new(std::sync::Mutex::new(())),
+            latest_login: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl SettingsHooks for ShellHooks {
+    fn launch_at_login(&self, enabled: bool) {
+        let login = Arc::clone(&self.login);
+        let serial = Arc::clone(&self.serial);
+        let latest = Arc::clone(&self.latest_login);
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(_) => {
+                log::warn!("login item update failed: current executable is unavailable");
+                return;
+            }
+        };
+        self.latest_login.store(enabled, Ordering::Release);
+        self.spawn.spawn_login(Box::new(move || {
+            let _guard = serial
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if latest.load(Ordering::Acquire) != enabled {
+                return;
+            }
+            if let Err(error) = login.set_enabled(enabled, &exe) {
+                log::warn!("login item update failed: {error}");
+            }
+        }));
+    }
+
+    fn hotkeys(
+        &self,
+        hotkeys: &std::collections::BTreeMap<
+            lingopop_core::operation::AIOperation,
+            lingopop_core::hotkey::Hotkey,
+        >,
+    ) {
+        if let Some(registry) = &self.hotkeys {
+            registry.apply(hotkeys.clone());
+        }
+    }
+}
+
+/// Applies the loaded `launch_at_login` flag once, the way `setup` does at startup.
+pub(crate) fn apply_startup_login(hooks: &dyn SettingsHooks, enabled: bool) {
+    hooks.launch_at_login(enabled);
+}
+
+/// `--wait-for-pid <pid>` as its own argument. A missing or non-u32 value is `None`.
+pub fn parse_wait_pid(args: &[String]) -> Option<u32> {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--wait-for-pid" {
+            return args.next()?.parse().ok();
+        }
+    }
+    None
+}
 
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     let platform = lingopop_platform::native();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let (config, stores) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
+    let (config, stores, ui) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
 
     // Created hidden at startup so WebView2's first navigation (which can take focus) happens
     // long before the first hotkey.
@@ -57,39 +178,67 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     ));
 
     let registry = Arc::new(ProviderRegistry::standard());
-    let runner = OperationRunner::new(
-        ProviderRegistry::standard(),
-        Arc::new(ReqwestTransport::new(HttpTimeouts::default())?),
-    );
+    let transport: Arc<dyn Transport> = Arc::new(ReqwestTransport::new(HttpTimeouts::default())?);
+    let runner = OperationRunner::new(ProviderRegistry::standard(), transport.clone());
     let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
     #[cfg(windows)]
     lingopop_platform::set_dismiss_log(log.clone());
     let hotkeys = config.settings().hotkeys;
     let dismiss = platform.dismiss.clone();
     let orchestrator = Orchestrator::new(Deps {
-        platform,
+        platform: platform.clone(),
         runner: Arc::new(runner),
         registry_has: Arc::new(move |provider| registry.get(provider).is_ok()),
-        config,
-        stores,
+        config: config.clone(),
+        stores: stores.clone(),
         popup: popup.clone(),
         gate: PlatformGate::new(GateTimeouts::default()),
-        clock,
+        clock: clock.clone(),
         log: Some(log),
         picker: Arc::new(picker::NoPicker),
     });
 
+    let events = app.handle().clone();
+    stores.set_on_change(Arc::new(move |kind| {
+        let event = match kind {
+            state::StoreKind::History => "history://changed",
+            state::StoreKind::Usage => "usage://changed",
+        };
+        let _ = events.emit(event, ());
+    }));
+    let events = app.handle().clone();
+    let hotkey_registry = hotkeys::HotkeyRegistry::new(
+        Arc::new(hotkeys::TauriMainThread(app.handle().clone())),
+        Arc::new(move || {
+            let _ = events.emit("settings://changed", ());
+        }),
+    );
+    let mut shell_hooks = ShellHooks::new(platform.login_item.clone());
+    shell_hooks.hotkeys = Some(hotkey_registry.clone());
+    let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);
+    apply_startup_login(hooks.as_ref(), config.settings().launch_at_login);
+    let update_state = Arc::new(updates::UpdateState::new(transport, ui.clone(), clock));
+    app.manage(update_state.clone());
     app.manage(ShellState {
+        hotkeys: hotkey_registry.clone(),
         orchestrator: orchestrator.clone(),
         popup,
+        config,
+        stores,
+        ui,
+        platform,
+        hooks,
+        settings_write: tokio::sync::Mutex::new(()),
+        window_locks: [windows::SETTINGS_LABEL, windows::HISTORY_LABEL]
+            .into_iter()
+            .map(|label| (label, tokio::sync::Mutex::new(())))
+            .collect(),
     });
 
     dismiss::spawn_forwarder(dismiss.as_ref(), orchestrator.clone());
-    // `setup` runs on the event-loop thread, as `GlobalHotkeyService` requires.
-    if let Err(e) = hotkeys::install(orchestrator, &hotkeys) {
-        log::error!("hotkeys are unavailable: {e}");
-    }
+    hotkeys::install(&hotkey_registry, orchestrator, &hotkeys);
     tray::build(app)?;
+    updates::spawn_loop(update_state, app.handle().clone());
     log::info!("LingoPop started");
     Ok(())
 }
@@ -100,14 +249,39 @@ pub fn run() {
         eprintln!("cannot create the data directory: {e}");
     }
     logging::init(&data_dir);
+    if let Some(pid) = parse_wait_pid(&std::env::args().collect::<Vec<_>>()) {
+        let platform = lingopop_platform::native();
+        if !platform
+            .system
+            .wait_for_process_exit(pid, Duration::from_secs(10))
+        {
+            log::warn!("previous instance still running");
+        }
+    }
 
     let app = tauri::Builder::default()
-        // A second launch just exits (Phase 4b may open Settings here). Registered first.
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        // Registered first; callbacks only schedule window creation.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            windows::open_settings(app, None)
+        }))
         .invoke_handler(tauri::generate_handler![
             commands::popup_action,
             commands::popup_resized,
-            commands::popup_ready
+            commands::popup_ready,
+            settings_cmds::settings_get,
+            settings_cmds::settings_update,
+            settings_cmds::ui_update,
+            settings_cmds::ui_bootstrap,
+            settings_cmds::open_url,
+            provider_cmds::provider_state,
+            provider_cmds::provider_validate,
+            provider_cmds::provider_save,
+            provider_cmds::provider_clear_key,
+            hotkeys::hotkeys_suspend,
+            usage_cmds::usage_get,
+            usage_cmds::usage_reset,
+            updates::updates_check,
+            commands::app_relaunch
         ])
         .setup(move |app| setup(app, &data_dir))
         .build(tauri::generate_context!());
@@ -131,3 +305,10 @@ pub fn run() {
         }
     });
 }
+
+#[cfg(test)]
+mod task4_tests;
+#[cfg(test)]
+mod task5_tests;
+#[cfg(test)]
+mod task7_tests;

@@ -22,3 +22,9 @@ mod popup_window;
 pub use popup_window::WindowsPopupWindow;
 mod dismiss;
 pub use dismiss::{set_dismiss_log, WindowsDismissWatcher};
+
+mod system;
+pub use system::WindowsSystem;
+
+mod login_item;
+pub use login_item::WindowsLoginItem;

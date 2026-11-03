@@ -33,3 +33,37 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] With Google (Free) active, click Rewrite and Explain. Expected: a clear message that the provider does not support the operation (no crash, no empty popup).
 - [x] Start LingoPop normally and Notepad as administrator ("Run as administrator"). Select text in Notepad and press the hotkey. Expected: the message that LingoPop can't reach an app running as administrator (it closes by itself after ~6 s or with x); nothing is pasted or typed; the clipboard is unchanged.
 - [x] Start LingoPop as administrator too and repeat in elevated Notepad. Expected: capture and Replace work.
+
+### Phase 4b shell foundation
+
+- [ ] A second launch opens/focuses Settings; rapid requests create one settings window. Closing it destroys the window and a later request recreates it.
+- [ ] Settings is centered, fixed at 720x560; History starts at 540x480, resizes down to 480x360; both show localized titles. (Frontend routing arrives in later Phase 4b tasks.)
+- [ ] Opening Settings to About delivers the initial tab after bootstrap; reopening an already live settings window switches tabs via `settings://tab`.
+- [ ] Allowed release/documentation links launch the default browser; foreign URLs/traversal are refused without logging the URL.
+- [ ] With Windows UI language Ukrainian/German, system language resolves accordingly; explicit app language overrides it and changes require relaunch.
+
+### Settings: second launch and Main tab
+
+- [ ] With Settings closed, launch `lingopop.exe` a second time. Expected: the second process exits and the Settings window opens; with Settings already open, a further launch focuses it instead of creating another one.
+- [ ] Settings > Main: change the target language, auto-detect, language pairs, limits and Launch at login, quit from the tray and start again. Expected: every value is still as set.
+- [ ] Move the popup font size slider (11 to 20), then trigger a translation. Expected: the result text and the header (provider / language line) use the new size, the header two points smaller; with a popup already visible the size changes live.
+- [ ] Change the app language (for example to Polski). Expected: the `Relaunch` prompt appears at once; click Relaunch. Expected: LingoPop restarts (no second tray icon) and Settings and the popup now show Polish.
+
+### Launch at login
+
+- [ ] Enable Launch at login, sign out and in: LingoPop starts; disable: it does not; move the exe and start it: the Run value is rewritten to the new path.
+
+### Providers tab
+
+- [ ] Settings > Providers: select Claude, paste a key and click Save. Expected: the key field empties at once, `Saved` appears for about 1.5 s and the sidebar shows `Key set`. Restart LingoPop: still `Key set`; open `%APPDATA%\LingoPop\lingopop.log`: the key (and any part of it) appears nowhere.
+- [ ] Click Clear on a stored key. Expected: `No key set`, the sidebar shows `No key`; Google (Free) shows `No key needed` and has no key field.
+- [ ] Type `http://x` into Endpoint. Expected: the https message appears and Save is disabled; fix it and Save works.
+- [ ] Rename `secrets.dat` to something unreadable (e.g. replace its content with text) and restart. Expected: Providers shows the `secrets.dat is unreadable` message instead of the key field and Save is disabled; the file is not modified.
+- [ ] `How to get an API key` opens the matching section of `docs/api-keys.md` in the default browser.
+
+- [ ] Settings → Shortcuts: click a field, record a modified chord, and use the new chord immediately.
+- [ ] Record a chord owned by another app: the conflict line appears; the remaining shortcuts still work.
+- [ ] Record a chord already assigned to another operation: the duplicate line names that operation; the saved shortcut stays unchanged.
+- [ ] Press the Translate chord while recording: it is recorded instead of triggering a translation.
+- [ ] Start recording, then blur or close Settings: all saved shortcuts resume; closing after blur leaves them registered.
+- [ ] Assign Screen Translate a chord: it starts the flow and cancels silently at NoPicker until Task 13 supplies the region picker.

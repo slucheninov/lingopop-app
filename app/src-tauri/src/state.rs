@@ -1,20 +1,6 @@
-//! The shell's `ConfigSource` and `Persist` implementations over the core stores.
-//!
-//! Startup never crashes on a bad store:
-//! - settings: a corrupt file is quarantined by `Settings::load` and defaults are used; an I/O
-//!   error also falls back to defaults (nothing is written in Phase 4a);
-//! - secrets: when `SecretStore::open` fails (I/O or protector error) the store is `None` in
-//!   memory: the snapshot is built with no keys and `ProviderSettingsState::Absent`, no second
-//!   file is opened, the real file is untouched and nothing can panic; Phase 4a never writes
-//!   secrets;
-//! - history / usage: on an open error the store is `None` and persistence is skipped (the real
-//!   file is left alone rather than overwritten by a fresh envelope).
-//!
-//! Log lines are fixed text plus the error's `Display` (I/O errors, never user text).
-
+//! Shell configuration, persistence notifications and process UI preferences.
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use lingopop_core::fsio::LoadOutcome;
 use lingopop_core::history_store::HistoryStore;
 use lingopop_core::paths::DataPaths;
 use lingopop_core::records::{HistoryEntry, UsageRecord};
@@ -23,8 +9,17 @@ use lingopop_core::secrets::SecretStore;
 use lingopop_core::settings::Settings;
 use lingopop_core::time::Clock;
 use lingopop_core::usage_store::UsageStore;
+use lingopop_core::{
+    fsio::{LoadOutcome, StoreError},
+    provider::{default_providers, ProviderConnectionSettings, ProviderType},
+    secrets::{ProviderSettingsState, SecretsError},
+    settings::SettingsError,
+    ui_prefs::{Language, UiPrefs},
+};
 use lingopop_orchestrator::{ConfigSource, Persist};
 use lingopop_platform::Platform;
+use std::{io, path::PathBuf};
+use uuid::Uuid;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -43,7 +38,106 @@ fn describe(outcome: &LoadOutcome) -> &'static str {
 
 pub struct ShellConfig {
     settings: Mutex<Settings>,
+    path: PathBuf,
     secrets: Option<Mutex<SecretStore>>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SecretsErrorKind {
+    #[error("secrets could not be saved")]
+    Io(io::ErrorKind),
+    #[error("secrets could not be protected")]
+    Protect,
+    #[error("secrets could not be encoded")]
+    Encode,
+}
+#[derive(Debug, thiserror::Error)]
+pub enum SecretsWriteError {
+    #[error("secrets are unavailable")]
+    Unavailable,
+    #[error("provider settings are corrupt")]
+    Corrupt,
+    #[error(transparent)]
+    Store(SecretsErrorKind),
+}
+impl From<SecretsError> for SecretsWriteError {
+    fn from(e: SecretsError) -> Self {
+        Self::Store(match e {
+            SecretsError::Io(e) => SecretsErrorKind::Io(e.kind()),
+            SecretsError::Protect(_) => SecretsErrorKind::Protect,
+            SecretsError::Encode(_) => SecretsErrorKind::Encode,
+        })
+    }
+}
+impl ShellConfig {
+    pub fn update_settings(
+        &self,
+        f: impl FnOnce(&mut Settings),
+    ) -> Result<Settings, SettingsError> {
+        let mut settings = lock(&self.settings);
+        let before = settings.clone();
+        f(&mut settings);
+        if let Err(e) = settings.save(&self.path) {
+            *settings = before;
+            return Err(e);
+        }
+        Ok(settings.clone())
+    }
+    pub fn set_api_key(&self, provider: ProviderType, key: &str) -> Result<(), SecretsWriteError> {
+        lock(
+            self.secrets
+                .as_ref()
+                .ok_or(SecretsWriteError::Unavailable)?,
+        )
+        .set_api_key(provider, key)
+        .map_err(Into::into)
+    }
+    pub fn set_connection(
+        &self,
+        provider: ProviderType,
+        settings: ProviderConnectionSettings,
+    ) -> Result<(), SecretsWriteError> {
+        let mut secrets = lock(
+            self.secrets
+                .as_ref()
+                .ok_or(SecretsWriteError::Unavailable)?,
+        );
+        let mut map = match secrets.provider_settings() {
+            ProviderSettingsState::Loaded(map) => map,
+            ProviderSettingsState::Absent => default_providers(),
+            ProviderSettingsState::Corrupt => return Err(SecretsWriteError::Corrupt),
+        };
+        map.insert(provider, settings);
+        secrets.set_provider_settings(&map).map_err(Into::into)
+    }
+    pub fn has_api_key(&self, provider: ProviderType) -> bool {
+        self.secrets
+            .as_ref()
+            .is_some_and(|s| lock(s).has_api_key(provider))
+    }
+    pub fn connection(&self, provider: ProviderType) -> ProviderConnectionSettings {
+        let mut map = default_providers();
+        if let Some(s) = &self.secrets {
+            if let ProviderSettingsState::Loaded(m) = lock(s).provider_settings() {
+                map.extend(m);
+            }
+        }
+        map.remove(&provider)
+            .unwrap_or_else(|| ProviderConnectionSettings {
+                base_url: String::new(),
+                model: String::new(),
+                referer: None,
+                region: None,
+            })
+    }
+    pub fn secrets_available(&self) -> bool {
+        self.secrets.is_some()
+    }
+    pub fn connections_corrupt(&self) -> bool {
+        self.secrets
+            .as_ref()
+            .is_some_and(|s| matches!(lock(s).provider_settings(), ProviderSettingsState::Corrupt))
+    }
 }
 
 impl ConfigSource for ShellConfig {
@@ -63,26 +157,127 @@ impl ConfigSource for ShellConfig {
     }
 }
 
+#[derive(Clone, Copy)]
+pub enum StoreKind {
+    History,
+    Usage,
+}
+type ChangeHook = Arc<dyn Fn(StoreKind) + Send + Sync>;
 pub struct ShellStores {
+    on_change: Mutex<Option<ChangeHook>>,
     history: Mutex<Option<HistoryStore>>,
     usage: Mutex<Option<UsageStore>>,
 }
 
-impl Persist for ShellStores {
-    fn add_history(&self, entry: HistoryEntry, max_count: u32) {
-        if let Some(store) = lock(&self.history).as_mut() {
-            if let Err(e) = store.add(entry, max_count) {
-                log::warn!("history write failed: {e}");
+impl ShellStores {
+    pub fn set_on_change(&self, f: ChangeHook) {
+        *lock(&self.on_change) = Some(f);
+    }
+    pub fn history_entries(&self) -> Vec<HistoryEntry> {
+        lock(&self.history)
+            .as_ref()
+            .map(|s| s.entries().to_vec())
+            .unwrap_or_default()
+    }
+    pub fn usage_records(&self) -> Vec<UsageRecord> {
+        lock(&self.usage)
+            .as_ref()
+            .map(|s| s.records().to_vec())
+            .unwrap_or_default()
+    }
+    /// False when `usage.json` could not be opened. Callers must not create the file.
+    pub fn usage_available(&self) -> bool {
+        lock(&self.usage).is_some()
+    }
+    fn mutate_history(&self, f: impl FnOnce(&mut HistoryStore) -> Result<(), StoreError>) {
+        let hook = {
+            let mut guard = lock(&self.history);
+            let Some(s) = guard.as_mut() else { return };
+            if f(s).is_err() {
+                log::warn!("history write failed");
+                return;
             }
+            lock(&self.on_change).clone()
+        };
+        if let Some(h) = hook {
+            h(StoreKind::History);
         }
     }
-
-    fn append_usage(&self, record: UsageRecord) {
-        if let Some(store) = lock(&self.usage).as_mut() {
-            if let Err(e) = store.append(record) {
-                log::warn!("usage write failed: {e}");
+    fn mutate_usage(&self, f: impl FnOnce(&mut UsageStore) -> Result<(), StoreError>) {
+        let hook = {
+            let mut guard = lock(&self.usage);
+            let Some(s) = guard.as_mut() else { return };
+            if f(s).is_err() {
+                log::warn!("usage write failed");
+                return;
             }
+            lock(&self.on_change).clone()
+        };
+        if let Some(h) = hook {
+            h(StoreKind::Usage);
         }
+    }
+    pub fn remove_history(&self, id: Uuid) {
+        self.mutate_history(|s| s.remove(id));
+    }
+    pub fn clear_history(&self) {
+        self.mutate_history(HistoryStore::clear);
+    }
+    pub fn trim_history(&self, max: u32) {
+        self.mutate_history(|s| s.trim(max));
+    }
+    /// `Ok(())` when the usage store is unavailable (nothing is created).
+    pub fn reset_usage(&self) -> Result<(), StoreError> {
+        let hook = {
+            let mut guard = lock(&self.usage);
+            let Some(s) = guard.as_mut() else {
+                return Ok(());
+            };
+            s.reset()?;
+            lock(&self.on_change).clone()
+        };
+        if let Some(h) = hook {
+            h(StoreKind::Usage);
+        }
+        Ok(())
+    }
+}
+impl Persist for ShellStores {
+    fn add_history(&self, entry: HistoryEntry, max_count: u32) {
+        self.mutate_history(|s| s.add(entry, max_count));
+    }
+    fn append_usage(&self, record: UsageRecord) {
+        self.mutate_usage(|s| s.append(record));
+    }
+}
+pub struct UiState {
+    prefs: Mutex<UiPrefs>,
+    path: PathBuf,
+    pub launched: Language,
+    pending_tab: Mutex<Option<String>>,
+}
+impl UiState {
+    pub fn prefs(&self) -> UiPrefs {
+        lock(&self.prefs).clone()
+    }
+    pub fn update(&self, f: impl FnOnce(&mut UiPrefs)) -> Result<UiPrefs, StoreError> {
+        let mut prefs = lock(&self.prefs);
+        let before = prefs.clone();
+        f(&mut prefs);
+        if let Err(e) = prefs.save(&self.path) {
+            *prefs = before;
+            return Err(e);
+        }
+        Ok(prefs.clone())
+    }
+    pub fn language(&self) -> Language {
+        self.launched
+    }
+    pub fn set_pending_tab(&self, tab: Option<String>) {
+        *lock(&self.pending_tab) = tab;
+    }
+    pub fn take_pending_tab(&self) -> Option<String> {
+        lock(&self.pending_tab).take()
     }
 }
 
@@ -91,7 +286,16 @@ pub fn load(
     paths: &DataPaths,
     platform: &Platform,
     clock: Arc<dyn Clock>,
-) -> (Arc<ShellConfig>, Arc<ShellStores>) {
+) -> (Arc<ShellConfig>, Arc<ShellStores>, Arc<UiState>) {
+    let prefs = UiPrefs::load(&paths.ui_json(), clock.as_ref())
+        .map(|(p, _)| p)
+        .unwrap_or_else(|_| {
+            log::warn!("UI preferences could not be read");
+            UiPrefs::default()
+        });
+    let launched = prefs
+        .app_language
+        .effective(&platform.system.ui_languages());
     let settings = match Settings::load(&paths.settings_json(), clock.as_ref()) {
         Ok((settings, outcome)) => {
             log::info!("settings: {}", describe(&outcome));
@@ -112,8 +316,8 @@ pub fn load(
             log::info!("secrets: {}", describe(&outcome));
             Some(store)
         }
-        Err(e) => {
-            log::error!("secrets could not be opened, starting without API keys: {e}");
+        Err(_) => {
+            log::error!("secrets could not be opened, starting without API keys");
             None
         }
     };
@@ -142,11 +346,19 @@ pub fn load(
     (
         Arc::new(ShellConfig {
             settings: Mutex::new(settings),
+            path: paths.settings_json(),
             secrets: secrets.map(Mutex::new),
         }),
         Arc::new(ShellStores {
             history: Mutex::new(history),
+            on_change: Mutex::new(None),
             usage: Mutex::new(usage),
+        }),
+        Arc::new(UiState {
+            prefs: Mutex::new(prefs),
+            path: paths.ui_json(),
+            launched,
+            pending_tab: Mutex::new(None),
         }),
     )
 }

@@ -16,8 +16,17 @@ use crate::popup_shell::ShellPopup;
 
 /// Managed state shared by the commands.
 pub struct ShellState {
+    pub hotkeys: crate::hotkeys::HotkeyRegistry,
     pub orchestrator: Orchestrator,
     pub popup: Arc<ShellPopup>,
+    pub config: Arc<crate::state::ShellConfig>,
+    pub stores: Arc<crate::state::ShellStores>,
+    pub ui: Arc<crate::state::UiState>,
+    pub platform: lingopop_platform::Platform,
+    pub hooks: Arc<dyn crate::settings_cmds::SettingsHooks>,
+    /// Serializes settings/UI saves through their side effects and emitted views.
+    pub settings_write: tokio::sync::Mutex<()>,
+    pub window_locks: std::collections::BTreeMap<&'static str, tokio::sync::Mutex<()>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -65,6 +74,36 @@ pub async fn popup_resized(
 #[tauri::command]
 pub async fn popup_ready(state: State<'_, ShellState>) -> Result<(), String> {
     state.popup.ready();
+    Ok(())
+}
+
+fn spawn_relaunch() -> std::io::Result<()> {
+    let mut command = std::process::Command::new(std::env::current_exe()?);
+    command
+        .arg("--wait-for-pid")
+        .arg(std::process::id().to_string());
+    #[cfg(windows)]
+    detach_windows(&mut command);
+    command.spawn().map(|_| ())
+}
+
+#[cfg(windows)]
+fn detach_windows(command: &mut std::process::Command) {
+    use std::os::windows::process::CommandExt;
+    // `CREATE_NEW_PROCESS_GROUP` (0x200) and `DETACHED_PROCESS` (0x8),
+    // `windows` 0.62.2 `Win32_System_Threading`.
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+}
+
+/// Spawn this executable with `--wait-for-pid` and exit. Spawn failure is the mac catalog key.
+#[tauri::command]
+pub async fn app_relaunch(app: tauri::AppHandle) -> Result<(), String> {
+    if spawn_relaunch().is_err() {
+        return Err("Could not relaunch LingoPop".to_string());
+    }
+    app.exit(0);
     Ok(())
 }
 
