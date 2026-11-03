@@ -23,7 +23,7 @@
 
 - A locked Keychain, damaged ciphertext or concurrent first launch never creates plaintext or replaces an existing key (Task 7).
 - Denied/revoked permissions and disabled hotkeys produce actionable states without unrelated prompts or registration churn (Tasks 8–9).
-- Non-text/multi-item/promised pasteboard content and foreign writes cannot be silently destroyed (Task 10: `snapshot_aborts_on_concurrent_foreign_write`, `promised_type_aborts_without_read`, `oversized_type_aborts_before_copy`).
+- Non-text/multi-item/promised pasteboard content is never silently destroyed, and a foreign write observed before a destructive write aborts the operation; a write landing between the final `changeCount` check and `clearContents` cannot be excluded because NSPasteboard has no cross-process compare-and-swap (Task 10: `snapshot_aborts_on_concurrent_foreign_write`, `promised_type_aborts_without_read`, `oversized_type_aborts_before_copy`).
 - Per-monitor scaling, target loss and changed display topology cannot redirect capture/Replace (Tasks 11–12, 15–16: `display_removal_invalidates_capture_plan`, `revoked_accessibility_never_pastes`, `target_lost_shows_manual_paste`).
 - Reentrant main-thread callbacks and out-of-order show/hide acknowledgments cannot deadlock or resurrect a stale popup (Tasks 13–14: `old_show_queued_during_new_capture_has_zero_effects`, `stale_show_after_dismiss_has_no_effect`, `hide_ack_precedes_paste`).
 
