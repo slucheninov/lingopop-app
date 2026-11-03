@@ -457,6 +457,7 @@ fn run(cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, Platform
     }
     let mut start = None;
     let mut previous = None;
+    let mut rendered = None;
     loop {
         if !matches!(
             cancel.try_recv(),
@@ -473,8 +474,9 @@ fn run(cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, Platform
         if result == 0 {
             return Ok(None);
         }
-        // WM_APP is our thread wake-up; drain INPUT below without window dispatch.
-        if msg.message != WM_APP {
+        // Only a THREAD message (no window) with WM_APP is our wake-up; drain INPUT below without
+        // dispatch. A WM_APP addressed to a window is dispatched like any other message.
+        if !(msg.message == WM_APP && msg.hwnd.0.is_null()) {
             // SAFETY: dispatches this thread's retrieved message.
             unsafe {
                 let _ = TranslateMessage(&msg);
@@ -482,7 +484,7 @@ fn run(cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, Platform
             }
         }
         let events = INPUT.with(|q| std::mem::take(&mut *q.borrow_mut()));
-        match fold_input_batch(&mut start, events) {
+        match fold_input_batch(&mut start, rendered, events) {
             InputBatch::Finish(result) => return Ok(result),
             InputBatch::Unchanged => {}
             InputBatch::Redraw(r) => {
@@ -497,6 +499,7 @@ fn run(cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, Platform
                 surface.render(previous, r, scale);
                 surface.push(window.0, false)?;
                 previous = Some(surface.extent(r, scale));
+                rendered = Some(r);
             }
         }
     }

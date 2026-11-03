@@ -1264,7 +1264,14 @@ impl Drop for Helper {
     fn drop(&mut self) {
         if !self.close_and_wait(Duration::from_secs(2)) {
             let _ = self.child.kill();
-            let _ = self.child.wait();
+            // Bounded: an unbounded wait() could hang the whole test run, and Drop must not panic.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if !matches!(self.child.try_wait(), Ok(None)) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
     }
 }

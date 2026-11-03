@@ -39,8 +39,13 @@ fn row(entry: HistoryEntry, language: Language) -> HistoryRow {
         timestamp_unix: entry.timestamp.unix_seconds(),
     }
 }
-fn parse_id(id: &str) -> Result<Uuid, String> {
-    Uuid::parse_str(id).map_err(|_| "Invalid id.".into())
+// `Err` strings are catalog keys already translated into the launched language, like
+// `provider_cmds` / `settings_cmds` (the History window shows its own `t()` text and ignores them).
+fn parse_id(language: Language, id: &str) -> Result<Uuid, String> {
+    Uuid::parse_str(id).map_err(|_| i18n::t(language, "Invalid id.", &[]))
+}
+fn copy_error(language: Language) -> String {
+    i18n::t(language, "Couldn't copy.", &[])
 }
 #[tauri::command]
 pub async fn history_list(state: State<'_, ShellState>) -> Result<Vec<HistoryRow>, String> {
@@ -53,7 +58,9 @@ pub async fn history_list(state: State<'_, ShellState>) -> Result<Vec<HistoryRow
 }
 #[tauri::command]
 pub async fn history_remove(state: State<'_, ShellState>, id: String) -> Result<(), String> {
-    state.stores.remove_history(parse_id(&id)?);
+    state
+        .stores
+        .remove_history(parse_id(state.ui.language(), &id)?);
     Ok(())
 }
 #[tauri::command]
@@ -67,14 +74,21 @@ pub async fn clipboard_write(state: State<'_, ShellState>, text: String) -> Resu
         .orchestrator
         .write_clipboard(text)
         .await
-        .map_err(|_| "Couldn't copy.".into())
+        .map_err(|_| copy_error(state.ui.language()))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
     fn history_remove_rejects_bad_uuid() {
-        assert_eq!(parse_id("bad").unwrap_err(), "Invalid id.");
+        assert_eq!(parse_id(Language::En, "bad").unwrap_err(), "Invalid id.");
+    }
+    #[test]
+    fn history_errors_use_the_launched_language() {
+        assert_eq!(parse_id(Language::De, "bad").unwrap_err(), "Ungültige ID.");
+        assert_eq!(copy_error(Language::En), "Couldn't copy.");
+        assert_eq!(copy_error(Language::Pl), "Nie udało się skopiować.");
+        assert_eq!(copy_error(Language::Uk), "Не вдалося скопіювати.");
     }
     #[test]
     fn history_row_uses_display_names_and_unix() {

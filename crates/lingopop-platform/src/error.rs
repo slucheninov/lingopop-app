@@ -3,6 +3,22 @@
 /// Diagnostic sink: messages are fixed text plus format names and counts, never contents.
 pub type LogFn = dyn Fn(&str) + Send + Sync;
 
+static PLATFORM_LOG: std::sync::OnceLock<std::sync::Arc<LogFn>> = std::sync::OnceLock::new();
+
+/// Routes the platform layer's own fixed-text diagnostics (hook installation, tracker startup:
+/// API names, codes and error `Display` only, never user data) to `log`. The shell sets it once,
+/// BEFORE `native()`; later calls are ignored and without it the lines are dropped.
+pub fn set_platform_log(log: std::sync::Arc<LogFn>) {
+    let _ = PLATFORM_LOG.set(log);
+}
+
+#[cfg(windows)]
+pub(crate) fn platform_log(line: &str) {
+    if let Some(log) = PLATFORM_LOG.get() {
+        log(line);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlatformError {
     #[error("{0} is not supported on this platform")]

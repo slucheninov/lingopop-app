@@ -54,7 +54,10 @@ pub fn native() -> Platform {
         // A failed hook only loses tray-triggered operations; the hotkey flow never needs it.
         last_foreground: match crate::windows::WindowsLastForeground::new() {
             Ok(tracker) => Arc::new(tracker),
-            Err(_) => Arc::new(crate::last_foreground::NoLastForeground),
+            Err(e) => {
+                crate::error::platform_log(&format!("last-foreground tracker unavailable: {e}"));
+                Arc::new(crate::last_foreground::NoLastForeground)
+            }
         },
         monitors: Arc::new(WindowsMonitors::new()),
         capture: Arc::new(WindowsCapture::new()),

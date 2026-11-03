@@ -68,9 +68,12 @@ pub enum InputBatch {
 /// Down resets the anchor; Up uses its own (latest) point. Terminal events stop
 /// the batch immediately, so later moves cannot change a finished selection.
 /// A finishing overlay is removed without uploading an intermediate frame.
+/// `rendered` is the selection rect of the last uploaded frame: a batch whose final selection
+/// equals it is `Unchanged`, so identical moves never repaint or re-upload.
 #[doc(hidden)]
 pub fn fold_input_batch(
     start: &mut Option<Point>,
+    rendered: Option<Rect>,
     events: impl IntoIterator<Item = OverlayInput>,
 ) -> InputBatch {
     let mut pending = None;
@@ -95,7 +98,14 @@ pub fn fold_input_batch(
         }
     }
     match (*start, pending) {
-        (Some(anchor), Some(current)) => InputBatch::Redraw(selection_rect(anchor, current)),
+        (Some(anchor), Some(current)) => {
+            let r = selection_rect(anchor, current);
+            if rendered == Some(r) {
+                InputBatch::Unchanged
+            } else {
+                InputBatch::Redraw(r)
+            }
+        }
         _ => InputBatch::Unchanged,
     }
 }

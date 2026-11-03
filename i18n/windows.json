@@ -183,5 +183,10 @@
     "pl": "Działania historii",
     "uk": "Дії з історією",
     "de": "Verlaufsaktionen"
+  },
+  "Invalid id.": {
+    "pl": "Nieprawidłowy identyfikator.",
+    "uk": "Недійсний ідентифікатор.",
+    "de": "Ungültige ID."
   }
 }

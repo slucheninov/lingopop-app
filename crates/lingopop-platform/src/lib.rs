@@ -38,15 +38,15 @@ pub use crate::macos::{
 };
 #[cfg(windows)]
 pub use crate::windows::{
-    set_dismiss_log, WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground,
-    WindowsKeys, WindowsLastForeground, WindowsLoginItem, WindowsMonitors, WindowsOcr,
-    WindowsOverlay, WindowsPopupWindow, WindowsProtector,
+    WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground, WindowsKeys,
+    WindowsLastForeground, WindowsLoginItem, WindowsMonitors, WindowsOcr, WindowsOverlay,
+    WindowsPopupWindow, WindowsProtector,
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
 #[cfg(not(windows))]
 pub use dev_protector::DevPlaintextProtector;
-pub use error::{LogFn, PlatformError};
+pub use error::{set_platform_log, LogFn, PlatformError};
 pub use foreground::{ForegroundWindow, WindowHandle};
 pub use hotkey::{to_chord, HotkeyEvent, HotkeyId, HotkeyService};
 #[cfg(any(windows, target_os = "macos"))]

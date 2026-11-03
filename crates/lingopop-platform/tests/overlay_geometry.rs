@@ -54,22 +54,26 @@ fn batch_coalesces_a_move_backlog_to_one_redraw() {
     let mut start = Some(point(0, 0));
     let moves = (1..=10_000).map(|n| OverlayInput::Move(point(n, n)));
     assert_eq!(
-        fold_input_batch(&mut start, moves),
+        fold_input_batch(&mut start, None, moves),
         InputBatch::Redraw(Rect::new(0, 0, 10_000, 10_000))
     );
-    assert_eq!(fold_input_batch(&mut start, []), InputBatch::Unchanged);
+    assert_eq!(
+        fold_input_batch(&mut start, None, []),
+        InputBatch::Unchanged
+    );
 }
 #[test]
 fn batch_preserves_down_order_and_up_position_across_batches() {
     use OverlayInput::*;
     let mut start = None;
     assert_eq!(
-        fold_input_batch(&mut start, [Move(point(99, 99)), Up(point(99, 99))]),
+        fold_input_batch(&mut start, None, [Move(point(99, 99)), Up(point(99, 99))]),
         InputBatch::Unchanged
     );
     assert_eq!(
         fold_input_batch(
             &mut start,
+            None,
             [
                 Down(point(0, 0)),
                 Move(point(80, 80)),
@@ -82,6 +86,7 @@ fn batch_preserves_down_order_and_up_position_across_batches() {
     assert_eq!(
         fold_input_batch(
             &mut start,
+            None,
             [
                 Move(point(20, 20)),
                 Up(point(10, 10)),
@@ -97,11 +102,44 @@ fn batch_terminal_events_discard_pending_redraw() {
     use OverlayInput::*;
     let mut start = Some(point(0, 0));
     assert_eq!(
-        fold_input_batch(&mut start, [Move(point(50, 50)), Escape, Up(point(90, 90))]),
+        fold_input_batch(
+            &mut start,
+            None,
+            [Move(point(50, 50)), Escape, Up(point(90, 90))]
+        ),
         InputBatch::Finish(None)
     );
     assert_eq!(
-        fold_input_batch(&mut start, [Move(point(50, 50)), Up(point(9, 10))]),
+        fold_input_batch(&mut start, None, [Move(point(50, 50)), Up(point(9, 10))]),
         InputBatch::Finish(None)
+    );
+}
+#[test]
+fn batch_matching_the_rendered_rect_is_unchanged() {
+    use OverlayInput::*;
+    let rendered = Some(Rect::new(0, 0, 40, 40));
+    let mut start = Some(point(0, 0));
+    // Moves that wander but end on the rect already on screen: no repaint.
+    assert_eq!(
+        fold_input_batch(
+            &mut start,
+            rendered,
+            [
+                Move(point(10, 10)),
+                Move(point(90, 90)),
+                Move(point(40, 40))
+            ]
+        ),
+        InputBatch::Unchanged
+    );
+    // A different final rect still redraws.
+    assert_eq!(
+        fold_input_batch(&mut start, rendered, [Move(point(41, 40))]),
+        InputBatch::Redraw(Rect::new(0, 0, 41, 40))
+    );
+    // A terminal event is never suppressed by the rendered rect.
+    assert_eq!(
+        fold_input_batch(&mut start, rendered, [Up(point(40, 40))]),
+        InputBatch::Finish(Some(Rect::new(0, 0, 40, 40)))
     );
 }

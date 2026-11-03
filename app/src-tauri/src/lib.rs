@@ -149,6 +149,9 @@ pub fn parse_wait_pid(args: &[String]) -> Option<u32> {
 }
 
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    // Before `native()`: the platform logs its own startup failures (e.g. the tracker) through it.
+    let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
+    lingopop_platform::set_platform_log(log.clone());
     let platform = lingopop_platform::native();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let (config, stores, ui) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
@@ -181,9 +184,6 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     let registry = Arc::new(ProviderRegistry::standard());
     let transport: Arc<dyn Transport> = Arc::new(ReqwestTransport::new(HttpTimeouts::default())?);
     let runner = OperationRunner::new(ProviderRegistry::standard(), transport.clone());
-    let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
-    #[cfg(windows)]
-    lingopop_platform::set_dismiss_log(log.clone());
     let hotkeys = config.settings().hotkeys;
     let dismiss = platform.dismiss.clone();
     let tray_sink = Arc::new(tray::TraySink::default());
