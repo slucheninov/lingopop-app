@@ -53,7 +53,7 @@ Use separate PRs A (Tasks 1–5), B (6–9), C (10–12), D (13–14), E (15–1
 - `app/src-tauri/src/storage/`: folder commands, local migration journal/recovery, record-store coordination; `state.rs` only wires the services.
 - `app/src-tauri/src/popup_shell.rs` and orchestrator `popup.rs`: queued presentation protocol with fenced main-thread effects, not synchronous AppKit dispatch under session locks.
 - `app/src/settings/StorageSection.svelte`, `PermissionsSection.svelte`, `ImportSection.svelte`: focused settings components. Reuse current tabs and IPC/event patterns.
-- `i18n/`, `scripts/`, platform Tauri config, workflow and manual-checklist files: owned by the tasks that first need them; no unrelated repository restructuring.
+- `i18n/`, `scripts/`, platform Tauri config and workflow files: owned by the tasks that first need them; no unrelated repository restructuring.
 
 ## Shared task gate and evidence
 
