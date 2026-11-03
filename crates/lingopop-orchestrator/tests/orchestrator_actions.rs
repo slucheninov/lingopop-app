@@ -116,6 +116,7 @@ fn rig_full(
             clipboard: clip.clone(),
             keys: keys.clone(),
             foreground: fg.clone(),
+            last_foreground: lingopop_platform::fake::FakeLastForeground::new(None),
             monitors: Arc::new(FakeMonitors::new(
                 cursor,
                 vec![MonitorInfo {

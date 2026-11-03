@@ -6,6 +6,7 @@ mod capture;
 mod clipboard;
 mod foreground;
 mod keys;
+mod last_foreground;
 mod monitors;
 mod ocr;
 
@@ -13,6 +14,7 @@ pub use capture::MacCapture;
 pub use clipboard::MacClipboard;
 pub use foreground::MacForeground;
 pub use keys::MacKeys;
+pub use last_foreground::MacLastForeground;
 pub use monitors::MacMonitors;
 pub use ocr::MacOcr;
 

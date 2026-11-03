@@ -22,11 +22,11 @@ use lingopop_orchestrator::messages::{
 };
 use lingopop_orchestrator::{
     max_input, missing_key, nothing_selected, popup_origin, Deps, GateTimeouts, Orchestrator,
-    PlatformGate, PopupPhase, PopupViewModel, INITIAL_POPUP_SIZE,
+    PlatformGate, PopupPhase, PopupViewModel, TriggerSource, INITIAL_POPUP_SIZE,
 };
 use lingopop_platform::fake::{
-    CopyBehavior, FakeCapture, FakeClipboard, FakeForeground, FakeKeys, FakeMonitors, FakeOcr,
-    FakeSleeper,
+    CopyBehavior, Event, EventLog, FakeCapture, FakeClipboard, FakeForeground, FakeKeys,
+    FakeLastForeground, FakeMonitors, FakeOcr, FakeSleeper,
 };
 use lingopop_platform::{
     Clipboard, ClipboardSnapshot, LogFn, MonitorInfo, Monitors, Platform, PlatformError, Point,
@@ -122,6 +122,9 @@ struct Rig {
     keys: Arc<FakeKeys>,
     clipboard: Arc<TestClipboard>,
     monitors: Arc<TestMonitors>,
+    fg: Arc<FakeForeground>,
+    tracker: Arc<FakeLastForeground>,
+    log: Arc<EventLog>,
 }
 
 struct RigOptions {
@@ -159,6 +162,10 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
     let sleeper = Arc::new(FakeSleeper::new());
     let fake_clip = FakeClipboard::new(sleeper.clone());
     let keys = FakeKeys::new(fake_clip.clone(), sleeper.clone());
+    let log = fake_clip.log();
+    let fg = FakeForeground::new(Some(WindowHandle(7)));
+    fg.log_to(log.clone());
+    let tracker = FakeLastForeground::new(None);
     let clipboard = Arc::new(TestClipboard {
         inner: fake_clip,
         blocked: AtomicBool::new(false),
@@ -175,7 +182,8 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         dismiss: Arc::new(FakeDismissWatcher::default()),
         clipboard: clipboard.clone(),
         keys: keys.clone(),
-        foreground: FakeForeground::new(Some(WindowHandle(7))),
+        foreground: fg.clone(),
+        last_foreground: tracker.clone(),
         monitors: monitors.clone(),
         capture: Arc::new(FakeCapture::new([0, 0, 0, 255])),
         ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
@@ -215,6 +223,9 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         keys,
         clipboard,
         monitors,
+        fg,
+        tracker,
+        log,
     }
 }
 
@@ -572,4 +583,85 @@ async fn flow_task_panic_shows_generic_error_and_logs_fixed_line() {
         "{lines:?}"
     );
     assert!(lines.iter().all(|l| !l.contains(marker)));
+}
+
+fn clipboard_event_index(r: &Rig) -> Option<usize> {
+    r.log
+        .events()
+        .iter()
+        .position(|e| matches!(e.event, Event::Clipboard(_)))
+}
+
+#[tokio::test]
+async fn tray_trigger_restores_remembered_window_before_capture() {
+    let t = ok_transport();
+    let r = rig(t.clone(), "Hello");
+    // Our own Settings window is in front (current = W7); the user's editor was W9.
+    r.tracker.set(Some(WindowHandle(9)));
+    r.orch
+        .trigger_from(AIOperation::Translate, TriggerSource::Tray)
+        .await;
+    assert_eq!(r.fg.restored(), vec![WindowHandle(9)]);
+    let events = r.log.events();
+    let restore = events
+        .iter()
+        .position(|e| e.event == Event::Foreground(WindowHandle(9)))
+        .expect("restore event");
+    let first_clipboard = clipboard_event_index(&r).expect("clipboard event");
+    assert!(restore < first_clipboard, "{events:?}");
+    assert_eq!(result_text(&last_model(&r)), Some("TRANSLATED"));
+    assert_eq!(t.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn tray_trigger_without_remembered_window_shows_nothing_selected() {
+    let t = ok_transport();
+    let r = rig(t.clone(), "Hello");
+    r.tracker.set(None);
+    r.orch
+        .trigger_from(AIOperation::Translate, TriggerSource::Tray)
+        .await;
+    assert_eq!(error_message_key(&last_model(&r)), KEY_NOTHING_SELECTED);
+    assert!(r.fg.restored().is_empty());
+    assert_eq!(clipboard_event_index(&r), None, "{:?}", r.log.events());
+    assert!(t.requests().is_empty());
+}
+
+#[tokio::test]
+async fn tray_trigger_restore_failure_shows_nothing_selected() {
+    let t = ok_transport();
+    let r = rig(t.clone(), "Hello");
+    r.tracker.set(Some(WindowHandle(9)));
+    r.fg.fail_restore(true);
+    r.orch
+        .trigger_from(AIOperation::Translate, TriggerSource::Tray)
+        .await;
+    assert_eq!(error_message_key(&last_model(&r)), KEY_NOTHING_SELECTED);
+    assert_eq!(clipboard_event_index(&r), None, "{:?}", r.log.events());
+    assert!(t.requests().is_empty());
+}
+
+#[tokio::test]
+async fn tray_trigger_restore_timeout_shows_nothing_selected() {
+    let t = ok_transport();
+    let r = rig(t.clone(), "Hello");
+    r.tracker.set(Some(WindowHandle(9)));
+    // The window never reaches the foreground within the 300 ms poll budget.
+    r.fg.foreground_after_polls(1000);
+    r.orch
+        .trigger_from(AIOperation::Translate, TriggerSource::Tray)
+        .await;
+    assert_eq!(error_message_key(&last_model(&r)), KEY_NOTHING_SELECTED);
+    assert_eq!(clipboard_event_index(&r), None, "{:?}", r.log.events());
+    assert!(t.requests().is_empty());
+}
+
+#[tokio::test]
+async fn hotkey_trigger_never_consults_tracker() {
+    let r = rig(ok_transport(), "Hello");
+    r.tracker.set(Some(WindowHandle(9)));
+    r.orch.trigger(AIOperation::Translate).await;
+    assert_eq!(r.tracker.calls(), 0);
+    assert!(r.fg.restored().is_empty());
+    assert_eq!(result_text(&last_model(&r)), Some("TRANSLATED"));
 }

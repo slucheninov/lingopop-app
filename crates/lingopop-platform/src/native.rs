@@ -23,6 +23,7 @@ pub struct Platform {
     pub clipboard: Arc<dyn Clipboard>,
     pub keys: Arc<dyn KeySynth>,
     pub foreground: Arc<dyn ForegroundWindow>,
+    pub last_foreground: Arc<dyn crate::LastForeground>,
     pub monitors: Arc<dyn Monitors>,
     pub capture: Arc<dyn ScreenCapture>,
     pub ocr: Arc<dyn Ocr>,
@@ -48,6 +49,11 @@ pub fn native() -> Platform {
         clipboard: Arc::new(WindowsClipboard::new(sleeper.clone())),
         keys: Arc::new(WindowsKeys::new()),
         foreground: Arc::new(WindowsForeground::new()),
+        // A failed hook only loses tray-triggered operations; the hotkey flow never needs it.
+        last_foreground: match crate::windows::WindowsLastForeground::new() {
+            Ok(tracker) => Arc::new(tracker),
+            Err(_) => Arc::new(crate::last_foreground::NoLastForeground),
+        },
         monitors: Arc::new(WindowsMonitors::new()),
         capture: Arc::new(WindowsCapture::new()),
         ocr: Arc::new(WindowsOcr::new()),
@@ -72,6 +78,7 @@ pub fn native() -> Platform {
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),
         foreground: Arc::new(MacForeground::new()),
+        last_foreground: Arc::new(crate::macos::MacLastForeground::new()),
         monitors: Arc::new(MacMonitors::new()),
         capture: Arc::new(MacCapture::new()),
         ocr: Arc::new(MacOcr::new()),

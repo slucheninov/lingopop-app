@@ -33,6 +33,7 @@ pub(crate) fn platform() -> lingopop_platform::Platform {
         keys: FakeKeys::new(clipboard.clone(), sleeper.clone()),
         clipboard,
         foreground: FakeForeground::new(None),
+        last_foreground: lingopop_platform::fake::FakeLastForeground::new(None),
         monitors: Arc::new(FakeMonitors::new(Point { x: 0, y: 0 }, vec![])),
         capture: Arc::new(FakeCapture::new([0; 4])),
         ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),

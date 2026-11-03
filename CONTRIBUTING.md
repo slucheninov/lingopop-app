@@ -37,7 +37,7 @@ Providers whose variable is not set are skipped. Variables: `LINGOPOP_LIVE_CLAUD
 
 ## Platform checks
 
-On a Windows machine with a desktop: `cargo test -p lingopop-platform --test windows_smoke -- --ignored --nocapture --test-threads=1`. CI runs the same tests in a required step on `windows-latest`. Details in [AGENTS.md](AGENTS.md).
+On a Windows machine with a desktop: `cargo test -p lingopop-platform --test windows_smoke --test foreground_helper -- --ignored --nocapture --test-threads=1`. CI runs the same tests in a required step on `windows-latest`. Details in [AGENTS.md](AGENTS.md).
 
 ## Core rules
 

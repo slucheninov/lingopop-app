@@ -14,8 +14,8 @@ use lingopop_core::settings::Settings;
 use lingopop_core::target_language::{operation_uses_auto_detect, target_language_for};
 use lingopop_core::time::Clock;
 use lingopop_platform::{
-    capture_selection, monitor_at, physical_size, CaptureOptions, DismissEvent, LogFn, MonitorInfo,
-    Platform, PlatformError, Point, Rect, WindowHandle,
+    bring_to_front, capture_selection, monitor_at, physical_size, CaptureOptions, DismissEvent,
+    LogFn, MonitorInfo, Platform, PlatformError, Point, Rect, ReplaceOptions, WindowHandle,
 };
 
 use crate::gate::PlatformGate;
@@ -45,6 +45,15 @@ pub trait Persist: Send + Sync {
 
 /// How long the administrator-app (`KEY_INPUT_BLOCKED`) error stays before it closes by itself.
 pub const INPUT_BLOCKED_AUTO_CLOSE: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// What started a text operation. A hotkey fires while the user's window is in front; a tray
+/// click leaves the tray menu or one of our windows in front, so the remembered external window
+/// has to be brought back before the selection can be copied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TriggerSource {
+    Hotkey,
+    Tray,
+}
 
 pub struct Deps {
     pub status: Option<Arc<dyn crate::StatusSink>>,
@@ -100,11 +109,16 @@ impl Orchestrator {
     /// Runs `operation` on the current selection. A newer `trigger` (or action) cancels this
     /// one: the call then returns without having touched the popup or the stores.
     pub async fn trigger(&self, operation: AIOperation) {
+        self.trigger_from(operation, TriggerSource::Hotkey).await;
+    }
+
+    /// Like `trigger`, for an operation started from `source`. Screen Translate ignores it.
+    pub async fn trigger_from(&self, operation: AIOperation, source: TriggerSource) {
         self.start(move |me, generation| async move {
             if operation == AIOperation::ScreenTranslate {
                 me.screen_flow(generation).await;
             } else {
-                me.text_flow(operation, generation).await;
+                me.text_flow(operation, source, generation).await;
             }
         })
         .await;
@@ -353,7 +367,7 @@ impl Orchestrator {
         self.present_locked(&mut st, &model);
     }
 
-    async fn text_flow(&self, operation: AIOperation, generation: u64) {
+    async fn text_flow(&self, operation: AIOperation, source: TriggerSource, generation: u64) {
         {
             // A text operation ends any Screen Translate session: drop the captured image.
             let mut st = self.state();
@@ -365,10 +379,11 @@ impl Orchestrator {
             }
         }
         let d = self.deps();
-        let (clipboard, keys, foreground, sleeper, monitors, log) = (
+        let (clipboard, keys, foreground, last_foreground, sleeper, monitors, log) = (
             d.platform.clipboard.clone(),
             d.platform.keys.clone(),
             d.platform.foreground.clone(),
+            d.platform.last_foreground.clone(),
             d.platform.sleeper.clone(),
             d.platform.monitors.clone(),
             d.log.clone(),
@@ -390,6 +405,29 @@ impl Orchestrator {
                     .monitors()
                     .map_err(|_| note("monitor list unavailable"))
                     .ok();
+                // A tray click left the tray menu or our own window in front: bring the window
+                // the user was in back first. No remembered window, a failed restore and a
+                // timeout all end as "nothing selected" (KEY_FOREGROUND_LOST would claim the
+                // text is on the clipboard, which is false here).
+                if source == TriggerSource::Tray {
+                    let restored = last_foreground.last_external().is_some_and(|w| {
+                        bring_to_front(
+                            foreground.as_ref(),
+                            sleeper.as_ref(),
+                            w,
+                            &ReplaceOptions::default(),
+                        )
+                    });
+                    if !restored {
+                        note("tray trigger: no external window to restore");
+                        return Ok(Captured {
+                            cursor,
+                            monitors: monitor_list,
+                            target: None,
+                            selection: Ok(None),
+                        });
+                    }
+                }
                 let target = foreground.current();
                 let options = CaptureOptions {
                     log,
@@ -620,6 +658,7 @@ mod commit_tests {
             keys: FakeKeys::new(clipboard.clone(), sleeper.clone()),
             clipboard,
             foreground: FakeForeground::new(None),
+            last_foreground: lingopop_platform::fake::FakeLastForeground::new(None),
             monitors: Arc::new(FakeMonitors::new(Point { x: 0, y: 0 }, vec![])),
             capture: Arc::new(FakeCapture::new([0; 4])),
             ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),

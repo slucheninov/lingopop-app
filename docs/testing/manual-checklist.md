@@ -76,3 +76,8 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] About LingoPop opens Settings on the About tab.
 - [ ] Tray icon animates while working and turns red for 3 seconds on an error; a new operation cancels the error reset.
 - [ ] History window search, Copy original / Copy translation, Delete and Clear work; changes refresh the tray and open History window.
+
+### Task 12: tray-triggered operations
+
+- [ ] Select text in Notepad, open the tray menu and click Translate. Expected: the popup shows the translation of the Notepad selection (Notepad is brought back to the front first, the clipboard is restored afterwards).
+- [ ] Sign in fresh (or restart LingoPop with no other window ever opened), open the tray menu and click Translate. Expected: the "nothing selected" message.

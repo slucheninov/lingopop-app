@@ -156,6 +156,7 @@ fn rig_gated(
         clipboard: clip.clone(),
         keys: keys.clone(),
         foreground: FakeForeground::new(Some(WindowHandle(7))),
+        last_foreground: lingopop_platform::fake::FakeLastForeground::new(None),
         monitors: Arc::new(FakeMonitors::new(Point { x: 5, y: 6 }, monitor_list())),
         capture: capture.clone(),
         ocr: ocr.clone(),

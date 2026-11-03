@@ -7,7 +7,7 @@ use crate::{
 use lingopop_core::{
     i18n, languages, operation::AIOperation, settings::Settings, ui_prefs::Language,
 };
-use lingopop_orchestrator::{ConfigSource, StatusSink, TrayStatus};
+use lingopop_orchestrator::{ConfigSource, StatusSink, TrayStatus, TriggerSource};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -200,7 +200,10 @@ impl TrayController {
                     let state = app.state::<ShellState>();
                     if let Some(raw) = id.strip_prefix("op:") {
                         if let Some(op) = AIOperation::from_raw_value(raw) {
-                            state.orchestrator.trigger(op).await;
+                            state
+                                .orchestrator
+                                .trigger_from(op, TriggerSource::Tray)
+                                .await;
                         }
                     } else if let Some(raw) = id.strip_prefix("hist:") {
                         let entry = uuid::Uuid::parse_str(raw)

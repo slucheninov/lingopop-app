@@ -6,6 +6,7 @@ mod clipboard;
 mod dpapi;
 mod foreground;
 mod keys;
+mod last_foreground;
 mod monitors;
 mod ocr;
 mod util;
@@ -15,6 +16,7 @@ pub use clipboard::WindowsClipboard;
 pub use dpapi::WindowsProtector;
 pub use foreground::WindowsForeground;
 pub use keys::WindowsKeys;
+pub use last_foreground::WindowsLastForeground;
 pub use monitors::WindowsMonitors;
 pub use ocr::WindowsOcr;
 

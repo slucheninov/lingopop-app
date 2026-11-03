@@ -149,6 +149,7 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         clipboard: clipboard.clone(),
         keys: keys.clone(),
         foreground: FakeForeground::new(Some(WindowHandle(7))),
+        last_foreground: lingopop_platform::fake::FakeLastForeground::new(None),
         monitors: monitors.clone(),
         capture: Arc::new(FakeCapture::new([0, 0, 0, 255])),
         ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
