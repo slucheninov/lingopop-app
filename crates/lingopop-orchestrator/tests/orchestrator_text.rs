@@ -176,6 +176,7 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         threads: Mutex::new(Vec::new()),
     });
     let platform = Platform {
+        overlay: Arc::new(lingopop_platform::fake::FakeOverlay::new(Ok(None))),
         system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
         login_item: Arc::new(lingopop_platform::fake::FakeLoginItem::new()),
         popup_window: Arc::new(FakePopupWindow::default()),

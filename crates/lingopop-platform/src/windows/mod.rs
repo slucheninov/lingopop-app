@@ -30,3 +30,6 @@ pub use system::WindowsSystem;
 
 mod login_item;
 pub use login_item::WindowsLoginItem;
+
+mod overlay;
+pub use overlay::WindowsOverlay;

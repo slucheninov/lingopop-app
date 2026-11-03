@@ -200,7 +200,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         gate: PlatformGate::new(GateTimeouts::default()),
         clock: clock.clone(),
         log: Some(log),
-        picker: Arc::new(picker::NoPicker),
+        picker: Arc::new(picker::OverlayPicker::new(platform.overlay.clone())),
     });
 
     let events = app.handle().clone();

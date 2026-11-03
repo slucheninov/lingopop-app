@@ -34,13 +34,13 @@ mod windows;
 #[cfg(target_os = "macos")]
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
-    MacLoginItem, MacMonitors, MacOcr, MacPopupWindow,
+    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPopupWindow,
 };
 #[cfg(windows)]
 pub use crate::windows::{
     set_dismiss_log, WindowsCapture, WindowsClipboard, WindowsDismissWatcher, WindowsForeground,
     WindowsKeys, WindowsLastForeground, WindowsLoginItem, WindowsMonitors, WindowsOcr,
-    WindowsPopupWindow, WindowsProtector,
+    WindowsOverlay, WindowsPopupWindow, WindowsProtector,
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
@@ -71,3 +71,6 @@ pub use popup_window::NoActivateWindow;
 
 pub mod system;
 pub use system::SystemInfo;
+
+pub mod overlay;
+pub use overlay::RegionOverlay;

@@ -71,6 +71,7 @@ fn platform() -> Platform {
     let sleeper = Arc::new(FakeSleeper::new());
     let clipboard = FakeClipboard::new(sleeper.clone());
     Platform {
+        overlay: Arc::new(lingopop_platform::fake::FakeOverlay::new(Ok(None))),
         system: Arc::new(FakeSystem::new(vec!["en-US".into()])),
         login_item: Arc::new(FakeLoginItem::new()),
         popup_window: Arc::new(FakePopupWindow::default()),

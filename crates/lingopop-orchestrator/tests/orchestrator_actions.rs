@@ -109,6 +109,7 @@ fn rig_full(
     let orch = Orchestrator::new(Deps {
         status: None,
         platform: Platform {
+            overlay: Arc::new(lingopop_platform::fake::FakeOverlay::new(Ok(None))),
             system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
             login_item: Arc::new(FakeLoginItem::new()),
             popup_window: Arc::new(FakePopupWindow::default()),

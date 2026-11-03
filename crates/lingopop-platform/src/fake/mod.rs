@@ -34,3 +34,6 @@ pub use system::FakeSystem;
 
 mod login_item;
 pub use login_item::FakeLoginItem;
+
+mod overlay;
+pub use overlay::FakeOverlay;

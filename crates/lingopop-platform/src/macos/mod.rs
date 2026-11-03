@@ -27,3 +27,6 @@ pub use system::MacSystem;
 
 mod login_item;
 pub use login_item::MacLoginItem;
+
+mod overlay;
+pub use overlay::MacOverlay;

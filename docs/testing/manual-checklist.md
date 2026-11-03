@@ -66,7 +66,7 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 - [ ] Record a chord already assigned to another operation: the duplicate line names that operation; the saved shortcut stays unchanged.
 - [ ] Press the Translate chord while recording: it is recorded instead of triggering a translation.
 - [ ] Start recording, then blur or close Settings: all saved shortcuts resume; closing after blur leaves them registered.
-- [ ] Assign Screen Translate a chord: it starts the flow and cancels silently at NoPicker until Task 13 supplies the region picker.
+- [ ] Assign Screen Translate a chord: it opens the native region picker.
 
 ### Task 11: History and tray
 
@@ -81,3 +81,14 @@ Default hotkeys: Translate `Ctrl+Alt+T`; the other operations use the chords in 
 
 - [ ] Select text in Notepad, open the tray menu and click Translate. Expected: the popup shows the translation of the Notepad selection (Notepad is brought back to the front first, the clipboard is restored afterwards).
 - [ ] Sign in fresh (or restart LingoPop with no other window ever opened), open the tray menu and click Translate. Expected: the "nothing selected" message.
+
+
+### Task 13: Screen Translate overlay
+
+- [ ] Overlay dims all monitors, including a negative-origin mixed-DPI arrangement; the taskbar is covered.
+- [ ] Cursor is a crosshair throughout selection; the size label and white border scale with the monitor.
+- [ ] Drag in either direction: the label shows physical width × height, with a black shadow.
+- [ ] Esc cancels silently and the underlying app receives no Esc; afterward its normal Esc handling works.
+- [ ] A selection smaller than 10 px in either dimension cancels silently and returns the tray to Idle.
+- [ ] Complete a selection and inspect the captured result: the overlay never appears in the capture.
+- [ ] Press the Screen Translate hotkey again during selection: the old overlay disappears before a fresh overlay starts.

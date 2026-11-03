@@ -73,6 +73,7 @@ impl Ocr for TestOcr {
 }
 
 struct Rig {
+    logs: Arc<Mutex<Vec<String>>>,
     status: Arc<lingopop_orchestrator::fake::FakeStatus>,
     orch: Orchestrator,
     popup: Arc<FakePopup>,
@@ -149,6 +150,7 @@ fn rig_gated(
     });
     let dismiss = Arc::new(FakeDismissWatcher::default());
     let platform = Platform {
+        overlay: Arc::new(lingopop_platform::fake::FakeOverlay::new(Ok(None))),
         system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
         login_item: Arc::new(lingopop_platform::fake::FakeLoginItem::new()),
         popup_window: Arc::new(FakePopupWindow::default()),
@@ -173,6 +175,8 @@ fn rig_gated(
     };
     let config = Arc::new(FakeConfig::new(settings, snapshot(keys_for, fallbacks)));
     let status = Arc::new(lingopop_orchestrator::fake::FakeStatus::default());
+    let logs = Arc::new(Mutex::new(Vec::new()));
+    let log_lines = logs.clone();
     let orch = Orchestrator::new(Deps {
         status: Some(status.clone()),
         platform,
@@ -186,10 +190,13 @@ fn rig_gated(
         popup: popup.clone(),
         gate: PlatformGate::new(gate),
         clock: Arc::new(ManualClock::new(Timestamp::from_unix_seconds(1000.0))),
-        log: None,
+        log: Some(Arc::new(move |line| {
+            log_lines.lock().unwrap().push(line.to_string())
+        })),
         picker: picker.clone(),
     });
     Rig {
+        logs,
         status,
         orch,
         popup,
@@ -258,7 +265,10 @@ async fn cancelled_pick_shows_nothing() {
 #[tokio::test]
 async fn pick_error_shows_message() {
     let r = rig_full(
-        Err(PlatformError::Unsupported("picker")),
+        Err(PlatformError::Os {
+            api: "picker",
+            code: 1,
+        }),
         ocr_ok(OCR_TEXT),
         ok_transport(),
         &KEYED,
@@ -771,4 +781,58 @@ async fn screen_translate_working_starts_after_pick() {
     picked.orch.trigger(AIOperation::ScreenTranslate).await;
     assert_eq!(picked.status.statuses().first(), Some(&Working));
     assert_eq!(picked.status.statuses().last(), Some(&Idle));
+}
+
+#[tokio::test]
+async fn unsupported_pick_is_a_silent_cancel() {
+    let r = rig_full(
+        Err(PlatformError::Unsupported("region overlay on macOS")),
+        ocr_ok(OCR_TEXT),
+        Arc::new(FakeTransport::json(200, CLAUDE_OK)),
+        &KEYED,
+        &[],
+    );
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert!(r.popup.calls().is_empty());
+    assert_eq!(
+        r.status.statuses().last(),
+        Some(&lingopop_orchestrator::TrayStatus::Idle)
+    );
+    assert!(r.capture.regions().is_empty());
+    assert!(r
+        .logs
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|line| line == "region picker unsupported"));
+}
+
+#[tokio::test]
+async fn second_screen_translate_cancels_first_pick() {
+    let r = rig(
+        ocr_ok(OCR_TEXT),
+        Arc::new(FakeTransport::json(200, CLAUDE_OK)),
+    );
+    r.picker.block_forever();
+    let orch = r.orch.clone();
+    let first = tokio::spawn(async move { orch.trigger(AIOperation::ScreenTranslate).await });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while r.picker.calls() < 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let orch = r.orch.clone();
+    let second = tokio::spawn(async move { orch.trigger(AIOperation::ScreenTranslate).await });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while r.picker.cancelled() < 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    r.orch.close().await;
+    first.await.unwrap();
+    second.await.unwrap();
 }

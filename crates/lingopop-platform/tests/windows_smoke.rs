@@ -1015,8 +1015,14 @@ fn dismiss_watcher_reports_injected_outside_click() {
 }
 
 static ESCAPES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static OVERLAY_PROBE_CLICKS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 unsafe extern "system" fn escape_probe_proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     use windows::Win32::UI::{Input::KeyboardAndMouse::VK_ESCAPE, WindowsAndMessaging::WM_KEYDOWN};
+    if msg == windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN {
+        OVERLAY_PROBE_CLICKS.fetch_add(1, Ordering::SeqCst);
+    }
     if msg == WM_KEYDOWN && w.0 == usize::from(VK_ESCAPE.0) {
         ESCAPES.fetch_add(1, Ordering::SeqCst);
     }
@@ -1397,4 +1403,68 @@ fn two_trackers_do_not_share_state() {
     for _ in 0..5 {
         drop(WindowsLastForeground::new().expect("tracker"));
     }
+}
+
+#[path = "support/overlay.rs"]
+mod overlay_test;
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn overlay_creates_and_destroys_window() {
+    let pick = overlay_test::Pick::start();
+    let hwnd = overlay_test::window().unwrap();
+    // SAFETY: pure thread-id query for a live overlay window.
+    let id =
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, None) };
+    assert!(id != 0);
+    assert_eq!(overlay_thread_windows(id), 1);
+    pick.cancel.send(()).unwrap();
+    assert_eq!(pick.finish(), None);
+    assert_eq!(overlay_thread_windows(id), 0);
+    assert!(overlay_test::window().is_none());
+}
+fn overlay_thread_windows(id: u32) -> usize {
+    use windows::{core::BOOL, Win32::UI::WindowsAndMessaging::EnumThreadWindows};
+    unsafe extern "system" fn count(_: HWND, l: LPARAM) -> BOOL {
+        // SAFETY: EnumThreadWindows forwards our live usize pointer synchronously.
+        unsafe {
+            *(l.0 as *mut usize) += 1;
+        }
+        BOOL(1)
+    }
+    let mut n = 0usize;
+    // SAFETY: synchronous enumeration; count's out pointer remains live through the call.
+    let _ = unsafe { EnumThreadWindows(id, Some(count), LPARAM((&mut n as *mut usize) as isize)) };
+    n
+}
+#[test]
+#[ignore = "needs interactive desktop"]
+fn overlay_destroys_window_on_cancel() {
+    let probe = test_window(100, false, true);
+    let fg = WindowsForeground::new();
+    fg.restore(probe.handle()).unwrap();
+    ESCAPES.store(0, Ordering::SeqCst);
+    OVERLAY_PROBE_CLICKS.store(0, Ordering::SeqCst);
+    let pick = overlay_test::Pick::start();
+    pick.cancel.send(()).unwrap();
+    assert_eq!(pick.finish(), None);
+    assert!(overlay_test::window().is_none());
+    overlay_test::escape();
+    assert!(wait_until(Duration::from_secs(1), || ESCAPES
+        .load(Ordering::SeqCst)
+        > 0));
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    overlay_test::mouse(200, 120, MOUSEEVENTF_LEFTDOWN);
+    overlay_test::mouse(200, 120, MOUSEEVENTF_LEFTUP);
+    assert!(wait_until(Duration::from_secs(1), || OVERLAY_PROBE_CLICKS
+        .load(Ordering::SeqCst)
+        > 0));
+}
+#[test]
+#[ignore = "needs interactive desktop"]
+fn overlay_window_origin_is_virtual_screen_origin() {
+    let pick = overlay_test::Pick::start();
+    assert_eq!(overlay_test::window_rect(), overlay_test::bounds());
+    pick.cancel.send(()).unwrap();
+    assert_eq!(pick.finish(), None);
 }
