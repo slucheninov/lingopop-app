@@ -4,10 +4,11 @@
   import { currentLanguage, t } from '../lib/i18n';
   import { formatHistoryDate, type HistoryRow } from '../lib/historySearch';
 
-  let { row, onerror, onsuccess }: {
+  let { row, onerror, onsuccess, onmutated }: {
     row: HistoryRow;
     onerror: (message: string) => void;
     onsuccess: () => void;
+    onmutated: () => void;
   } = $props();
   let menu = $state(false);
   let actions: HTMLDivElement;
@@ -39,7 +40,8 @@
     trigger.focus();
     try {
       await invoke(command, args);
-      onsuccess();
+      if (command === 'history_remove') onmutated();
+      else onsuccess();
     } catch {
       onerror(command === 'clipboard_write' ? t("Couldn't copy.") : t("History couldn't be updated."));
     }

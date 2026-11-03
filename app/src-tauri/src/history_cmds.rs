@@ -146,10 +146,8 @@ mod tests {
             "Invalid id."
         );
     }
-    #[cfg(unix)]
     #[test]
     fn history_remove_and_clear_report_a_failed_save_without_firing_the_hook() {
-        use std::os::unix::fs::PermissionsExt;
         use std::sync::atomic::{AtomicUsize, Ordering};
         let d = tempfile::tempdir().unwrap();
         let (_, stores, _) = crate::task4_tests::rig(d.path());
@@ -161,11 +159,15 @@ mod tests {
         stores.set_on_change(std::sync::Arc::new(move |_| {
             f.fetch_add(1, Ordering::SeqCst);
         }));
-        let mode = std::fs::metadata(d.path()).unwrap().permissions().mode();
-        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Force the failure independently of permissions (root ignores read-only directories):
+        // the atomic write renames its temp file onto `history.json`, and a directory sitting
+        // at that path makes the rename fail on Unix and Windows alike.
+        let target = lingopop_core::paths::DataPaths::new(d.path()).history_json();
+        std::fs::remove_file(&target).unwrap();
+        std::fs::create_dir(&target).unwrap();
         let removed = remove_row(&stores, Language::En, &id.to_string());
         let cleared = clear_rows(&stores, Language::En);
-        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+        std::fs::remove_dir(&target).unwrap();
         assert_eq!(removed.unwrap_err(), "History couldn't be updated.");
         assert_eq!(cleared.unwrap_err(), "History couldn't be updated.");
         assert_eq!(fired.load(Ordering::SeqCst), 0);

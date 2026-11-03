@@ -189,3 +189,51 @@ test('listener_is_registered_before_the_first_history_list_call', async () => {
   await screen.findByText('Hallo');
   expect(order).toEqual(['listen', 'history_list']);
 });
+
+const listCalls = () => vi.mocked(invoke).mock.calls.filter(call => call[0] === 'history_list').length;
+
+async function openRowMenu() {
+  await fireEvent.click(screen.getByRole('button', { name: 'History actions' }));
+}
+
+test('without_a_listener_a_successful_clear_or_remove_reloads_the_list', async () => {
+  vi.mocked(listen).mockRejectedValue(new Error('unavailable'));
+  vi.mocked(invoke).mockImplementation(async command => (command === 'history_list' ? [row] : undefined));
+  render(History);
+  await screen.findByText('Hallo');
+  expect(listCalls()).toBe(1);
+  await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+  await waitFor(() => expect(listCalls()).toBe(2));
+  await openRowMenu();
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(listCalls()).toBe(3));
+  await openRowMenu();
+  await fireEvent.click(screen.getByRole('button', { name: 'Copy original' }));
+  await Promise.resolve();
+  expect(listCalls()).toBe(3);
+});
+
+test('without_a_listener_a_failed_clear_does_not_reload', async () => {
+  vi.mocked(listen).mockRejectedValue(new Error('unavailable'));
+  vi.mocked(invoke).mockImplementation(async command => {
+    if (command === 'history_clear') throw new Error('failed');
+    return [row];
+  });
+  render(History);
+  await screen.findByText('Hallo');
+  await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+  await screen.findByRole('alert');
+  expect(listCalls()).toBe(1);
+});
+
+test('with_a_listener_clear_and_remove_do_not_reload_by_themselves', async () => {
+  vi.mocked(invoke).mockImplementation(async command => (command === 'history_list' ? [row] : undefined));
+  render(History);
+  await screen.findByText('Hallo');
+  await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+  await openRowMenu();
+  await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('history_remove', { id: 'ID' }));
+  await Promise.resolve();
+  expect(listCalls()).toBe(1);
+});

@@ -12,6 +12,9 @@
   let error = $state('');
   let readError = $state(false);
   let generation = 0;
+  // False until `history://changed` is registered (or after a rejected registration): without the
+  // listener a successful remove / clear would never refresh the rows, so those actions reload.
+  let listening = false;
   let filtered = $derived(filterHistory(rows, query));
 
   async function load() {
@@ -32,10 +35,16 @@
     readError = false;
   }
 
+  // A mutation (remove, clear) changed the store; with a working listener the event refreshes the rows.
+  function mutationSucceeded() {
+    actionSucceeded();
+    if (!listening) void load();
+  }
+
   async function clear() {
     try {
       await invoke('history_clear');
-      actionSucceeded();
+      mutationSucceeded();
     } catch {
       error = t("History couldn't be updated.");
     }
@@ -48,7 +57,10 @@
     });
     // Listener first, then the initial read: a change between the two is never missed. A failed
     // registration must not block the read.
-    void registration.catch(() => {}).then(() => {
+    void registration.then(
+      () => { listening = true; },
+      () => { listening = false; },
+    ).then(() => {
       if (!disposed) void load();
     });
     return () => {
@@ -83,7 +95,7 @@
   {:else}
     <div class="rows">
       {#each filtered as row (row.id)}
-        <HistoryRow {row} onerror={message => error = message} onsuccess={actionSucceeded} />
+        <HistoryRow {row} onerror={message => error = message} onsuccess={actionSucceeded} onmutated={mutationSucceeded} />
       {/each}
     </div>
   {/if}
