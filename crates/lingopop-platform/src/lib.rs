@@ -25,6 +25,7 @@ pub mod monitors;
 pub mod native;
 pub mod ocr;
 pub mod popup_window;
+pub mod secrets_aead;
 pub mod selection;
 pub mod sleeper;
 #[cfg(windows)]

@@ -8,6 +8,8 @@ LingoPop: a tray / menu-bar AI translator (translate, fix grammar, rewrite, expl
 
 ## Layout
 
+- `crates/lingopop-platform/src/secrets_aead.rs` - portable LPS1 authenticated AES-256-GCM container, random nonce, zeroized/redacted SecretKey; tests in `tests/macos_secrets.rs`. Platform dependencies pin aes-gcm 0.10.3, zeroize 1.9.1, getrandom 0.4.3; `dev-plaintext` is off by default.
+
 Each task appends its own modules here in the same commit.
 
 - `Cargo.toml` - workspace (`resolver = "2"`, members `crates/*` and `app/src-tauri`, shared package fields, version shared by every crate and the app, see "Release")
