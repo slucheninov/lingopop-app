@@ -159,3 +159,91 @@ fn above_left_displays_and_fractional_capture_are_local() {
     assert_eq!(p.tiles[0].pixel_crop, Rect::new(0, 0, 151, 76));
     assert_eq!(g.monitors()[0].bounds, Rect::new(-1001, -801, 1001, 801));
 }
+
+#[test]
+fn fractional_work_area_rounds_inward_while_display_bounds_expand() {
+    let mut d = display(1, -10.25, -2.5, 100.5, 150.25, 2.0);
+    d.work_area = NativeRect::new(-9.75, 21.25, 99.5, 76.5);
+    let g = MacGeometry::new(1, 900.0, vec![d]).unwrap();
+    assert_eq!(g.monitors()[0].bounds, Rect::new(-11, -3, 102, 151));
+    assert_eq!(g.monitors()[0].work_area, Rect::new(-9, 22, 98, 75));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn initialization_off_main_is_nonfatal() {
+    let monitors = lingopop_platform::MacMonitors::from_geometry(retina());
+    let result = std::thread::spawn(move || monitors.initialize_on_main_thread())
+        .join()
+        .unwrap();
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn appkit_primary_visible_frame_excludes_menu_bar_and_dock() {
+    assert_eq!(
+        MacGeometry::appkit_frame_to_desktop(900.0, NativeRect::new(0.0, 50.0, 1440.0, 826.0)),
+        NativeRect::new(0.0, 24.0, 1440.0, 826.0)
+    );
+}
+#[test]
+fn appkit_above_display_visible_frame_keeps_its_own_menu_bar() {
+    assert_eq!(
+        MacGeometry::appkit_frame_to_desktop(900.0, NativeRect::new(0.0, 900.0, 1920.0, 1056.0)),
+        NativeRect::new(0.0, -1056.0, 1920.0, 1056.0)
+    );
+}
+#[test]
+fn appkit_left_display_frame_preserves_negative_fractional_x() {
+    assert_eq!(
+        MacGeometry::appkit_frame_to_desktop(
+            900.0,
+            NativeRect::new(-1920.25, 50.5, 1920.25, 825.25)
+        ),
+        NativeRect::new(-1920.25, 24.25, 1920.25, 825.25)
+    );
+}
+#[test]
+fn initial_topology_failure_registers_observer_first_and_notification_repairs_same_cache() {
+    use std::cell::RefCell;
+    for invalid_bounds in [false, true] {
+        let cache = TopologyCache::new(retina());
+        let shared = cache.clone();
+        let old_plan = cache
+            .snapshot()
+            .capture_plan(Rect::new(10, 20, 100, 50))
+            .unwrap();
+        let events = RefCell::new(Vec::new());
+        cache.initialize_with(
+            || events.borrow_mut().push("observer registered".to_owned()),
+            || {
+                assert_eq!(*events.borrow(), vec!["observer registered"]);
+                if invalid_bounds {
+                    Ok((900.0, vec![display(1, f64::NAN, 0.0, 1440.0, 900.0, 2.0)]))
+                } else {
+                    // Missing NSScreenNumber or other enumeration failure.
+                    Err(PlatformError::InvalidRegion)
+                }
+            },
+            &|line| events.borrow_mut().push(line.to_owned()),
+        );
+        assert_eq!(
+            *events.borrow(),
+            vec!["observer registered", "display topology refresh failed"]
+        );
+        assert!(shared.snapshot().monitors().is_empty());
+        assert_eq!(
+            shared.snapshot().ensure_current(&old_plan),
+            Err(PlatformError::InvalidRegion)
+        );
+        shared.refresh_with(
+            || Ok((900.0, vec![display(1, 0.0, 0.0, 1440.0, 900.0, 2.0)])),
+            &|_| panic!("successful refresh logged a failure"),
+        );
+        assert_eq!(
+            cache.snapshot().monitors()[0].bounds,
+            Rect::new(0, 0, 1440, 900)
+        );
+        assert_eq!(cache.topology_revision(), 3);
+    }
+}

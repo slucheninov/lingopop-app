@@ -47,6 +47,23 @@ impl NativeRect {
             (bottom - y) as i32,
         ))
     }
+    /// Work areas round inward so popup clamps cannot cover the menu bar or Dock.
+    pub fn contained_rect(self) -> Result<Rect, PlatformError> {
+        self.enclosing_rect()?;
+        let x = self.x.ceil();
+        let y = self.y.ceil();
+        let right = (self.x + self.width).floor();
+        let bottom = (self.y + self.height).floor();
+        if right <= x || bottom <= y {
+            return Err(PlatformError::InvalidRegion);
+        }
+        Ok(Rect::new(
+            x as i32,
+            y as i32,
+            (right - x) as i32,
+            (bottom - y) as i32,
+        ))
+    }
     fn intersect(self, b: Self) -> Option<Self> {
         let x = self.x.max(b.x);
         let y = self.y.max(b.y);
@@ -106,7 +123,7 @@ impl MacGeometry {
         }
         for (i, d) in displays.iter().enumerate() {
             d.desktop_bounds.enclosing_rect()?;
-            d.work_area.enclosing_rect()?;
+            d.work_area.contained_rect()?;
             if !d.backing_scale.is_finite()
                 || d.backing_scale <= 0.0
                 || displays[..i].iter().any(|p| p.id == d.id)
@@ -134,7 +151,7 @@ impl MacGeometry {
                     .desktop_bounds
                     .enclosing_rect()
                     .expect("validated display"),
-                work_area: d.work_area.enclosing_rect().expect("validated work area"),
+                work_area: d.work_area.contained_rect().expect("validated work area"),
                 scale_factor: 1.0,
                 primary: d.primary,
             })
@@ -151,9 +168,13 @@ impl MacGeometry {
             r.height.into(),
         ))
     }
+    /// Exact AppKit (bottom-left, Y-up) frame to Quartz (top-left, Y-down) points.
+    /// Used for both NSScreen.frame and visibleFrame, before integer rounding.
+    pub fn appkit_frame_to_desktop(primary_height: f64, r: NativeRect) -> NativeRect {
+        NativeRect::new(r.x, primary_height - r.y - r.height, r.width, r.height)
+    }
     pub fn appkit_to_desktop(&self, r: NativeRect) -> Result<Rect, PlatformError> {
-        NativeRect::new(r.x, self.primary_height - r.y - r.height, r.width, r.height)
-            .enclosing_rect()
+        Self::appkit_frame_to_desktop(self.primary_height, r).enclosing_rect()
     }
     /// Task 15 must call this immediately before every native capture. Revision changes fail
     /// closed even if the same display IDs remain (scale/work-area/origin may have changed).
@@ -249,7 +270,35 @@ impl TopologyCache {
             .clone()
     }
     pub fn topology_revision(&self) -> u64 {
-        self.snapshot().topology_revision()
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .revision
+    }
+    /// Register first so even a failed initial enumeration can recover on a notification.
+    /// The injected operations also let display-independent tests exercise startup ordering.
+    pub fn initialize_with(
+        &self,
+        register_observer: impl FnOnce(),
+        read_topology: impl FnOnce() -> Result<(f64, Vec<MacDisplay>), PlatformError>,
+        log: &impl Fn(&str),
+    ) {
+        register_observer();
+        self.refresh_with(read_topology, log);
+    }
+    /// Failed reads or invalid geometry invalidate old plans, without failing app setup.
+    pub fn refresh_with(
+        &self,
+        read_topology: impl FnOnce() -> Result<(f64, Vec<MacDisplay>), PlatformError>,
+        log: &impl Fn(&str),
+    ) {
+        if read_topology()
+            .and_then(|(height, displays)| self.publish(height, displays))
+            .is_err()
+        {
+            let _ = self.publish(0.0, vec![]);
+            log("display topology refresh failed");
+        }
     }
     pub fn publish(
         &self,

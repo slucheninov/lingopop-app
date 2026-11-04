@@ -44,22 +44,28 @@ impl MacMonitors {
     }
     /// Call once from shell setup. AppKit enumeration and observer registration stay here.
     pub fn initialize_on_main_thread(&self) -> Result<(), PlatformError> {
-        let mtm = MainThreadMarker::new().ok_or(PlatformError::Os {
-            api: "display topology requires main thread",
-            code: 0,
-        })?;
+        let Some(mtm) = MainThreadMarker::new() else {
+            crate::error::platform_log("display topology requires main thread");
+            return Ok(());
+        };
         if self.initialized.load(Ordering::Acquire) {
             return Ok(());
         }
-        refresh(&self.cache, mtm)?;
+        self.cache.initialize_with(
+            || self.register_observer(),
+            || read_topology(mtm),
+            &crate::error::platform_log,
+        );
+        self.initialized.store(true, Ordering::Release);
+        Ok(())
+    }
+    fn register_observer(&self) {
         let cache = self.cache.clone();
         let block = block2::RcBlock::new(move |_| {
             if let Some(mtm) = MainThreadMarker::new() {
-                if refresh(&cache, mtm).is_err() {
-                    // Invalidate old plans even if the new topology could not be enumerated.
-                    let _ = cache.publish(0.0, vec![]);
-                    crate::error::platform_log("display topology refresh failed");
-                }
+                cache.refresh_with(|| read_topology(mtm), &crate::error::platform_log);
+            } else {
+                crate::error::platform_log("display topology observer requires main thread");
             }
         });
         let center = NSNotificationCenter::defaultCenter();
@@ -74,8 +80,6 @@ impl MacMonitors {
             )
         };
         OBSERVERS.with(|v| v.borrow_mut().push(Observer { center, token }));
-        self.initialized.store(true, Ordering::Release);
-        Ok(())
     }
 }
 struct Observer {
@@ -89,7 +93,7 @@ impl Drop for Observer {
     }
 }
 thread_local! {static OBSERVERS:RefCell<Vec<Observer>>=const {RefCell::new(Vec::new())};}
-fn refresh(cache: &TopologyCache, mtm: MainThreadMarker) -> Result<(), PlatformError> {
+fn read_topology(mtm: MainThreadMarker) -> Result<(f64, Vec<MacDisplay>), PlatformError> {
     let primary = CGDisplay::main().bounds();
     let height = primary.size.height;
     let screens = NSScreen::screens(mtm);
@@ -105,24 +109,26 @@ fn refresh(cache: &TopologyCache, mtm: MainThreadMarker) -> Result<(), PlatformE
         let id = u32::try_from(number.unsignedIntegerValue())
             .map_err(|_| PlatformError::InvalidRegion)?;
         let cg = CGDisplay::new(id);
-        let b = cg.bounds();
-        let visible = screen.visibleFrame();
+        let frame_to_desktop = |r: objc2_foundation::NSRect| {
+            MacGeometry::appkit_frame_to_desktop(
+                height,
+                NativeRect::new(r.origin.x, r.origin.y, r.size.width, r.size.height),
+            )
+        };
         displays.push(MacDisplay {
             id,
-            desktop_bounds: NativeRect::new(b.origin.x, b.origin.y, b.size.width, b.size.height),
-            work_area: NativeRect::new(
-                visible.origin.x,
-                height - visible.origin.y - visible.size.height,
-                visible.size.width,
-                visible.size.height,
-            ),
+            desktop_bounds: frame_to_desktop(screen.frame()),
+            work_area: frame_to_desktop(screen.visibleFrame()),
             backing_scale: screen.backingScaleFactor(),
             primary: cg.is_main(),
         });
     }
-    cache.publish(height, displays)
+    Ok((height, displays))
 }
 impl Monitors for MacMonitors {
+    fn initialize_on_main_thread(&self) -> Result<(), PlatformError> {
+        MacMonitors::initialize_on_main_thread(self)
+    }
     fn cursor_position(&self) -> Result<Point, PlatformError> {
         let err = PlatformError::Os {
             api: "CGEventCreate",

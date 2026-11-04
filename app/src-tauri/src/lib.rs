@@ -158,13 +158,9 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     lingopop_platform::set_platform_log(log.clone());
     let platform = lingopop_platform::native();
     #[cfg(target_os = "macos")]
-    let platform = {
-        let monitors = lingopop_platform::MacMonitors::new();
-        monitors.initialize_on_main_thread()?;
-        let mut platform = platform;
-        platform.monitors = Arc::new(monitors);
-        platform
-    };
+    if platform.monitors.initialize_on_main_thread().is_err() {
+        log::warn!("display topology initialization failed");
+    }
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let (config, stores, ui) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
 

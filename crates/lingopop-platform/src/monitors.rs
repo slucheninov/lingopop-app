@@ -104,6 +104,11 @@ pub struct MonitorInfo {
 }
 
 pub trait Monitors: Send + Sync {
+    /// Shell setup calls this on its existing monitor service. Windows/fakes need no setup.
+    /// Mac registers topology observation and handles refresh failure without aborting startup.
+    fn initialize_on_main_thread(&self) -> Result<(), PlatformError> {
+        Ok(())
+    }
     fn cursor_position(&self) -> Result<Point, PlatformError>;
     fn monitors(&self) -> Result<Vec<MonitorInfo>, PlatformError>;
 }

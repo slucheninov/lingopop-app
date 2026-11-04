@@ -130,6 +130,7 @@ impl ShellPopup {
                             f64::from(rect.height.max(1)),
                         ))
                     });
+                // The enclosing arm excludes Windows, so this is Linux-only (a non-target).
                 #[cfg(not(target_os = "macos"))]
                 let placed = window
                     .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
