@@ -61,6 +61,7 @@ pub struct ProviderState {
     pub is_active: bool,
     pub fallback: Option<ProviderType>,
     pub secrets_unavailable: bool,
+    pub secrets_locked: bool,
     pub connections_corrupt: bool,
     pub key_guide_url: String,
 }
@@ -91,6 +92,7 @@ pub fn provider_state_of(config: &ShellConfig, provider: ProviderType) -> Provid
         is_active: settings.active_provider == provider,
         fallback: settings.fallback(provider),
         secrets_unavailable: !config.secrets_available(),
+        secrets_locked: config.secrets_locked(),
         connections_corrupt: config.connections_corrupt(),
         key_guide_url: key_guide_url(provider),
     }
@@ -195,8 +197,11 @@ pub async fn provider_save(
     draft: ProviderDraft,
 ) -> Result<ProviderState, String> {
     let _write = state.settings_write.lock().await;
-    let result = save_draft(&state.config, provider, &draft);
-    drop(draft);
+    let config = state.config.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || save_draft(&config, provider, &draft))
+            .await
+            .unwrap_or(Err(KEY_SETTINGS_NOT_SAVED));
     // A failed key write still changed the connection: always tell the windows to re-read.
     let _ = app.emit("settings://changed", &settings_view(&state));
     result.map_err(|key| i18n::t(state.ui.language(), key, &[]))?;
@@ -210,8 +215,28 @@ pub async fn provider_clear_key(
     provider: ProviderType,
 ) -> Result<ProviderState, String> {
     let _write = state.settings_write.lock().await;
-    let result = clear_key_of(&state.config, provider);
+    let config = state.config.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || clear_key_of(&config, provider))
+        .await
+        .unwrap_or(Err(KEY_KEY_NOT_SAVED));
     let _ = app.emit("settings://changed", &settings_view(&state));
     result.map_err(|key| i18n::t(state.ui.language(), key, &[]))?;
+    Ok(provider_state_of(&state.config, provider))
+}
+
+/// Called only after the settings UI confirms losing all stored provider credentials.
+#[tauri::command]
+pub async fn provider_reset_secrets(
+    app: tauri::AppHandle,
+    state: State<'_, ShellState>,
+    provider: ProviderType,
+) -> Result<ProviderState, String> {
+    let _write = state.settings_write.lock().await;
+    let config = state.config.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || config.reset_secrets()).await;
+    let _ = app.emit("settings://changed", &settings_view(&state));
+    if !matches!(result, Ok(Ok(()))) {
+        return Err("Couldn't reset stored secrets.".into());
+    }
     Ok(provider_state_of(&state.config, provider))
 }

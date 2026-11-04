@@ -9,8 +9,6 @@ use ::windows::Win32::Security::Cryptography::{
 };
 use lingopop_core::secrets::{ProtectError, SecretProtector};
 
-use super::util::win32_code;
-
 /// Seals `secrets.dat` to the current Windows user (and machine profile). An empty payload is
 /// passed to DPAPI like any other (through a one-byte dummy buffer so the input pointer is never
 /// null) and round-trips to an empty payload.
@@ -55,12 +53,11 @@ impl Drop for OutputBlob {
 
 /// Runs one DPAPI call over `input`. The message names the API and the error code only, never data.
 fn run(
-    api: &'static str,
+    _api: &'static str,
     input: &[u8],
     call: impl FnOnce(*const CRYPT_INTEGER_BLOB, *mut CRYPT_INTEGER_BLOB) -> ::windows::core::Result<()>,
 ) -> Result<Vec<u8>, ProtectError> {
-    let len = u32::try_from(input.len())
-        .map_err(|_| ProtectError::Failed(format!("{api} failed: input too large")))?;
+    let len = u32::try_from(input.len()).map_err(|_| ProtectError::Invalid)?;
     let dummy = 0u8;
     let data = if input.is_empty() {
         &dummy as *const u8
@@ -73,8 +70,7 @@ fn run(
         pbData: data as *mut u8,
     };
     let mut out = OutputBlob::new();
-    call(&blob_in, &mut out.0)
-        .map_err(|e| ProtectError::Failed(format!("{api} failed (code {})", win32_code(&e))))?;
+    call(&blob_in, &mut out.0).map_err(|_| ProtectError::Invalid)?;
     Ok(out.to_vec())
 }
 

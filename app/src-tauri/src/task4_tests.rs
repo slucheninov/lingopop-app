@@ -38,6 +38,7 @@ pub(crate) fn platform() -> lingopop_platform::Platform {
         monitors: Arc::new(FakeMonitors::new(Point { x: 0, y: 0 }, vec![])),
         capture: Arc::new(FakeCapture::new([0; 4])),
         ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
+        permissions: Arc::new(lingopop_platform::AlwaysGranted),
         protector: Arc::new(Protector),
         sleeper,
     }

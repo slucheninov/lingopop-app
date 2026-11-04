@@ -69,7 +69,7 @@ fn provider_save_ignores_fields_the_provider_does_not_show() {
 struct FailingProtector;
 impl SecretProtector for FailingProtector {
     fn protect(&self, _: &[u8]) -> Result<Vec<u8>, ProtectError> {
-        Err(ProtectError::Failed("protect boom".into()))
+        Err(ProtectError::Invalid)
     }
     fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
         Ok(d.to_vec())
@@ -83,7 +83,7 @@ impl SecretProtector for FailsAfterFirst {
         if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             Ok(d.to_vec())
         } else {
-            Err(ProtectError::Failed("protect boom".into()))
+            Err(ProtectError::Invalid)
         }
     }
     fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
@@ -268,6 +268,7 @@ fn provider_state_json_shape() {
         "isActive",
         "fallback",
         "secretsUnavailable",
+        "secretsLocked",
         "connectionsCorrupt",
         "keyGuideUrl",
     ] {
@@ -311,4 +312,167 @@ fn provider_error_keys_are_translated_in_every_catalog() {
             assert_ne!(i18n::lookup(language, key), key, "{language:?}: {key}");
         }
     }
+}
+
+#[test]
+fn task7_locked_secrets_reset_restores_provider_writes() {
+    use lingopop_core::secrets::SecretStore;
+    struct Recoverable(std::sync::atomic::AtomicBool);
+    impl SecretProtector for Recoverable {
+        fn protect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Ok(d.to_vec())
+        }
+        fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+                Ok(d.to_vec())
+            } else {
+                Err(ProtectError::Unavailable)
+            }
+        }
+        fn reset_key(&self) -> Result<(), ProtectError> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secrets.dat");
+    std::fs::write(&path, b"existing ciphertext").unwrap();
+    let mut bundle = platform();
+    bundle.protector = Arc::new(Recoverable(Default::default()));
+    let (config, _, _) = load(&DataPaths::new(dir.path()), &bundle, Arc::new(SystemClock));
+    assert!(provider_state_of(&config, ProviderType::Claude).secrets_unavailable);
+    config.reset_secrets().unwrap();
+    assert!(!provider_state_of(&config, ProviderType::Claude).secrets_unavailable);
+    save_draft(
+        &config,
+        ProviderType::Claude,
+        &draft("new sentinel", "https://x"),
+    )
+    .unwrap();
+    assert!(config.has_api_key(ProviderType::Claude));
+    let _ = SecretStore::open(path, bundle.protector, Arc::new(SystemClock)).unwrap();
+}
+
+#[test]
+fn task7_platform_identity_is_separate_and_windows_unchanged() {
+    let base: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let mac: serde_json::Value =
+        serde_json::from_str(include_str!("../tauri.macos.conf.json")).unwrap();
+    assert_eq!(base["identifier"], "app.lingopop.windows");
+    assert_eq!(base["productName"], "LingoPop");
+    assert_eq!(mac["identifier"], "app.lingopop.tauri.macos");
+    assert_eq!(mac["productName"], "LingoPop Preview");
+    let path = crate::paths::data_dir_from(Some("home".into()));
+    assert!(path.ends_with(if cfg!(windows) {
+        "LingoPop"
+    } else {
+        "Library/Application Support/LingoPop-Tauri"
+    }));
+}
+
+#[test]
+fn task7_reset_healthy_store_is_refused_without_touching_file_or_key() {
+    struct CountReset(std::sync::atomic::AtomicUsize);
+    impl SecretProtector for CountReset {
+        fn protect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Ok(d.to_vec())
+        }
+        fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Ok(d.to_vec())
+        }
+        fn reset_key(&self) -> Result<(), ProtectError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(CountReset(Default::default()));
+    let mut bundle = platform();
+    bundle.protector = keys.clone();
+    let (config, _, _) = load(&DataPaths::new(dir.path()), &bundle, Arc::new(SystemClock));
+    save_draft(
+        &config,
+        ProviderType::Claude,
+        &draft("sentinel", "https://x"),
+    )
+    .unwrap();
+    let path = dir.path().join("secrets.dat");
+    let before = std::fs::read(&path).unwrap();
+    assert!(config.reset_secrets().is_err());
+    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert_eq!(keys.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(config.secrets_available());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+#[test]
+fn task7_reset_none_store_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("secrets.dat")).unwrap();
+    let (config, _, _) = rig(dir.path());
+    assert!(config.reset_secrets().is_err());
+    assert!(!provider_state_of(&config, ProviderType::Claude).secrets_locked);
+    assert!(dir.path().join("secrets.dat").is_dir());
+}
+
+#[test]
+fn task7_slow_keychain_does_not_block_settings_view_or_provider_state() {
+    use lingopop_platform::secrets_aead::{KeyStoreProtector, KeychainKeyStore, SecretKey};
+    struct SlowKeys {
+        entered: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        key: Mutex<Option<SecretKey>>,
+    }
+    impl KeychainKeyStore for SlowKeys {
+        fn load(&self) -> Result<Option<SecretKey>, ProtectError> {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(self.key.lock().unwrap().clone())
+        }
+        fn insert_if_absent(&self, key: SecretKey) -> Result<SecretKey, ProtectError> {
+            Ok(self.key.lock().unwrap().get_or_insert(key).clone())
+        }
+        fn delete(&self) -> Result<(), ProtectError> {
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let mut bundle = platform();
+    bundle.protector = Arc::new(KeyStoreProtector::new(Arc::new(SlowKeys {
+        entered: entered_tx,
+        release: Mutex::new(release_rx),
+        key: Mutex::new(None),
+    })));
+    let (config, _, ui) = load(&DataPaths::new(dir.path()), &bundle, Arc::new(SystemClock));
+    let writer_config = config.clone();
+    let writer =
+        std::thread::spawn(move || writer_config.set_api_key(ProviderType::Claude, "sentinel"));
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let reader_config = config.clone();
+    let (view_tx, view_rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let view = crate::settings_cmds::settings_view_parts(&reader_config, &ui, &[]);
+        let provider = provider_state_of(&reader_config, ProviderType::Claude);
+        view_tx.send((view, provider)).unwrap();
+    });
+    let read = view_rx.recv_timeout(std::time::Duration::from_secs(1));
+    // Always release/join before asserting so a regression never hangs the test process.
+    release_tx.send(()).unwrap();
+    writer.join().unwrap().unwrap();
+    reader.join().unwrap();
+    let (view, provider) = read.expect("settings view blocked behind the Keychain prompt");
+    assert!(
+        !view
+            .providers
+            .iter()
+            .find(|p| p.provider == ProviderType::Claude)
+            .unwrap()
+            .has_key
+    );
+    assert!(!provider.has_key);
+    assert!(!provider.secrets_unavailable);
+    assert!(provider_state_of(&config, ProviderType::Claude).has_key);
 }

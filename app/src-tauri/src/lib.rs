@@ -7,11 +7,13 @@ mod history_cmds;
 pub mod hotkeys;
 pub mod logging;
 pub mod paths;
+pub mod permissions_cmds;
 pub mod picker;
 pub mod popup_shell;
 pub mod provider_cmds;
 pub mod settings_cmds;
 pub mod state;
+pub mod swift_source;
 pub mod tray;
 pub mod updates;
 pub mod usage_cmds;
@@ -149,6 +151,8 @@ pub fn parse_wait_pid(args: &[String]) -> Option<u32> {
 }
 
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     // Before `native()`: the platform logs its own startup failures (e.g. the tracker) through it.
     let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
     lingopop_platform::set_platform_log(log.clone());
@@ -221,6 +225,11 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
             let _ = events.emit("settings://changed", ());
         }),
     );
+    #[cfg(target_os = "macos")]
+    let hotkey_registry =
+        hotkey_registry.with_swift_source(swift_source::SwiftSource::new(platform.system.clone()));
+    #[cfg(target_os = "macos")]
+    hotkey_registry.observe_swift();
     let mut shell_hooks = ShellHooks::new(platform.login_item.clone());
     shell_hooks.hotkeys = Some(hotkey_registry.clone());
     let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);
@@ -237,6 +246,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         platform,
         hooks,
         settings_write: tokio::sync::Mutex::new(()),
+        permission_hints: Arc::new(permissions_cmds::PermissionHints::default()),
         window_locks: [windows::SETTINGS_LABEL, windows::HISTORY_LABEL]
             .into_iter()
             .map(|label| (label, tokio::sync::Mutex::new(())))
@@ -280,11 +290,16 @@ pub fn run() {
             settings_cmds::ui_update,
             settings_cmds::ui_bootstrap,
             settings_cmds::open_url,
+            provider_cmds::provider_reset_secrets,
             provider_cmds::provider_state,
             provider_cmds::provider_validate,
             provider_cmds::provider_save,
             provider_cmds::provider_clear_key,
             hotkeys::hotkeys_suspend,
+            permissions_cmds::permissions_status,
+            permissions_cmds::permissions_refresh,
+            permissions_cmds::permissions_request,
+            permissions_cmds::permissions_open_settings,
             history_cmds::history_list,
             history_cmds::history_remove,
             history_cmds::history_clear,
@@ -317,6 +332,8 @@ pub fn run() {
     });
 }
 
+#[cfg(test)]
+mod permission_tests;
 #[cfg(test)]
 mod task4_tests;
 #[cfg(test)]

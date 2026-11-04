@@ -14,8 +14,9 @@ use lingopop_core::settings::Settings;
 use lingopop_core::target_language::{operation_uses_auto_detect, target_language_for};
 use lingopop_core::time::Clock;
 use lingopop_platform::{
-    bring_to_front, capture_selection, monitor_at, physical_size, CaptureOptions, DismissEvent,
-    LogFn, MonitorInfo, Platform, PlatformError, Point, Rect, ReplaceOptions, WindowHandle,
+    bring_to_front, capture_selection, ensure_permission, monitor_at, physical_size,
+    CaptureOptions, DismissEvent, LogFn, MonitorInfo, PermissionKind, Platform, PlatformError,
+    Point, Rect, ReplaceOptions, WindowHandle,
 };
 
 use crate::gate::PlatformGate;
@@ -379,7 +380,8 @@ impl Orchestrator {
             }
         }
         let d = self.deps();
-        let (clipboard, keys, foreground, last_foreground, sleeper, monitors, log) = (
+        let (permissions, clipboard, keys, foreground, last_foreground, sleeper, monitors, log) = (
+            d.platform.permissions.clone(),
             d.platform.clipboard.clone(),
             d.platform.keys.clone(),
             d.platform.foreground.clone(),
@@ -405,6 +407,19 @@ impl Orchestrator {
                     .monitors()
                     .map_err(|_| note("monitor list unavailable"))
                     .ok();
+                // Reading the selection needs Accessibility: ask once when it was never decided,
+                // never when it was denied, and touch nothing (no focus change, no keystroke,
+                // no clipboard access) without it.
+                if let Err(e) =
+                    ensure_permission(permissions.as_ref(), PermissionKind::Accessibility, &note)
+                {
+                    return Ok(Captured {
+                        cursor,
+                        monitors: monitor_list,
+                        target: None,
+                        selection: Err(e),
+                    });
+                }
                 // A tray click left the tray menu or our own window in front: bring the window
                 // the user was in back first. No remembered window, a failed restore and a
                 // timeout all end as "nothing selected" (KEY_FOREGROUND_LOST would claim the
@@ -663,6 +678,7 @@ mod commit_tests {
             monitors: Arc::new(FakeMonitors::new(Point { x: 0, y: 0 }, vec![])),
             capture: Arc::new(FakeCapture::new([0; 4])),
             ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
+            permissions: Arc::new(lingopop_platform::AlwaysGranted),
             protector: Arc::new(Protector),
             sleeper,
         }

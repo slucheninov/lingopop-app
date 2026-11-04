@@ -2,10 +2,13 @@
   import { onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { classifyKeydown } from '../lib/hotkeyRecorder';
+  import { currentHost } from '../lib/bootstrap';
   import { t } from '../lib/i18n';
   import { renderError } from '../lib/ipcError';
   import type { Hotkey, HotkeyView } from '../lib/settingsTypes';
   let { label, hotkey, onRecord }: { label: string; hotkey?: HotkeyView; onRecord: (hotkey: Hotkey) => Promise<boolean> } = $props();
+  const host = currentHost();
+  const prompt = () => host === 'unix' ? t('Press a key combo (⌘ / Option)…') : t('Press a key combo…');
   let recording = $state(false);
   let busy = $state(false);
   let failure = $state<string | null>(null);
@@ -46,9 +49,9 @@
   }
   onDestroy(() => { disposed = true; void stop(); });
 </script>
-<button class:recording aria-label={label} aria-pressed={recording} title={recording ? t('Press a key combo…') : hotkey?.display ?? ''}
+<button class:recording aria-label={label} aria-pressed={recording} title={recording ? prompt() : hotkey?.display ?? ''}
   onclick={() => { void toggle(); }} onkeydown={keydown} onblur={() => { void stop(); }}>
-  {recording ? t('Press a key combo…') : hotkey?.display ?? '—'}
+  {recording ? prompt() : hotkey?.display ?? '—'}
 </button>
 {#if failure}<p role="alert">{renderError(failure)}</p>{/if}
 <style>

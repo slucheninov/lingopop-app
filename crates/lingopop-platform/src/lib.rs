@@ -7,7 +7,7 @@
 
 pub mod capture;
 pub mod clipboard;
-#[cfg(not(windows))]
+#[cfg(any(test, feature = "dev-plaintext"))]
 pub mod dev_protector;
 pub mod dismiss;
 pub mod error;
@@ -24,7 +24,9 @@ mod macos;
 pub mod monitors;
 pub mod native;
 pub mod ocr;
+pub mod permissions;
 pub mod popup_window;
+pub mod secrets_aead;
 pub mod selection;
 pub mod sleeper;
 #[cfg(windows)]
@@ -34,7 +36,7 @@ mod windows;
 #[cfg(target_os = "macos")]
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
-    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPopupWindow,
+    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPermissions, MacPopupWindow, MacProtector,
 };
 #[cfg(windows)]
 pub use crate::windows::{
@@ -44,7 +46,7 @@ pub use crate::windows::{
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
-#[cfg(not(windows))]
+#[cfg(any(test, feature = "dev-plaintext"))]
 pub use dev_protector::DevPlaintextProtector;
 pub use error::{set_platform_log, LogFn, PlatformError};
 pub use foreground::{ForegroundWindow, WindowHandle};
@@ -63,6 +65,9 @@ pub use native::Platform;
 #[cfg(any(windows, target_os = "macos"))]
 pub use native::{native, native_system};
 pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
+pub use permissions::{
+    ensure_permission, AlwaysGranted, PermissionKind, PermissionState, Permissions,
+};
 pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};
 
@@ -74,3 +79,9 @@ pub use system::SystemInfo;
 
 pub mod overlay;
 pub use overlay::RegionOverlay;
+
+#[cfg(target_os = "macos")]
+pub use macos::keychain::LoginKeyStore;
+
+#[cfg(target_os = "macos")]
+pub use macos::activate_app;

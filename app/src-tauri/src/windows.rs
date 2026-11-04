@@ -19,6 +19,13 @@ pub fn open_history(app: &AppHandle) {
     });
 }
 async fn open_window(app: AppHandle, label: &'static str) {
+    #[cfg(target_os = "macos")]
+    if app
+        .run_on_main_thread(lingopop_platform::activate_app)
+        .is_err()
+    {
+        log::warn!("application activation could not be posted");
+    }
     let state = app.state::<ShellState>();
     let _guard = state.window_locks[label].lock().await;
     if let Some(window) = app.get_webview_window(label) {

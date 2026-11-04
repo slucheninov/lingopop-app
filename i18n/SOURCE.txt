@@ -1,1 +1,4 @@
+Catalogs are owned by this repository (i18n/catalogs/{pl,uk,de}.json shared, i18n/windows.json, i18n/macos.json).
+They were seeded once from the macOS Swift app catalog (App/Localizable.xcstrings) at mac commit:
 049acf35e79f841a24a83401074f43d85d132f38
+The repository catalogs are authoritative; scripts/gen-localizations.py generate only adds keys that are missing everywhere and never overwrites a value.

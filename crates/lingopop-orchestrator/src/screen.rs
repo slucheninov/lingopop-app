@@ -19,9 +19,14 @@ use lingopop_core::operation::AIOperation;
 use lingopop_core::provider::ProviderType;
 use lingopop_core::runner::RunRequest;
 use lingopop_core::target_language::resolve_target_language;
-use lingopop_platform::{validate_region, MonitorInfo, Point, WindowHandle};
+use lingopop_platform::{
+    ensure_permission, validate_region, MonitorInfo, PermissionKind, PermissionState, Point,
+    WindowHandle,
+};
 
-use crate::messages::{no_text_found, platform_message, screen_gate_message};
+use crate::messages::{
+    no_text_found, platform_message, screen_gate_message, KEY_SCREEN_RECORDING_RELAUNCH,
+};
 use crate::orchestrator::Orchestrator;
 use crate::providers::{ocr_translate_providers, vision_providers};
 use crate::session::Session;
@@ -33,6 +38,12 @@ struct Prelude {
     cursor: Option<Point>,
     monitors: Option<Vec<MonitorInfo>>,
     target: Option<WindowHandle>,
+    /// Screen Recording, checked before the picker overlay appears.
+    permission: Result<(), PlatformError>,
+    /// Screen Recording was already requested in THIS process (the platform reports `Denied`,
+    /// never `NotDetermined`) and is still missing: the user may have granted it, but macOS shows
+    /// a new grant only after a relaunch. The denied message then carries the relaunch line.
+    relaunch_detail: bool,
 }
 
 impl Orchestrator {
@@ -90,11 +101,29 @@ impl Orchestrator {
     pub(crate) async fn screen_flow(&self, generation: u64) {
         let d = self.deps();
         // 1. Target window, cursor and monitors, before the picker overlay appears.
-        let (foreground, monitors) = (d.platform.foreground.clone(), d.platform.monitors.clone());
+        let (foreground, monitors, permissions, log) = (
+            d.platform.foreground.clone(),
+            d.platform.monitors.clone(),
+            d.platform.permissions.clone(),
+            d.log.clone(),
+        );
         let prelude = d
             .gate
             .run(move || {
+                // Ask once when Screen Recording was never decided, never when denied; the
+                // answer arrives later, so a missing permission ends the flow here.
+                let note = |m: &str| {
+                    if let Some(l) = &log {
+                        l(m);
+                    }
+                };
+                let requested_before =
+                    permissions.state(PermissionKind::ScreenRecording) == PermissionState::Denied;
+                let permission =
+                    ensure_permission(permissions.as_ref(), PermissionKind::ScreenRecording, &note);
                 Ok(Prelude {
+                    relaunch_detail: requested_before && permission.is_err(),
+                    permission,
                     cursor: monitors.cursor_position().ok(),
                     monitors: monitors.monitors().ok(),
                     target: foreground.current(),
@@ -123,6 +152,23 @@ impl Orchestrator {
             if let Some(m) = prelude.monitors {
                 st.monitors = m;
             }
+        }
+        if let Err(e) = prelude.permission {
+            // The first attempt (NotDetermined -> request -> still missing) shows only the denied
+            // message; a retry after that request adds the relaunch line as a detail.
+            let details = if prelude.relaunch_detail {
+                vec![UserMessageView::new(
+                    KEY_SCREEN_RECORDING_RELAUNCH,
+                    Vec::new(),
+                )]
+            } else {
+                Vec::new()
+            };
+            self.present(
+                generation,
+                &PopupViewModel::error(platform_message(&e), details, &[]),
+            );
+            return;
         }
 
         // 2. The region (async UI, cancelled by dropping this future).

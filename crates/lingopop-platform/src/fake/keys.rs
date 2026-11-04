@@ -7,9 +7,11 @@ use lingopop_core::hotkey::Modifier;
 
 use super::clipboard::{FakeClipboard, Mutation};
 use super::log::Event;
+use super::permissions::FakePermissions;
 use super::sleeper::FakeSleeper;
 use crate::error::PlatformError;
 use crate::keys::KeySynth;
+use crate::permissions::{PermissionKind, PermissionState};
 use crate::sleeper::Sleeper;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +48,7 @@ struct State {
     paste_blocked: bool,
     paste_hook: Option<PasteHook>,
     pasted: Vec<Option<String>>,
+    permissions: Option<Arc<FakePermissions>>,
 }
 
 pub struct FakeKeys {
@@ -66,8 +69,24 @@ impl FakeKeys {
                 paste_blocked: false,
                 paste_hook: None,
                 pasted: Vec::new(),
+                permissions: None,
             }),
         })
+    }
+
+    /// Like macOS: while Accessibility is not `Granted`, `send_copy`, `send_paste` and
+    /// `release_modifiers` fail with `PermissionDenied(Accessibility)` (the call is still logged).
+    pub fn require_permission(&self, permissions: Arc<FakePermissions>) {
+        self.state().permissions = Some(permissions);
+    }
+
+    fn check_permission(&self) -> Result<(), PlatformError> {
+        match &self.state().permissions {
+            Some(p) if p.peek(PermissionKind::Accessibility) != PermissionState::Granted => Err(
+                PlatformError::PermissionDenied(PermissionKind::Accessibility),
+            ),
+            _ => Ok(()),
+        }
     }
 
     pub fn on_copy(&self, behavior: CopyBehavior) {
@@ -131,6 +150,7 @@ impl KeySynth for FakeKeys {
 
     fn release_modifiers(&self, modifiers: &[Modifier]) -> Result<(), PlatformError> {
         self.record(KeyCall::ReleaseModifiers(modifiers.to_vec()));
+        self.check_permission()?;
         self.state().held.retain(|m| !modifiers.contains(m));
         Ok(())
     }
@@ -142,6 +162,7 @@ impl KeySynth for FakeKeys {
 
     fn send_copy(&self) -> Result<(), PlatformError> {
         self.record(KeyCall::SendCopy);
+        self.check_permission()?;
         let behavior = self.state().copy.clone();
         let zero = Duration::ZERO;
         match behavior {
@@ -170,6 +191,7 @@ impl KeySynth for FakeKeys {
 
     fn send_paste(&self) -> Result<(), PlatformError> {
         self.record(KeyCall::SendPaste);
+        self.check_permission()?;
         let (blocked, hook) = {
             let s = self.state();
             (s.paste_blocked, s.paste_hook.clone())

@@ -11,6 +11,9 @@ use windows::{
 };
 pub struct WindowsSystem;
 impl SystemInfo for WindowsSystem {
+    fn is_bundle_running(&self, _bundle_id: &str) -> Result<bool, PlatformError> {
+        Ok(false)
+    }
     fn ui_languages(&self) -> Vec<String> {
         let (mut count, mut len) = (0, 0);
         // SAFETY: count/len are writable; null buffer requests the required UTF-16 size.

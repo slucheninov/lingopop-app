@@ -2,6 +2,7 @@
   import type { SettingsPatch, SettingsView, UiPatch } from '../lib/settingsTypes';
   import type { Operation } from '../lib/types';
   import { renderError } from '../lib/ipcError';
+  import { currentHost } from '../lib/bootstrap';
   import { t } from '../lib/i18n';
   import HotkeyRecorder from './HotkeyRecorder.svelte';
   let { view, onPatch }: { view: SettingsView; onPatch: (patch: SettingsPatch, onError?: (key: string) => void) => Promise<boolean>; onUiPatch?: (patch: UiPatch) => Promise<boolean> } = $props();
@@ -22,6 +23,9 @@
   ];
 </script>
 <section>
+  {#if view.platform === 'macos' && view.swiftRunning}
+    <p role="status">{t('Quit the Swift LingoPop to enable shortcuts in LingoPop Preview.')}</p>
+  {/if}
   {#each rows as row}
     <div class="row">
       <span class="label"><span aria-hidden="true">{row.icon}</span> {row.name()}</span>
@@ -34,6 +38,8 @@
         </div>
         {#if errors[row.operation]}
           <p class="error" role="alert">{renderError(errors[row.operation]!)}</p>
+        {:else if view.hotkeyStatus[row.operation] === 'swiftsuspended'}
+          <p>{t('Suspended while Swift LingoPop is running.')}</p>
         {:else if view.hotkeyStatus[row.operation] === 'conflict'}
           <p class="error">{t('This shortcut is already used by another app.')}</p>
         {:else if view.hotkeyStatus[row.operation] === 'invalid'}
@@ -42,7 +48,7 @@
       </div>
     </div>
   {/each}
-  <p class="footnote">{t('Click a shortcut field, then press a key combination. Use Ctrl, Alt or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.')}</p>
+  <p class="footnote">{currentHost() === 'unix' ? t('Click a shortcut field, then press a key combination. Use ⌘, Option, Control or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.') : t('Click a shortcut field, then press a key combination. Use Ctrl, Alt or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.')}</p>
 </section>
 <style>
   section { background:white; border:1px solid #dce0e6; border-radius:8px; padding:4px 14px; }

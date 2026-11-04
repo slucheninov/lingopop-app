@@ -29,6 +29,7 @@ impl SettingsHooks for NoSettingsHooks {
 #[serde(rename_all = "lowercase")]
 pub enum HotkeyStatus {
     Registered,
+    SwiftSuspended,
     Conflict,
     Invalid,
     None,
@@ -55,6 +56,7 @@ pub struct SettingsView {
     pub fallbacks: BTreeMap<ProviderType, ProviderType>,
     pub target_language: String,
     pub hotkeys: BTreeMap<AIOperation, HotkeyView>,
+    pub swift_running: bool,
     pub hotkey_status: BTreeMap<AIOperation, HotkeyStatus>,
     pub launch_at_login: bool,
     pub max_input_chars: u32,
@@ -74,6 +76,8 @@ pub struct SettingsView {
     pub version: &'static str,
     pub latest_version: Option<String>,
     pub providers: Vec<ProviderSummary>,
+    /// `macos` or `windows`: the frontend shows the Permissions section on macOS only.
+    pub platform: &'static str,
 }
 pub fn settings_view(state: &ShellState) -> SettingsView {
     let mut view = settings_view_parts(
@@ -82,6 +86,7 @@ pub fn settings_view(state: &ShellState) -> SettingsView {
         &state.platform.system.ui_languages(),
     );
     view.hotkey_status = state.hotkeys.status();
+    view.swift_running = state.hotkeys.swift_blocked();
     view
 }
 pub fn settings_view_parts(
@@ -110,7 +115,7 @@ pub fn settings_view_parts(
                 HotkeyView {
                     key: h.key.clone(),
                     modifiers: h.modifiers.clone(),
-                    display: h.display_string(),
+                    display: h.display_for(crate::state::HOST),
                 },
             )
         })
@@ -120,6 +125,7 @@ pub fn settings_view_parts(
         fallbacks: s.fallbacks.0,
         target_language: s.target_language,
         hotkeys,
+        swift_running: false,
         hotkey_status: AIOperation::ALL
             .into_iter()
             .map(|op| (op, HotkeyStatus::None))
@@ -144,6 +150,11 @@ pub fn settings_view_parts(
             .latest_version
             .filter(|v| lingopop_core::updates::is_newer(v, lingopop_core::VERSION)),
         providers,
+        platform: if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "windows"
+        },
     }
 }
 #[derive(Deserialize)]
@@ -343,6 +354,7 @@ pub async fn ui_update(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiBootstrap {
+    pub host: &'static str,
     pub language: &'static str,
     pub launched_language: Language,
     pub catalog: &'static HashMap<String, String>,
@@ -350,6 +362,12 @@ pub struct UiBootstrap {
     pub popup_font_size: u32,
     pub initial_tab: Option<String>,
 }
+/// The platform file of the catalogs this build ships to the webview.
+#[cfg(target_os = "macos")]
+pub(crate) const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Macos;
+#[cfg(not(target_os = "macos"))]
+pub(crate) const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Windows;
+
 #[tauri::command]
 pub async fn ui_bootstrap(
     window: tauri::Window,
@@ -357,9 +375,13 @@ pub async fn ui_bootstrap(
 ) -> Result<UiBootstrap, String> {
     let lang = state.ui.language();
     Ok(UiBootstrap {
+        host: match crate::state::HOST {
+            lingopop_core::host::HostKind::Unix => "unix",
+            lingopop_core::host::HostKind::Windows => "windows",
+        },
         language: lang.code(),
         launched_language: lang,
-        catalog: i18n::catalog(lang),
+        catalog: i18n::catalog_for(CATALOG_PLATFORM, lang),
         version: lingopop_core::VERSION,
         popup_font_size: state.ui.prefs().popup_font_size,
         initial_tab: if window.label() == crate::windows::SETTINGS_LABEL {

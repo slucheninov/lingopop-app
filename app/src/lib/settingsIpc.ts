@@ -19,3 +19,5 @@ export const resetUsage = (): Promise<void> => invoke('usage_reset');
 export const checkForUpdates = (): Promise<string | null> => invoke<string | null>('updates_check');
 export const RELEASES_PAGE_URL = 'https://github.com/slucheninov/lingopop-app/releases/latest';
 export const PRIVACY_URL = 'https://github.com/slucheninov/lingopop-app/blob/main/PRIVACY.md';
+
+export const resetProviderSecrets = (provider: Provider): Promise<ProviderState> => invoke<ProviderState>('provider_reset_secrets', { provider });
