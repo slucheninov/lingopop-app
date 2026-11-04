@@ -62,7 +62,7 @@ const MACOS_ONLY_LITERALS = [
   'Request',
   'Open Settings',
   'Re-check',
-  'Screen Recording was granted. Relaunch LingoPop to capture the screen.',
+  'After granting access, fully quit and relaunch LingoPop.',
 ];
 
 function literalsInSrc(): Set<string> {

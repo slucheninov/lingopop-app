@@ -20,8 +20,9 @@ use tauri::State;
 const KEY_UNKNOWN_KIND: &str = "Couldn't update permissions.";
 const KEY_OPEN_FAILED: &str = "Couldn't open System Settings.";
 
-/// Kinds whose System Settings pane was opened in this process and that have not been seen
-/// granted since: the user is on the retry-after-grant path. Process memory only.
+/// Kinds for which a `request` or `open_settings` ran in this process and that have not been seen
+/// granted since: the user may have granted access in System Settings, which macOS shows to this
+/// process only after a relaunch. Process memory only.
 #[derive(Default)]
 pub struct PermissionHints(Mutex<BTreeSet<PermissionKind>>);
 
@@ -37,8 +38,9 @@ impl PermissionHints {
 pub struct PermissionStatus {
     pub kind: &'static str,
     pub state: &'static str,
-    /// Screen Recording only: Settings was opened and this process still does not see the grant,
-    /// which on macOS 13 needs a relaunch of the app.
+    /// Screen Recording only: a request or Settings visit ran in this process and it still does
+    /// not see the grant. The UI shows the conditional line "After granting access, fully quit
+    /// and relaunch LingoPop." (never a claim that access was granted).
     pub relaunch_hint: bool,
 }
 
@@ -67,7 +69,7 @@ pub fn permission_statuses(
 }
 
 /// What the UI calls when the user comes back from System Settings: a fresh state read, which is
-/// also where the retry-after-grant hint is decided. Never prompts.
+/// also where the relaunch line is decided and cleared. Never prompts.
 pub fn refresh_permissions(
     permissions: &dyn Permissions,
     hints: &PermissionHints,
@@ -91,10 +93,13 @@ pub fn request_permission(
     permissions
         .request(kind)
         .map_err(|_| i18n::t_for(CATALOG_PLATFORM, language, KEY_UNKNOWN_KIND, &[]))?;
+    // The native request path counts like a Settings visit; `permission_statuses` drops the
+    // memory again when the new state is Granted.
+    hints.set().insert(kind);
     Ok(permission_statuses(permissions, hints))
 }
 
-/// Opens the privacy pane of `kind_id` and remembers it for the retry-after-grant hint.
+/// Opens the privacy pane of `kind_id` and remembers it for the relaunch line.
 pub fn open_permission_settings(
     permissions: &dyn Permissions,
     hints: &PermissionHints,

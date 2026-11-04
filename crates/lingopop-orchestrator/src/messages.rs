@@ -33,10 +33,12 @@ pub const KEY_SCREEN_TIMEOUT: &str = "Screen capture or text recognition took to
 pub const KEY_PERMISSION_ACCESSIBILITY: &str = "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.";
 /// NEW (macOS only): Screen Recording is missing, so Screen Translate cannot capture.
 pub const KEY_PERMISSION_SCREEN_RECORDING: &str = "LingoPop needs Screen Recording access to translate the screen. Grant it in Settings → Main → Permissions.";
-/// NEW (macOS only): shown beside the Screen Recording controls when a retry after the user
-/// opened System Settings still finds the permission missing in this process.
+/// Mac catalog key (`MainSettingsTab.swift`). Conditional wording, never a claim that access was
+/// granted: macOS reads a new Screen Recording grant only after a relaunch, so this process cannot
+/// tell. Detail line of the denied message on a retry after `request` already ran, and the line
+/// under the Screen Recording row in Settings.
 pub const KEY_SCREEN_RECORDING_RELAUNCH: &str =
-    "Screen Recording was granted. Relaunch LingoPop to capture the screen.";
+    "After granting access, fully quit and relaunch LingoPop.";
 
 fn plain(key: &str) -> UserMessageView {
     UserMessageView::new(key, Vec::new())
@@ -186,7 +188,7 @@ mod tests {
         }
         assert_eq!(
             KEY_SCREEN_RECORDING_RELAUNCH,
-            "Screen Recording was granted. Relaunch LingoPop to capture the screen."
+            "After granting access, fully quit and relaunch LingoPop."
         );
     }
 

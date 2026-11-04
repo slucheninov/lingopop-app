@@ -20,10 +20,13 @@ use lingopop_core::provider::ProviderType;
 use lingopop_core::runner::RunRequest;
 use lingopop_core::target_language::resolve_target_language;
 use lingopop_platform::{
-    ensure_permission, validate_region, MonitorInfo, PermissionKind, Point, WindowHandle,
+    ensure_permission, validate_region, MonitorInfo, PermissionKind, PermissionState, Point,
+    WindowHandle,
 };
 
-use crate::messages::{no_text_found, platform_message, screen_gate_message};
+use crate::messages::{
+    no_text_found, platform_message, screen_gate_message, KEY_SCREEN_RECORDING_RELAUNCH,
+};
 use crate::orchestrator::Orchestrator;
 use crate::providers::{ocr_translate_providers, vision_providers};
 use crate::session::Session;
@@ -37,6 +40,10 @@ struct Prelude {
     target: Option<WindowHandle>,
     /// Screen Recording, checked before the picker overlay appears.
     permission: Result<(), PlatformError>,
+    /// Screen Recording was already requested in THIS process (the platform reports `Denied`,
+    /// never `NotDetermined`) and is still missing: the user may have granted it, but macOS shows
+    /// a new grant only after a relaunch. The denied message then carries the relaunch line.
+    relaunch_detail: bool,
 }
 
 impl Orchestrator {
@@ -110,9 +117,12 @@ impl Orchestrator {
                         l(m);
                     }
                 };
+                let requested_before =
+                    permissions.state(PermissionKind::ScreenRecording) == PermissionState::Denied;
                 let permission =
                     ensure_permission(permissions.as_ref(), PermissionKind::ScreenRecording, &note);
                 Ok(Prelude {
+                    relaunch_detail: requested_before && permission.is_err(),
                     permission,
                     cursor: monitors.cursor_position().ok(),
                     monitors: monitors.monitors().ok(),
@@ -144,7 +154,20 @@ impl Orchestrator {
             }
         }
         if let Err(e) = prelude.permission {
-            self.present_error(generation, platform_message(&e));
+            // The first attempt (NotDetermined -> request -> still missing) shows only the denied
+            // message; a retry after that request adds the relaunch line as a detail.
+            let details = if prelude.relaunch_detail {
+                vec![UserMessageView::new(
+                    KEY_SCREEN_RECORDING_RELAUNCH,
+                    Vec::new(),
+                )]
+            } else {
+                Vec::new()
+            };
+            self.present(
+                generation,
+                &PopupViewModel::error(platform_message(&e), details, &[]),
+            );
             return;
         }
 

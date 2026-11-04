@@ -128,32 +128,73 @@ fn permission_open_settings_failure_is_a_catalog_key_and_sets_no_hint() {
     assert!(!status(&list, SCR).relaunch_hint);
 }
 
-/// Retry after the grant: the user opened System Settings, came back, and this process still
-/// does not see Screen Recording (macOS 13 needs a relaunch) -> the relaunch hint.
+/// Opening the pane without changing anything: the line is conditional wording, and the shell
+/// reports only the flag (the text says "After granting access...", never "was granted").
 #[test]
-fn post_grant_preflight_false_shows_relaunch_hint() {
+fn open_settings_with_no_change_shows_the_conditional_line() {
     let fake = FakePermissions::new();
     fake.set_state(SCR, PermissionState::Denied);
     fake.set_state(ACC, PermissionState::Denied);
     let hints = PermissionHints::default();
 
-    // Nothing opened yet: no hint, even though the permission is missing.
+    // Nothing ran yet: no line, even though the permission is missing.
     assert!(!status(&permission_statuses(fake.as_ref(), &hints), SCR).relaunch_hint);
 
     open_permission_settings(fake.as_ref(), &hints, "screenRecording", Language::En).unwrap();
     open_permission_settings(fake.as_ref(), &hints, "accessibility", Language::En).unwrap();
-    // The user returns; the preflight in this process is still false.
     let list = refresh_permissions(fake.as_ref(), &hints);
     assert!(status(&list, SCR).relaunch_hint);
     // Accessibility is picked up live by the OS: it never needs a relaunch.
     assert!(!status(&list, ACC).relaunch_hint);
     assert_eq!(status(&list, SCR).state, "denied");
+    assert_eq!(fake.requests().len(), 0);
+}
 
-    // Once this process sees the grant, the hint and the memory are gone.
+/// The native request path (system prompt, user grants in the prompt or later) that this process
+/// still reads as missing shows the same line.
+#[test]
+fn request_path_still_not_granted_shows_the_line() {
+    let fake = FakePermissions::new();
+    fake.set_state(SCR, PermissionState::NotDetermined);
+    fake.set_state(ACC, PermissionState::NotDetermined);
+    fake.set_request_outcome(SCR, PermissionState::Denied);
+    fake.set_request_outcome(ACC, PermissionState::Denied);
+    let hints = PermissionHints::default();
+    let list = request_permission(fake.as_ref(), &hints, "screenRecording", Language::En).unwrap();
+    assert!(status(&list, SCR).relaunch_hint);
+    assert!(!status(&list, ACC).relaunch_hint);
+    // Accessibility never gets it, even after its own request.
+    let list = request_permission(fake.as_ref(), &hints, "accessibility", Language::En).unwrap();
+    assert!(!status(&list, ACC).relaunch_hint);
+    assert!(status(&list, SCR).relaunch_hint);
+    assert_eq!(fake.opened().len(), 0);
+}
+
+/// A request the user grants at once never shows the line.
+#[test]
+fn request_granted_at_once_shows_no_line() {
+    let fake = FakePermissions::new();
+    fake.set_state(SCR, PermissionState::NotDetermined);
+    fake.set_request_outcome(SCR, PermissionState::Granted);
+    let hints = PermissionHints::default();
+    let list = request_permission(fake.as_ref(), &hints, "screenRecording", Language::En).unwrap();
+    assert_eq!(status(&list, SCR).state, "granted");
+    assert!(!status(&list, SCR).relaunch_hint);
+}
+
+/// Refresh after the grant is visible clears the line and the memory.
+#[test]
+fn refresh_after_granted_clears_the_line() {
+    let fake = FakePermissions::new();
+    fake.set_state(SCR, PermissionState::Denied);
+    let hints = PermissionHints::default();
+    open_permission_settings(fake.as_ref(), &hints, "screenRecording", Language::En).unwrap();
+    assert!(status(&refresh_permissions(fake.as_ref(), &hints), SCR).relaunch_hint);
+
     fake.set_state(SCR, PermissionState::Granted);
     let list = refresh_permissions(fake.as_ref(), &hints);
     assert!(!status(&list, SCR).relaunch_hint);
-    // A later revocation does not resurrect the hint until Settings is opened again.
+    // A later revocation does not resurrect the line until a request or Settings visit runs again.
     fake.set_state(SCR, PermissionState::Denied);
     assert!(!status(&refresh_permissions(fake.as_ref(), &hints), SCR).relaunch_hint);
 }

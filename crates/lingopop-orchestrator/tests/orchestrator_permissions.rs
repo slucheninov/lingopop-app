@@ -15,6 +15,7 @@ use lingopop_core::time::{ManualClock, Timestamp};
 use lingopop_orchestrator::fake::{FakeConfig, FakePersist, FakePicker, FakePopup, PopupCall};
 use lingopop_orchestrator::messages::{
     KEY_INPUT_BLOCKED, KEY_PERMISSION_ACCESSIBILITY, KEY_PERMISSION_SCREEN_RECORDING,
+    KEY_SCREEN_RECORDING_RELAUNCH,
 };
 use lingopop_orchestrator::{
     Deps, GateTimeouts, Orchestrator, PlatformGate, PopupPhase, PopupViewModel,
@@ -291,6 +292,75 @@ async fn screen_translate_works_after_a_grant_without_a_cached_denial() {
     assert_eq!(r.picker.calls(), 1);
     assert!(!r.capture.regions().is_empty());
     assert!(r.permissions.requests().is_empty());
+}
+
+fn error_details(m: &PopupViewModel) -> Vec<String> {
+    match &m.phase {
+        PopupPhase::Error(e) => e.details.iter().map(|d| d.key.clone()).collect(),
+        other => panic!("not an error: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn post_grant_preflight_false_shows_relaunch_hint() {
+    let r = rig();
+    r.permissions.set_state(SCR, PermissionState::NotDetermined);
+    // Like the native service: a request that does not end Granted leaves `Denied` behind.
+    r.permissions
+        .set_request_outcome(SCR, PermissionState::Denied);
+    // Run 1: asks once, still missing. Only the denied message, no relaunch line.
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let first = last_model(&r);
+    assert_eq!(error_key(&first), KEY_PERMISSION_SCREEN_RECORDING);
+    assert!(error_details(&first).is_empty(), "{first:?}");
+    assert_eq!(r.permissions.request_calls(SCR), 1);
+    // Run 2 (the retry after a grant this process cannot see): no second prompt, and the denied
+    // message carries the relaunch line as a detail.
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let second = last_model(&r);
+    assert_eq!(error_key(&second), KEY_PERMISSION_SCREEN_RECORDING);
+    assert_eq!(
+        error_details(&second),
+        vec![KEY_SCREEN_RECORDING_RELAUNCH.to_string()]
+    );
+    assert_eq!(r.permissions.request_calls(SCR), 1);
+    assert_eq!(r.picker.calls(), 0);
+    assert!(r.capture.regions().is_empty());
+}
+
+#[tokio::test]
+async fn retry_after_the_grant_becomes_visible_captures_without_a_hint() {
+    let r = rig();
+    r.permissions.set_state(SCR, PermissionState::NotDetermined);
+    r.permissions
+        .set_request_outcome(SCR, PermissionState::Denied);
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(error_key(&last_model(&r)), KEY_PERMISSION_SCREEN_RECORDING);
+    // After a relaunch (or once the OS reports it) the service reads Granted.
+    r.permissions.set_state(SCR, PermissionState::Granted);
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(r.picker.calls(), 1);
+    assert_eq!(r.capture.regions().len(), 1);
+    let model = last_model(&r);
+    assert!(
+        !matches!(&model.phase, PopupPhase::Error(_)),
+        "no error and no hint: {model:?}"
+    );
+    assert_eq!(r.permissions.request_calls(SCR), 1);
+}
+
+#[tokio::test]
+async fn accessibility_never_gets_the_relaunch_line() {
+    let r = rig();
+    r.permissions.set_state(ACC, PermissionState::NotDetermined);
+    r.permissions
+        .set_request_outcome(ACC, PermissionState::Denied);
+    r.orch.trigger(AIOperation::Translate).await;
+    r.orch.trigger(AIOperation::Translate).await;
+    let model = last_model(&r);
+    assert_eq!(error_key(&model), KEY_PERMISSION_ACCESSIBILITY);
+    assert!(error_details(&model).is_empty(), "{model:?}");
+    assert_eq!(r.permissions.request_calls(ACC), 1);
 }
 
 #[tokio::test]

@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 
 const calls = (command: string) => vi.mocked(invoke).mock.calls.filter(call => call[0] === command);
-const RELAUNCH_HINT = 'Screen Recording was granted. Relaunch LingoPop to capture the screen.';
+const RELAUNCH_HINT = 'After granting access, fully quit and relaunch LingoPop.';
 const macView = { ...baseView, platform: 'macos' as const };
 const status = (accessibility: PermissionStatus['state'], screenRecording: PermissionStatus['state'], relaunchHint = false): PermissionStatus[] => [
   { kind: 'accessibility', state: accessibility, relaunchHint: false },
@@ -100,6 +100,24 @@ test('relaunch_hint_shows_with_a_relaunch_button_for_screen_recording_only', asy
   expect(row(section, 'Accessibility').queryByText(RELAUNCH_HINT)).toBeNull();
   await fireEvent.click(within(section).getByRole('button', { name: 'Relaunch' }));
   expect(calls('app_relaunch')).toHaveLength(1);
+});
+
+test('the_line_clears_when_a_refresh_observes_the_grant', async () => {
+  const section = await openMac({ permissions_status: status('granted', 'denied', true), permissions_refresh: status('granted', 'granted', false) });
+  expect(await within(section).findByText(RELAUNCH_HINT)).toBeTruthy();
+  // The wording is conditional: it never claims that access was granted.
+  expect(within(section).queryByText(/was granted/)).toBeNull();
+  await fireEvent.click(within(section).getByRole('button', { name: 'Re-check' }));
+  await waitFor(() => expect(within(section).queryByText(RELAUNCH_HINT)).toBeNull());
+  expect(within(section).queryByRole('button', { name: 'Relaunch' })).toBeNull();
+});
+
+test('the_line_appears_after_a_request_that_stays_missing', async () => {
+  const section = await openMac({ permissions_status: status('granted', 'notDetermined'), permissions_request: status('granted', 'denied', true) });
+  await waitFor(() => expect(row(section, 'Screen Recording').getByText('Not requested yet')).toBeTruthy());
+  expect(within(section).queryByText(RELAUNCH_HINT)).toBeNull();
+  await fireEvent.click(row(section, 'Screen Recording').getByRole('button', { name: 'Request' }));
+  expect(await within(section).findByText(RELAUNCH_HINT)).toBeTruthy();
 });
 
 test('no_hint_without_the_flag', async () => {

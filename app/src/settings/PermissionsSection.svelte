@@ -79,7 +79,7 @@
     </div>
     {#if status.relaunchHint}
       <div class="relaunch">
-        <span role="status">{t('Screen Recording was granted. Relaunch LingoPop to capture the screen.')}</span>
+        <span role="status">{t('After granting access, fully quit and relaunch LingoPop.')}</span>
         <button type="button" onclick={onRelaunch}>{t('Relaunch')}</button>
       </div>
     {/if}
