@@ -49,7 +49,8 @@ impl CapturedImage {
 }
 
 pub trait ScreenCapture: Send + Sync {
-    /// Captures `region` (physical virtual-screen pixels). A partly outside region is clipped.
+    /// Captures `region` (desktop coordinates: Windows physical pixels, macOS Quartz points).
+    /// The returned image uses physical backing pixels. A partly outside region is clipped.
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError>;
 }
 

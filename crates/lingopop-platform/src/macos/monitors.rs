@@ -28,7 +28,7 @@ impl Default for MacMonitors {
 impl MacMonitors {
     /// Empty until shell setup initializes it on the main thread. Construction never dispatches.
     pub fn new() -> Self {
-        Self::from_geometry(MacGeometry::new(0, 0.0, vec![]).expect("empty topology"))
+        Self::from_geometry(MacGeometry::empty())
     }
     pub fn from_geometry(geometry: MacGeometry) -> Self {
         Self {

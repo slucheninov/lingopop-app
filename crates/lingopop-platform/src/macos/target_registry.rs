@@ -167,10 +167,11 @@ impl<A: Clone + PartialEq> TargetRegistry<A> {
     pub fn observe(&mut self, now: Duration, identity: AppIdentity, ax: Option<A>) -> WindowHandle {
         self.expire(now);
         let same = |s: &Slot<A>| s.target.identity == identity && s.target.ax == ax;
-        if let Some(index) = self.slots.iter().position(|s| s.as_ref().is_some_and(same)) {
-            let slot = self.slots[index].as_mut().expect("position found it");
-            slot.last_seen = now;
-            return pack(index, slot.generation);
+        for (index, entry) in self.slots.iter_mut().enumerate() {
+            if let Some(slot) = entry.as_mut().filter(|s| same(s)) {
+                slot.last_seen = now;
+                return pack(index, slot.generation);
+            }
         }
         let index = self
             .slots

@@ -106,13 +106,23 @@ pub struct CapturePlan {
     /// Initialize the entire output to opaque black; gaps must never expose unrelated content.
     pub background_rgba: [u8; 4],
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MacGeometry {
     revision: u64,
     primary_height: f64,
     displays: Vec<MacDisplay>,
+    monitors: Vec<MonitorInfo>,
 }
 impl MacGeometry {
+    /// Empty topology: revision 0, no displays.
+    pub fn empty() -> Self {
+        Self {
+            revision: 0,
+            primary_height: 0.0,
+            displays: Vec::new(),
+            monitors: Vec::new(),
+        }
+    }
     pub fn new(
         revision: u64,
         primary_height: f64,
@@ -121,9 +131,16 @@ impl MacGeometry {
         if !primary_height.is_finite() || primary_height < 0.0 {
             return Err(PlatformError::InvalidRegion);
         }
+        let mut monitors = Vec::with_capacity(displays.len());
         for (i, d) in displays.iter().enumerate() {
-            d.desktop_bounds.enclosing_rect()?;
-            d.work_area.contained_rect()?;
+            let bounds = d.desktop_bounds.enclosing_rect()?;
+            let work_area = d.work_area.contained_rect()?;
+            monitors.push(MonitorInfo {
+                bounds,
+                work_area,
+                scale_factor: 1.0,
+                primary: d.primary,
+            });
             if !d.backing_scale.is_finite()
                 || d.backing_scale <= 0.0
                 || displays[..i].iter().any(|p| p.id == d.id)
@@ -135,6 +152,7 @@ impl MacGeometry {
             revision,
             primary_height,
             displays,
+            monitors,
         })
     }
     pub fn topology_revision(&self) -> u64 {
@@ -144,18 +162,7 @@ impl MacGeometry {
         &self.displays
     }
     pub fn monitors(&self) -> Vec<MonitorInfo> {
-        self.displays
-            .iter()
-            .map(|d| MonitorInfo {
-                bounds: d
-                    .desktop_bounds
-                    .enclosing_rect()
-                    .expect("validated display"),
-                work_area: d.work_area.contained_rect().expect("validated work area"),
-                scale_factor: 1.0,
-                primary: d.primary,
-            })
-            .collect()
+        self.monitors.clone()
     }
     pub fn desktop_to_appkit(&self, r: Rect) -> Result<NativeRect, PlatformError> {
         if r.is_empty() {
@@ -318,5 +325,17 @@ impl TopologyCache {
             displays,
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod empty_tests {
+    use super::*;
+    #[test]
+    fn empty_equals_new_empty() {
+        assert_eq!(
+            MacGeometry::empty(),
+            MacGeometry::new(0, 0.0, vec![]).unwrap()
+        );
     }
 }
