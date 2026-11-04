@@ -61,7 +61,9 @@ objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
     "libc",
+    "NSApplication",
     "NSPasteboard",
+    "NSResponder",
     "NSRunningApplication",
     "NSWorkspace",
 ] }
