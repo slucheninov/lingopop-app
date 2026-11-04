@@ -39,6 +39,16 @@
     "pl": "LingoPop nie może jeszcze odczytać zaznaczonego tekstu.",
     "uk": "LingoPop ще не може читати виділений текст."
   },
+  "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.": {
+    "de": "LingoPop benötigt Zugriff auf die Bedienungshilfen, um markierten Text zu lesen. Erteile ihn unter Einstellungen → Allgemein → Berechtigungen.",
+    "pl": "LingoPop potrzebuje dostępu do Dostępności, aby odczytać zaznaczony tekst. Przyznaj go w Ustawienia → Ogólne → Uprawnienia.",
+    "uk": "LingoPop потрібен доступ до «Універсального доступу», щоб читати виділений текст. Надайте його в Налаштування → Основні → Дозволи."
+  },
+  "LingoPop needs Screen Recording access to translate the screen. Grant it in Settings → Main → Permissions.": {
+    "de": "LingoPop benötigt Zugriff auf die Bildschirmaufnahme, um den Bildschirm zu übersetzen. Erteile ihn unter Einstellungen → Allgemein → Berechtigungen.",
+    "pl": "LingoPop potrzebuje dostępu do Nagrywania ekranu, aby tłumaczyć ekran. Przyznaj go w Ustawienia → Ogólne → Uprawnienia.",
+    "uk": "LingoPop потрібен доступ до запису екрана, щоб перекладати екран. Надайте його в Налаштування → Основні → Дозволи."
+  },
   "Open Settings": {
     "de": "Einstellungen öffnen",
     "pl": "Otwórz Ustawienia",
@@ -68,6 +78,11 @@
     "de": "Zugriff auf Bildschirmaufnahme erforderlich",
     "pl": "Wymagane uprawnienia Nagrywania ekranu",
     "uk": "Потрібен дозвіл «Запис екрана»"
+  },
+  "Screen Recording was granted. Relaunch LingoPop to capture the screen.": {
+    "de": "Die Bildschirmaufnahme wurde erlaubt. LingoPop neu starten, um den Bildschirm aufzunehmen.",
+    "pl": "Przyznano uprawnienie Nagrywanie ekranu. Uruchom LingoPop ponownie, aby przechwytywać ekran.",
+    "uk": "Дозвіл на запис екрана надано. Перезапустіть LingoPop, щоб захоплювати екран."
   },
   "Steps:\n1. Open System Settings → Privacy & Security → %@\n2. Make sure LingoPop is in the list and the toggle is ON\n3. Quit LingoPop completely (menu bar → Quit) and relaunch\n\nmacOS only reads the new permission after a full restart of the app.": {
     "de": "Schritte:\n1. Systemeinstellungen → Datenschutz & Sicherheit → %@ öffnen\n2. Sicherstellen, dass LingoPop in der Liste steht und der Schalter EIN ist\n3. LingoPop vollständig beenden (Menüleiste → Beenden) und neu starten\n\nmacOS liest die neue Berechtigung erst nach einem vollständigen Neustart der App.",

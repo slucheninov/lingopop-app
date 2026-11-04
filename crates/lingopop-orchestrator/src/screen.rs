@@ -19,7 +19,9 @@ use lingopop_core::operation::AIOperation;
 use lingopop_core::provider::ProviderType;
 use lingopop_core::runner::RunRequest;
 use lingopop_core::target_language::resolve_target_language;
-use lingopop_platform::{validate_region, MonitorInfo, Point, WindowHandle};
+use lingopop_platform::{
+    ensure_permission, validate_region, MonitorInfo, PermissionKind, Point, WindowHandle,
+};
 
 use crate::messages::{no_text_found, platform_message, screen_gate_message};
 use crate::orchestrator::Orchestrator;
@@ -33,6 +35,8 @@ struct Prelude {
     cursor: Option<Point>,
     monitors: Option<Vec<MonitorInfo>>,
     target: Option<WindowHandle>,
+    /// Screen Recording, checked before the picker overlay appears.
+    permission: Result<(), PlatformError>,
 }
 
 impl Orchestrator {
@@ -90,11 +94,26 @@ impl Orchestrator {
     pub(crate) async fn screen_flow(&self, generation: u64) {
         let d = self.deps();
         // 1. Target window, cursor and monitors, before the picker overlay appears.
-        let (foreground, monitors) = (d.platform.foreground.clone(), d.platform.monitors.clone());
+        let (foreground, monitors, permissions, log) = (
+            d.platform.foreground.clone(),
+            d.platform.monitors.clone(),
+            d.platform.permissions.clone(),
+            d.log.clone(),
+        );
         let prelude = d
             .gate
             .run(move || {
+                // Ask once when Screen Recording was never decided, never when denied; the
+                // answer arrives later, so a missing permission ends the flow here.
+                let note = |m: &str| {
+                    if let Some(l) = &log {
+                        l(m);
+                    }
+                };
+                let permission =
+                    ensure_permission(permissions.as_ref(), PermissionKind::ScreenRecording, &note);
                 Ok(Prelude {
+                    permission,
                     cursor: monitors.cursor_position().ok(),
                     monitors: monitors.monitors().ok(),
                     target: foreground.current(),
@@ -123,6 +142,10 @@ impl Orchestrator {
             if let Some(m) = prelude.monitors {
                 st.monitors = m;
             }
+        }
+        if let Err(e) = prelude.permission {
+            self.present_error(generation, platform_message(&e));
+            return;
         }
 
         // 2. The region (async UI, cancelled by dropping this future).

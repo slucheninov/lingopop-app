@@ -35,6 +35,8 @@ pub enum PlatformError {
     InvalidHotkey,
     #[error("the capture region is empty or outside the screen")]
     InvalidRegion,
+    #[error("{} permission was denied", .0.display_name())]
+    PermissionDenied(crate::permissions::PermissionKind),
     #[error("{api} failed (code {code})")]
     Os { api: &'static str, code: i32 },
 }
@@ -42,6 +44,7 @@ pub enum PlatformError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::permissions::PermissionKind;
 
     #[test]
     fn platform_error_display_and_debug_carry_no_payload() {
@@ -53,11 +56,27 @@ mod tests {
             PlatformError::HotkeyConflict,
             PlatformError::InvalidHotkey,
             PlatformError::InvalidRegion,
+            PlatformError::PermissionDenied(PermissionKind::Accessibility),
+            PlatformError::PermissionDenied(PermissionKind::ScreenRecording),
             PlatformError::Os {
                 api: "CryptProtectData",
                 code: 5,
             },
         ];
+        // Adding a variant without listing it above fails to compile here.
+        for e in &all {
+            match e {
+                PlatformError::Unsupported(_)
+                | PlatformError::InputBlocked
+                | PlatformError::ClipboardBusy
+                | PlatformError::OcrUnavailable
+                | PlatformError::HotkeyConflict
+                | PlatformError::InvalidHotkey
+                | PlatformError::InvalidRegion
+                | PlatformError::PermissionDenied(_)
+                | PlatformError::Os { .. } => {}
+            }
+        }
         for e in &all {
             let shown = e.to_string();
             assert!(!shown.is_empty());

@@ -10,6 +10,7 @@ use crate::foreground::ForegroundWindow;
 use crate::keys::KeySynth;
 use crate::monitors::Monitors;
 use crate::ocr::Ocr;
+use crate::permissions::Permissions;
 use crate::sleeper::Sleeper;
 
 /// Every `Send + Sync` platform service. The hotkey service is NOT part of it: it is `!Send` on
@@ -28,6 +29,8 @@ pub struct Platform {
     pub monitors: Arc<dyn Monitors>,
     pub capture: Arc<dyn ScreenCapture>,
     pub ocr: Arc<dyn Ocr>,
+    /// Privacy permissions (Accessibility, Screen Recording). `AlwaysGranted` on Windows.
+    pub permissions: Arc<dyn Permissions>,
     pub protector: Arc<dyn SecretProtector>,
     pub sleeper: Arc<dyn Sleeper>,
 }
@@ -62,6 +65,7 @@ pub fn native() -> Platform {
         monitors: Arc::new(WindowsMonitors::new()),
         capture: Arc::new(WindowsCapture::new()),
         ocr: Arc::new(WindowsOcr::new()),
+        permissions: Arc::new(crate::permissions::AlwaysGranted),
         protector: Arc::new(WindowsProtector::new()),
         sleeper,
     }
@@ -88,6 +92,7 @@ pub fn native() -> Platform {
         monitors: Arc::new(MacMonitors::new()),
         capture: Arc::new(MacCapture::new()),
         ocr: Arc::new(MacOcr::new()),
+        permissions: Arc::new(crate::permissions::AlwaysGranted),
         protector: Arc::new(MacProtector::new()),
         sleeper: Arc::new(SystemSleeper::new()),
     }

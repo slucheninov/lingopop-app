@@ -9,6 +9,7 @@ mod last_foreground;
 mod log;
 mod monitors;
 mod ocr;
+mod permissions;
 mod sleeper;
 
 pub use capture::FakeCapture;
@@ -20,6 +21,7 @@ pub use last_foreground::FakeLastForeground;
 pub use log::{Event, EventLog, LoggedEvent};
 pub use monitors::FakeMonitors;
 pub use ocr::FakeOcr;
+pub use permissions::FakePermissions;
 pub use sleeper::FakeSleeper;
 
 mod popup_window;

@@ -24,6 +24,7 @@ mod macos;
 pub mod monitors;
 pub mod native;
 pub mod ocr;
+pub mod permissions;
 pub mod popup_window;
 pub mod secrets_aead;
 pub mod selection;
@@ -64,6 +65,9 @@ pub use native::Platform;
 #[cfg(any(windows, target_os = "macos"))]
 pub use native::{native, native_system};
 pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
+pub use permissions::{
+    ensure_permission, AlwaysGranted, PermissionKind, PermissionState, Permissions,
+};
 pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};
 

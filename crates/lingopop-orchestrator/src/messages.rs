@@ -4,7 +4,7 @@
 
 use lingopop_core::errors::TranslationError;
 use lingopop_core::provider::ProviderType;
-use lingopop_platform::PlatformError;
+use lingopop_platform::{PermissionKind, PlatformError};
 
 use crate::gate::GateError;
 use crate::view_model::UserMessageView;
@@ -28,6 +28,15 @@ pub const KEY_OCR_UNAVAILABLE: &str = "No OCR language is installed. Add a langu
 pub const KEY_PLATFORM_GENERIC: &str = "Something went wrong on this PC (%@). Try again.";
 /// NEW (Windows only).
 pub const KEY_SCREEN_TIMEOUT: &str = "Screen capture or text recognition took too long. Try again.";
+
+/// NEW (macOS only): Accessibility is missing, so the selection cannot be read or pasted.
+pub const KEY_PERMISSION_ACCESSIBILITY: &str = "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.";
+/// NEW (macOS only): Screen Recording is missing, so Screen Translate cannot capture.
+pub const KEY_PERMISSION_SCREEN_RECORDING: &str = "LingoPop needs Screen Recording access to translate the screen. Grant it in Settings → Main → Permissions.";
+/// NEW (macOS only): shown beside the Screen Recording controls when a retry after the user
+/// opened System Settings still finds the permission missing in this process.
+pub const KEY_SCREEN_RECORDING_RELAUNCH: &str =
+    "Screen Recording was granted. Relaunch LingoPop to capture the screen.";
 
 fn plain(key: &str) -> UserMessageView {
     UserMessageView::new(key, Vec::new())
@@ -59,6 +68,7 @@ pub fn selection_too_small() -> UserMessageView {
     plain(KEY_SELECTION_TOO_SMALL)
 }
 
+/// `PermissionDenied` maps to the per-kind macOS key (never the Windows administrator text).
 /// `Unsupported`, `Os`, `HotkeyConflict` and `InvalidHotkey` use the generic key with the
 /// error's `Display` (no payload by construction); `InvalidRegion` means the selection is too small.
 pub fn platform_message(e: &PlatformError) -> UserMessageView {
@@ -66,6 +76,12 @@ pub fn platform_message(e: &PlatformError) -> UserMessageView {
         PlatformError::ClipboardBusy => plain(KEY_CLIPBOARD_TIMEOUT),
         PlatformError::InputBlocked => plain(KEY_INPUT_BLOCKED),
         PlatformError::OcrUnavailable => plain(KEY_OCR_UNAVAILABLE),
+        PlatformError::PermissionDenied(PermissionKind::Accessibility) => {
+            plain(KEY_PERMISSION_ACCESSIBILITY)
+        }
+        PlatformError::PermissionDenied(PermissionKind::ScreenRecording) => {
+            plain(KEY_PERMISSION_SCREEN_RECORDING)
+        }
         PlatformError::InvalidRegion => selection_too_small(),
         PlatformError::Unsupported(_)
         | PlatformError::HotkeyConflict
@@ -115,6 +131,62 @@ mod tests {
         assert_eq!(
             platform_message(&PlatformError::InputBlocked),
             plain(KEY_INPUT_BLOCKED)
+        );
+    }
+
+    #[test]
+    fn platform_message_permission_denied_uses_the_per_kind_mac_key() {
+        assert_eq!(
+            platform_message(&PlatformError::PermissionDenied(
+                PermissionKind::Accessibility
+            )),
+            plain(KEY_PERMISSION_ACCESSIBILITY)
+        );
+        assert_eq!(
+            platform_message(&PlatformError::PermissionDenied(
+                PermissionKind::ScreenRecording
+            )),
+            plain(KEY_PERMISSION_SCREEN_RECORDING)
+        );
+        // Mac never shows the Windows UIPI / administrator text for a missing permission.
+        for kind in PermissionKind::ALL {
+            let m = platform_message(&PlatformError::PermissionDenied(kind));
+            assert_ne!(m.key, KEY_INPUT_BLOCKED);
+            assert!(!m.key.to_lowercase().contains("administrator"));
+            assert!(m.args.is_empty());
+        }
+        assert!(KEY_INPUT_BLOCKED.contains("running as administrator"));
+        assert_eq!(
+            gate_message(&GateError::Platform(PlatformError::PermissionDenied(
+                PermissionKind::ScreenRecording
+            ))),
+            plain(KEY_PERMISSION_SCREEN_RECORDING)
+        );
+        assert_eq!(
+            screen_gate_message(&GateError::Platform(PlatformError::PermissionDenied(
+                PermissionKind::ScreenRecording
+            ))),
+            plain(KEY_PERMISSION_SCREEN_RECORDING)
+        );
+    }
+
+    #[test]
+    fn mac_permission_keys_are_translated_on_macos_only() {
+        use lingopop_core::i18n::{lookup_for, CatalogPlatform};
+        use lingopop_core::Language;
+        for key in [
+            KEY_PERMISSION_ACCESSIBILITY,
+            KEY_PERMISSION_SCREEN_RECORDING,
+            KEY_SCREEN_RECORDING_RELAUNCH,
+        ] {
+            for language in [Language::Pl, Language::Uk, Language::De] {
+                assert_ne!(lookup_for(CatalogPlatform::Macos, language, key), key);
+                assert_eq!(lookup_for(CatalogPlatform::Windows, language, key), key);
+            }
+        }
+        assert_eq!(
+            KEY_SCREEN_RECORDING_RELAUNCH,
+            "Screen Recording was granted. Relaunch LingoPop to capture the screen."
         );
     }
 
