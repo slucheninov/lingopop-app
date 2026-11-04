@@ -10,6 +10,7 @@ mod keys;
 mod last_foreground;
 mod monitors;
 mod ocr;
+mod procinfo;
 
 pub use capture::MacCapture;
 pub use clipboard::{MacClipboard, NsPasteboard};

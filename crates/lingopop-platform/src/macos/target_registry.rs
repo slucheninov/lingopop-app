@@ -11,7 +11,8 @@
 //! evicted, expired or reused is rejected instead of silently naming another application.
 //!
 //! # What an entry pins
-//! The process (pid + bundle id + launch date, so a reused pid is a different process) and, where
+//! The process (pid + kernel process start time, plus bundle id and launch date as extra checks,
+//! so a reused pid is a different process) and, where
 //! Accessibility allows it, the focused AX window at capture time. The AX window is best effort:
 //! it is used to raise the captured window before the application is activated, never to refuse
 //! a paste. The rule is: refuse only when the frontmost process is not the captured one, or the
@@ -30,6 +31,12 @@ use crate::foreground::WindowHandle;
 use crate::permissions::PermissionKind;
 use crate::sleeper::Sleeper;
 
+/// How long after a successful `restore` the restored entry is confirmed by PROCESS identity
+/// when the focused AX window cannot be told (see `TargetTracker::observe_frontmost_with`).
+/// Covers `bring_to_front`'s polling (300 ms); short so a later, unrelated capture of the same
+/// application never inherits it.
+pub const CONFIRM_WINDOW: Duration = Duration::from_secs(2);
+
 /// Registry capacity. Beyond it the entry seen longest ago is evicted.
 pub const CAPACITY: usize = 32;
 /// An entry that was not observed in the foreground for this long is expired.
@@ -43,15 +50,21 @@ const _: () = assert!(CAPACITY as u64 <= INDEX_MASK + 1);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppIdentity {
     pub pid: i32,
+    /// Kernel process start time in microseconds since the Unix epoch (`proc_pidinfo`
+    /// `PROC_PIDTBSDINFO`). The identity proper: unlike `launchDate` it exists for every
+    /// process, so a reused pid always shows as a different start. `None` = unreadable.
+    pub process_start: Option<i64>,
     pub bundle_id: Option<String>,
-    /// Launch time in milliseconds since the Apple reference date.
+    /// Launch time in milliseconds since the Apple reference date (LaunchServices only).
     pub launch: Option<i64>,
 }
 
 impl AppIdentity {
-    /// The same running process: equal pid, and bundle id / launch date equal wherever both
-    /// sides know them (an unknown value on one side is not a mismatch). A pid reused by another
-    /// launch differs in `launch` (or `bundle_id`).
+    /// The same running process. Fail safe: the pid AND the process start time must be readable
+    /// on both sides and equal; an unreadable start time on either side is "not the same
+    /// process" (the caller then takes the manual-paste path, never a paste). The bundle id and
+    /// launch date are extra checks: a mismatch where both sides know them rejects, a value one
+    /// side does not have (launchDate exists only for LaunchServices launches) does not.
     pub fn same_process(&self, other: &AppIdentity) -> bool {
         fn compatible<T: PartialEq>(a: &Option<T>, b: &Option<T>) -> bool {
             match (a, b) {
@@ -60,6 +73,7 @@ impl AppIdentity {
             }
         }
         self.pid == other.pid
+            && matches!((self.process_start, other.process_start), (Some(a), Some(b)) if a == b)
             && compatible(&self.bundle_id, &other.bundle_id)
             && compatible(&self.launch, &other.launch)
     }
@@ -144,25 +158,18 @@ impl<A: Clone + PartialEq> TargetRegistry<A> {
     }
 
     /// Records an observation of `identity` (with its focused AX window when known) and returns
-    /// the handle. The same process and a compatible window (equal AX windows, or one side
-    /// unknown) keeps its handle, so `current()` is stable between polls; the observation
-    /// refreshes the entry's lifetime. A different window or a new launch gets a new entry. Full
-    /// registry: the entry seen longest ago is evicted.
+    /// the handle. The same identity and the same AX window (both unknown counts as the same)
+    /// keeps its handle, so `current()` is stable between polls; the observation refreshes the
+    /// entry's lifetime. A different or newly known window gets its own entry: an unknown window
+    /// never resolves to an entry that pins a window, and vice versa (the tracker's restore
+    /// confirmation covers the process-level fallback). Full registry: the entry seen longest
+    /// ago is evicted.
     pub fn observe(&mut self, now: Duration, identity: AppIdentity, ax: Option<A>) -> WindowHandle {
         self.expire(now);
-        let same = |s: &Slot<A>| {
-            s.target.identity == identity
-                && match (&s.target.ax, &ax) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => true,
-                }
-        };
+        let same = |s: &Slot<A>| s.target.identity == identity && s.target.ax == ax;
         if let Some(index) = self.slots.iter().position(|s| s.as_ref().is_some_and(same)) {
             let slot = self.slots[index].as_mut().expect("position found it");
             slot.last_seen = now;
-            if slot.target.ax.is_none() {
-                slot.target.ax = ax;
-            }
             return pack(index, slot.generation);
         }
         let index = self
@@ -191,6 +198,17 @@ impl<A: Clone + PartialEq> TargetRegistry<A> {
         pack(index, generation)
     }
 
+    /// Refreshes the lifetime of the entry a handle names (it was observed again).
+    pub fn touch(&mut self, now: Duration, handle: WindowHandle) {
+        self.expire(now);
+        let (index, generation) = unpack(handle);
+        if let Some(Some(slot)) = self.slots.get_mut(index) {
+            if slot.generation == generation {
+                slot.last_seen = now;
+            }
+        }
+    }
+
     /// The entry a handle names. Unknown slot, wrong generation (evicted / reused) or expired =
     /// `None`. Does not extend the lifetime.
     pub fn get(&mut self, now: Duration, handle: WindowHandle) -> Option<Target<A>> {
@@ -217,6 +235,9 @@ pub struct TargetTracker<P: MacApps> {
     apps: P,
     clock: Arc<dyn Sleeper>,
     registry: Mutex<TargetRegistry<P::Ax>>,
+    /// The entry a successful `restore` just brought back, and until when it may be confirmed
+    /// by process identity.
+    confirm: Mutex<Option<(WindowHandle, Duration)>>,
 }
 
 impl<P: MacApps> TargetTracker<P> {
@@ -225,7 +246,24 @@ impl<P: MacApps> TargetTracker<P> {
             apps,
             clock,
             registry: Mutex::new(TargetRegistry::new()),
+            confirm: Mutex::new(None),
         }
+    }
+
+    fn confirm(&self) -> MutexGuard<'_, Option<(WindowHandle, Duration)>> {
+        self.confirm.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// The frontmost application's identity, without registering anything.
+    pub fn frontmost_identity(&self) -> Option<AppIdentity> {
+        self.apps.frontmost().filter(|f| f.pid > 0)
+    }
+
+    /// `handle` names a live entry of the same process as `identity`.
+    pub fn entry_is_process(&self, handle: WindowHandle, identity: &AppIdentity) -> bool {
+        self.registry()
+            .get(self.clock.now(), handle)
+            .is_some_and(|t| t.identity.same_process(identity))
     }
 
     fn registry(&self) -> MutexGuard<'_, TargetRegistry<P::Ax>> {
@@ -253,7 +291,27 @@ impl<P: MacApps> TargetTracker<P> {
         } else {
             None
         };
-        let handle = self.registry().observe(self.clock.now(), front.clone(), ax);
+        let now = self.clock.now();
+        // Restore confirmation by PROCESS identity. `restore` just raised an entry's window; if
+        // the focused window cannot be read now (or the entry never had one), the frontmost
+        // process being the entry's process is the whole answer. Never applies to an AX window
+        // that is known and different (a failed raise), and never picks another entry.
+        let hint = *self.confirm();
+        if let Some((handle, until)) = hint {
+            if now >= until {
+                *self.confirm() = None;
+            } else {
+                let mut registry = self.registry();
+                let confirmed = registry.get(now, handle).is_some_and(|t| {
+                    front.same_process(&t.identity) && (ax.is_none() || t.ax.is_none())
+                });
+                if confirmed {
+                    registry.touch(now, handle);
+                    return Some((handle, front));
+                }
+            }
+        }
+        let handle = self.registry().observe(now, front.clone(), ax);
         Some((handle, front))
     }
 
@@ -290,6 +348,7 @@ impl<P: MacApps> TargetTracker<P> {
             None
         };
         if self.apps.activate(live.pid, window) {
+            *self.confirm() = Some((handle, self.clock.now() + CONFIRM_WINDOW));
             Ok(())
         } else {
             Err(target_lost())
@@ -343,6 +402,20 @@ impl<P: MacApps> LastExternalTracker<P> {
     }
 
     fn observe_with(&self, with_ax: bool) {
+        if !with_ax {
+            // The poller must not replace a handle that already names this process (it may
+            // carry the AX window an on-demand sample found) with an AX-less one.
+            let Some(front) = self.tracker.frontmost_identity() else {
+                return;
+            };
+            if front.pid == self.own_pid {
+                return;
+            }
+            let last = *self.last.lock().unwrap_or_else(|p| p.into_inner());
+            if last.is_some_and(|h| self.tracker.entry_is_process(h, &front)) {
+                return;
+            }
+        }
         if let Some((handle, front)) = self.tracker.observe_frontmost_with(with_ax) {
             if front.pid != self.own_pid {
                 *self.last.lock().unwrap_or_else(|p| p.into_inner()) = Some(handle);

@@ -50,6 +50,7 @@ fn macos_tray_tracker_remembers_the_external_app_through_the_trait() {
 
     let id = |pid: i32, bundle: &str| AppIdentity {
         pid,
+        process_start: Some(i64::from(pid) * 1_000_000 + 1),
         bundle_id: Some(bundle.into()),
         launch: Some(1),
     };

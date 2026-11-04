@@ -9,6 +9,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use objc2::rc::autoreleasepool;
 use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
 
 use super::ax::{self, AxWindow};
@@ -25,6 +26,8 @@ fn identity(app: &NSRunningApplication) -> Option<AppIdentity> {
     let pid = app.processIdentifier();
     (pid > 0).then(|| AppIdentity {
         pid,
+        // Read fresh on every call: this is what makes a reused pid detectable.
+        process_start: super::procinfo::start_time_micros(pid),
         bundle_id: app.bundleIdentifier().map(|s| s.to_string()),
         launch: app
             .launchDate()
@@ -40,16 +43,20 @@ impl MacApps for SystemApps {
     }
 
     fn frontmost(&self) -> Option<AppIdentity> {
-        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
-        identity(&app)
+        autoreleasepool(|_| {
+            let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+            identity(&app)
+        })
     }
 
     fn running(&self, pid: i32) -> Option<AppIdentity> {
-        let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
-        if app.isTerminated() {
-            return None;
-        }
-        identity(&app)
+        autoreleasepool(|_| {
+            let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+            if app.isTerminated() {
+                return None;
+            }
+            identity(&app)
+        })
     }
 
     fn focused_window(&self, pid: i32) -> Option<AxWindow> {
@@ -57,14 +64,17 @@ impl MacApps for SystemApps {
     }
 
     fn activate(&self, pid: i32, window: Option<&AxWindow>) -> bool {
-        let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
-            return false;
-        };
-        if let Some(window) = window {
-            // Best effort: bring the captured window to the front of its application first.
-            ax::raise(window);
-        }
-        app.activateWithOptions(NSApplicationActivationOptions::empty())
+        autoreleasepool(|_| {
+            let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+            else {
+                return false;
+            };
+            if let Some(window) = window {
+                // Best effort: bring the captured window to the front of its application first.
+                ax::raise(window);
+            }
+            app.activateWithOptions(NSApplicationActivationOptions::empty())
+        })
     }
 }
 

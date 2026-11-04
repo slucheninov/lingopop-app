@@ -27,7 +27,9 @@ fn real_frontmost_app_roundtrips_through_the_registry() {
         Err(PlatformError::PermissionDenied(PermissionKind::Accessibility)) => {}
         Err(other) => panic!("unexpected: {other:?}"),
     }
-    println!("restore: {:?}", fg.restore(handle));
+    // Re-activating the application that is in front right now must succeed (it is the live
+    // process the handle was captured from); an Err here means the identity check is wrong.
+    assert_eq!(fg.restore(handle), Ok(()));
 }
 
 #[test]
@@ -47,8 +49,26 @@ fn handles_that_were_never_issued_are_rejected() {
 #[ignore = "owner-run: touches TCC"]
 fn native_bundle_shares_one_registry_between_foreground_and_tray_tracker() {
     let platform = native();
-    // Whatever the tray tracker remembers must resolve in the foreground service.
-    if let Some(handle) = platform.last_foreground.last_external() {
-        println!("restore: {:?}", platform.foreground.restore(handle));
+    // Precondition: the tray tracker has remembered an external (not LingoPop) target. Run this
+    // with another application in front when starting the test (e.g. from a terminal).
+    let Some(handle) = platform.last_foreground.last_external() else {
+        println!("skipped: the tray tracker remembered no external application");
+        return;
+    };
+    // Whatever the tray tracker remembers must resolve in the foreground service: same registry.
+    match platform.foreground.is_current_target(handle) {
+        // Resolved: true when that app is still in front, false when the user has moved on;
+        // either way the handle is known to the registry.
+        Ok(_) => {}
+        Err(PlatformError::PermissionDenied(PermissionKind::Accessibility)) => {
+            println!("skipped: Accessibility is not granted, the check cannot resolve the handle");
+            return;
+        }
+        Err(other) => panic!("unexpected: {other:?}"),
     }
+    assert_eq!(
+        platform.foreground.restore(handle),
+        Ok(()),
+        "a handle issued by the tray tracker must restore through the foreground service"
+    );
 }

@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use objc2::rc::autoreleasepool;
+
 use super::foreground::{MacForeground, SystemApps};
 use crate::foreground::WindowHandle;
 use crate::last_foreground::LastForeground;
@@ -45,7 +47,9 @@ impl MacLastForeground {
                 .name("lingopop-last-foreground".into())
                 .spawn(move || {
                     while !stop.load(Ordering::Acquire) {
-                        tracker.observe_light();
+                        // A thread without a run loop has no autorelease pool of its own:
+                        // drain what AppKit autoreleased on every iteration.
+                        autoreleasepool(|_| tracker.observe_light());
                         thread::park_timeout(POLL);
                     }
                 })
