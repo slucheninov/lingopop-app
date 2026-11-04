@@ -24,10 +24,25 @@
     "pl": "Nie udało się przechwycić ekranu. Sprawdź, czy przyznano uprawnienie Nagrywanie ekranu.",
     "uk": "Не вдалося захопити екран. Перевірте, чи надано дозвіл на запис екрана."
   },
+  "Couldn't open System Settings.": {
+    "de": "Die Systemeinstellungen konnten nicht geöffnet werden.",
+    "pl": "Nie udało się otworzyć Ustawień systemowych.",
+    "uk": "Не вдалося відкрити Системні налаштування."
+  },
   "Couldn't switch back to the original app, so nothing was replaced. The text is on your clipboard; paste it manually with ⌘V.": {
     "de": "Wechsel zurück zur ursprünglichen App war nicht möglich, daher wurde nichts ersetzt. Der Text liegt in der Zwischenablage und kann manuell mit ⌘V eingesetzt werden.",
     "pl": "Nie udało się wrócić do pierwotnej aplikacji, więc nic nie zostało zamienione. Tekst jest w schowku; wklej go ręcznie za pomocą ⌘V.",
     "uk": "Не вдалося повернутися до початкової програми, тому нічого не замінено. Текст у буфері обміну; вставте його вручну за допомогою ⌘V."
+  },
+  "Couldn't update permissions.": {
+    "de": "Berechtigungen konnten nicht aktualisiert werden.",
+    "pl": "Nie udało się zaktualizować uprawnień.",
+    "uk": "Не вдалося оновити дозволи."
+  },
+  "Denied": {
+    "de": "Verweigert",
+    "pl": "Odmówiono",
+    "uk": "Відхилено"
   },
   "Granted": {
     "de": "Erteilt",
@@ -49,10 +64,20 @@
     "pl": "LingoPop potrzebuje dostępu do Nagrywania ekranu, aby tłumaczyć ekran. Przyznaj go w Ustawienia → Ogólne → Uprawnienia.",
     "uk": "LingoPop потрібен доступ до запису екрана, щоб перекладати екран. Надайте його в Налаштування → Основні → Дозволи."
   },
+  "Not requested yet": {
+    "de": "Noch nicht angefordert",
+    "pl": "Jeszcze nie poproszono",
+    "uk": "Ще не запитано"
+  },
   "Open Settings": {
     "de": "Einstellungen öffnen",
     "pl": "Otwórz Ustawienia",
     "uk": "Відкрити налаштування"
+  },
+  "Permissions": {
+    "de": "Berechtigungen",
+    "pl": "Uprawnienia",
+    "uk": "Дозволи"
   },
   "Re-check": {
     "de": "Erneut prüfen",
@@ -68,6 +93,16 @@
     "de": "Erforderlich für die Bildschirmübersetzung.",
     "pl": "Wymagane do tłumaczenia ekranu.",
     "uk": "Потрібно для перекладу екрана."
+  },
+  "Required to read selected text and paste results.": {
+    "de": "Erforderlich, um markierten Text zu lesen und Ergebnisse einzufügen.",
+    "pl": "Wymagane do odczytu zaznaczonego tekstu i wklejania wyników.",
+    "uk": "Потрібно, щоб читати виділений текст і вставляти результати."
+  },
+  "Restricted by a profile or administrator": {
+    "de": "Durch ein Profil oder einen Administrator eingeschränkt",
+    "pl": "Ograniczone przez profil lub administratora",
+    "uk": "Обмежено профілем або адміністратором"
   },
   "Screen Recording": {
     "de": "Bildschirmaufnahme",

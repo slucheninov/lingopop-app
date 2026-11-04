@@ -74,6 +74,8 @@ pub struct SettingsView {
     pub version: &'static str,
     pub latest_version: Option<String>,
     pub providers: Vec<ProviderSummary>,
+    /// `macos` or `windows`: the frontend shows the Permissions section on macOS only.
+    pub platform: &'static str,
 }
 pub fn settings_view(state: &ShellState) -> SettingsView {
     let mut view = settings_view_parts(
@@ -144,6 +146,11 @@ pub fn settings_view_parts(
             .latest_version
             .filter(|v| lingopop_core::updates::is_newer(v, lingopop_core::VERSION)),
         providers,
+        platform: if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "windows"
+        },
     }
 }
 #[derive(Deserialize)]
@@ -352,9 +359,9 @@ pub struct UiBootstrap {
 }
 /// The platform file of the catalogs this build ships to the webview.
 #[cfg(target_os = "macos")]
-const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Macos;
+pub(crate) const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Macos;
 #[cfg(not(target_os = "macos"))]
-const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Windows;
+pub(crate) const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Windows;
 
 #[tauri::command]
 pub async fn ui_bootstrap(

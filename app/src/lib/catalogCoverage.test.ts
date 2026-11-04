@@ -46,6 +46,25 @@ const WINDOWS_ONLY_LITERALS = [
   'Supports Claude, OpenAI, Gemini, Grok, Google Translate, DeepL, and Microsoft Translator. API keys and provider settings are stored locally, encrypted for your Windows account.',
 ];
 
+// Literals rendered only by macOS-only UI (the Permissions section, shown when the settings view
+// says `platform: "macos"`). They resolve through macos.json only and are not required in
+// windows.json. Same guard as above: each must be a real t() literal, in macos.json, not shared.
+const MACOS_ONLY_LITERALS = [
+  'Accessibility',
+  'Screen Recording',
+  'Permissions',
+  'Required to read selected text and paste results.',
+  'Required for Screen Translate.',
+  'Granted',
+  'Not requested yet',
+  'Denied',
+  'Restricted by a profile or administrator',
+  'Request',
+  'Open Settings',
+  'Re-check',
+  'Screen Recording was granted. Relaunch LingoPop to capture the screen.',
+];
+
 function literalsInSrc(): Set<string> {
   const keys = new Set<string>();
   for (const text of Object.values(sources)) {
@@ -62,9 +81,10 @@ test('every_t_literal_in_src_has_a_translation_on_both_platforms', () => {
   expect(keys.size).toBeGreaterThan(10);
   for (const key of keys) {
     const windowsOnly = WINDOWS_ONLY_LITERALS.includes(key);
+    const macosOnly = MACOS_ONLY_LITERALS.includes(key);
     for (const language of LANGUAGES) {
       const inShared = key in sharedFor(language);
-      if (!inShared && !windowsCatalog[key]?.[language]) missing.push(`windows ${language}: ${key}`);
+      if (!inShared && !macosOnly && !windowsCatalog[key]?.[language]) missing.push(`windows ${language}: ${key}`);
       if (!inShared && !windowsOnly && !macosCatalog[key]?.[language]) {
         missing.push(`macos ${language}: ${key}`);
       }
@@ -78,6 +98,15 @@ test('windows_only_literal_exemptions_are_real_and_not_shared', () => {
   for (const key of WINDOWS_ONLY_LITERALS) {
     expect(keys.has(key), `not a t() literal in src: ${key}`).toBe(true);
     expect(windowsCatalog[key], `not in windows.json: ${key}`).toBeDefined();
+    for (const language of LANGUAGES) expect(key in sharedFor(language)).toBe(false);
+  }
+});
+
+test('macos_only_literal_exemptions_are_real_and_not_shared', () => {
+  const keys = literalsInSrc();
+  for (const key of MACOS_ONLY_LITERALS) {
+    expect(keys.has(key), `not a t() literal in src: ${key}`).toBe(true);
+    expect(macosCatalog[key], `not in macos.json: ${key}`).toBeDefined();
     for (const language of LANGUAGES) expect(key in sharedFor(language)).toBe(false);
   }
 });

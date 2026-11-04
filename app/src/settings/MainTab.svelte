@@ -2,6 +2,7 @@
   import { t } from '../lib/i18n';
   import type { AppLanguage, SettingsPatch, SettingsView, UiPatch } from '../lib/settingsTypes';
   import LanguagePairs from './LanguagePairs.svelte';
+  import PermissionsSection from './PermissionsSection.svelte';
   import Relaunch from './Relaunch.svelte';
   let { view, onPatch, onUiPatch }: { view: SettingsView; onPatch: (patch: SettingsPatch) => Promise<boolean>; onUiPatch: (patch: UiPatch) => Promise<boolean> } = $props();
 
@@ -48,6 +49,7 @@
   function revert(saved: Promise<boolean>, restore: () => void) { void saved.then(ok => { if (!ok) restore(); }); }
 </script>
 <div class="main">
+  {#if view.platform === 'macos'}<PermissionsSection />{/if}
   <section>
     <h3>{t('Target language')}</h3>
     <label class="row switch"><input type="checkbox" role="switch" checked={view.useAutoDetect} onchange={event => { const box = event.currentTarget; revert(onPatch({ field: 'useAutoDetect', value: box.checked }), () => { box.checked = view.useAutoDetect; }); }} /><span>{t('Auto-detect input language')}</span></label>

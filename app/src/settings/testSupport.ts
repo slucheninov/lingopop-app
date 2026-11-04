@@ -7,7 +7,7 @@ export const baseView: SettingsView = {
   activeProvider: 'Google (Free)', fallbacks: {}, targetLanguage: 'English', hotkeys: {}, hotkeyStatus: {},
   launchAtLogin: false, maxInputChars: 0, maxHistoryCount: 20, menuHistoryCount: 5, useAutoDetect: false,
   languagePairs: {}, autoCopyOCR: false, magicPrompt: '', defaultMagicPrompt: 'Default prompt {{targetLanguage}}', quickLanguages: ['English', 'Russian', 'Ukrainian', 'Polish'],
-  popupFontSize: 13, appLanguage: 'system', launchedLanguage: 'en', needsRelaunch: false, version: '0.2.0', latestVersion: null, providers: [],
+  popupFontSize: 13, appLanguage: 'system', launchedLanguage: 'en', needsRelaunch: false, version: '0.2.0', latestVersion: null, providers: [], platform: 'windows',
 };
 export const baseBootstrap: UiBootstrap = {
   language: 'en', launchedLanguage: 'en', catalog: {}, version: '0.0.0', popupFontSize: 13, initialTab: null,
@@ -21,7 +21,7 @@ export function mockIpc(overrides: Record<string, unknown> = {}): void {
   vi.mocked(invoke).mockImplementation(async (command: string, args?: unknown) => {
     const value = table[command];
     if (typeof value === 'function') return (value as (a: unknown) => unknown)(args);
-    if (typeof value === 'string' && command === 'app_relaunch') throw value;
+    if (typeof value === 'string' && (command === 'app_relaunch' || command.startsWith('permissions_'))) throw value;
     if (value instanceof Error) throw value;
     return value;
   });

@@ -61,6 +61,18 @@ export interface SettingsView {
   version: string;
   latestVersion: string | null;
   providers: ProviderSummary[];
+  /** Which OS build this is: the Permissions section is shown on macOS only. */
+  platform: 'macos' | 'windows';
+}
+
+/** Mirrors `permissions_cmds.rs`: fixed ids only. */
+export type PermissionKindId = 'accessibility' | 'screenRecording';
+export type PermissionStateId = 'notDetermined' | 'denied' | 'granted' | 'restricted';
+export interface PermissionStatus {
+  kind: PermissionKindId;
+  state: PermissionStateId;
+  /** Screen Recording only: Settings was opened and this process still does not see the grant. */
+  relaunchHint: boolean;
 }
 
 export type SettingsPatch =

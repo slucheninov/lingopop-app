@@ -7,6 +7,7 @@ mod history_cmds;
 pub mod hotkeys;
 pub mod logging;
 pub mod paths;
+pub mod permissions_cmds;
 pub mod picker;
 pub mod popup_shell;
 pub mod provider_cmds;
@@ -237,6 +238,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         platform,
         hooks,
         settings_write: tokio::sync::Mutex::new(()),
+        permission_hints: Arc::new(permissions_cmds::PermissionHints::default()),
         window_locks: [windows::SETTINGS_LABEL, windows::HISTORY_LABEL]
             .into_iter()
             .map(|label| (label, tokio::sync::Mutex::new(())))
@@ -286,6 +288,10 @@ pub fn run() {
             provider_cmds::provider_save,
             provider_cmds::provider_clear_key,
             hotkeys::hotkeys_suspend,
+            permissions_cmds::permissions_status,
+            permissions_cmds::permissions_refresh,
+            permissions_cmds::permissions_request,
+            permissions_cmds::permissions_open_settings,
             history_cmds::history_list,
             history_cmds::history_remove,
             history_cmds::history_clear,
@@ -318,6 +324,8 @@ pub fn run() {
     });
 }
 
+#[cfg(test)]
+mod permission_tests;
 #[cfg(test)]
 mod task4_tests;
 #[cfg(test)]
