@@ -71,6 +71,15 @@ impl From<SecretsError> for SecretsWriteError {
     }
 }
 impl ShellConfig {
+    pub fn reset_secrets(&self) -> Result<(), SecretsWriteError> {
+        let secrets = self
+            .secrets
+            .as_ref()
+            .ok_or(SecretsWriteError::Unavailable)?;
+        lock(secrets)
+            .reset(&lingopop_core::time::SystemClock)
+            .map_err(Into::into)
+    }
     pub fn update_settings(
         &self,
         f: impl FnOnce(&mut Settings),

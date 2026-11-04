@@ -78,29 +78,45 @@ pub trait KeychainKeyStore: Send + Sync {
 /// Portable protector logic; native Keychain operations are injected.
 pub struct KeyStoreProtector {
     keys: std::sync::Arc<dyn KeychainKeyStore>,
+    key_used: std::sync::atomic::AtomicBool,
 }
 impl KeyStoreProtector {
     pub fn new(keys: std::sync::Arc<dyn KeychainKeyStore>) -> Self {
-        Self { keys }
+        Self {
+            keys,
+            key_used: std::sync::atomic::AtomicBool::new(false),
+        }
     }
     pub fn regenerate_key(&self) -> Result<(), ProtectError> {
         self.keys.delete()?;
         self.keys.insert_if_absent(SecretKey::generate()?)?;
+        self.key_used
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 }
 impl lingopop_core::secrets::SecretProtector for KeyStoreProtector {
+    fn reset_key(&self) -> Result<(), ProtectError> {
+        self.regenerate_key()
+    }
     fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, ProtectError> {
         let key = match self.keys.load()? {
             Some(key) => key,
+            None if self.key_used.load(std::sync::atomic::Ordering::SeqCst) => {
+                return Err(ProtectError::KeyMissing)
+            }
             None => self.keys.insert_if_absent(SecretKey::generate()?)?,
         };
+        self.key_used
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         seal(&key, plain)
     }
     fn unprotect(&self, bytes: &[u8]) -> Result<Vec<u8>, ProtectError> {
         if bytes.len() < 32 || !bytes.starts_with(MAGIC) {
             return Err(ProtectError::Invalid);
         }
+        self.key_used
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         let key = self.keys.load()?.ok_or(ProtectError::KeyMissing)?;
         open(&key, bytes)
     }

@@ -57,7 +57,7 @@ impl KeychainKeyStore for LoginKeyStore {
         let status = unsafe {
             let pair =
                 |name: CFStringRef, value: CFType| (CFString::wrap_under_get_rule(name), value);
-            let pairs = [
+            let mut pairs = vec![
                 pair(
                     kSecClass,
                     CFString::wrap_under_get_rule(kSecClassGenericPassword).into_CFType(),
@@ -82,7 +82,16 @@ impl KeychainKeyStore for LoginKeyStore {
                 ),
             ];
             let dict = CFDictionary::from_CFType_pairs(&pairs);
-            SecItemAdd(dict.as_concrete_TypeRef(), std::ptr::null_mut())
+            let status = SecItemAdd(dict.as_concrete_TypeRef(), std::ptr::null_mut());
+            if status == -50 {
+                // SecItem.h documents limited accessibility support in the file keychain.
+                // Retry only errSecParam without that attribute; synchronizable=false stays.
+                pairs.remove(4);
+                let dict = CFDictionary::from_CFType_pairs(&pairs);
+                SecItemAdd(dict.as_concrete_TypeRef(), std::ptr::null_mut())
+            } else {
+                status
+            }
         };
         match status {
             0 => Ok(key),

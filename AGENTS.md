@@ -8,6 +8,8 @@ LingoPop: a tray / menu-bar AI translator (translate, fix grammar, rewrite, expl
 
 ## Layout
 
+- Task 7 recovery: core `SecretStore::reset` quarantines first, calls `SecretProtector::reset_key`, then clears/unlocks memory; failures stay locked. KeyStoreProtector / MacProtector delete and regenerate the key only here. Shell `state.rs::reset_secrets` and `provider_cmds.rs::provider_reset_secrets` run under settings_write with blocking Keychain work off the async executor and emit committed settings. `settingsIpc.ts` exposes the command; shared `ProviderForm.svelte` shows confirmation (Cancel focused) only for secretsUnavailable, clears drafts after reset, and uses shared catalog reset/error keys.
+
 - `crates/lingopop-platform/src/macos/{keychain,secrets}.rs` - legacy Keychain atomic add/load/delete, non-synchronizable generic password `app.lingopop.tauri.macos` / `secrets-key-v1`, requested AfterFirstUnlockThisDeviceOnly; MacProtector is always selected by native(). Preview ad-hoc signature changes may require a Keychain prompt or re-grant. Portable injected key-store protector lives in `secrets_aead.rs`; native tests are owner-run only.
 - `app/src-tauri/tauri.macos.conf.json` - automatically merged Mac identity `app.lingopop.tauri.macos`, product `LingoPop Preview`; shell `paths.rs` uses `~/Library/Application Support/LingoPop-Tauri`, never imports LingoPop-dev.
 

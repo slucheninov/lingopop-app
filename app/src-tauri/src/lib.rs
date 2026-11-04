@@ -280,6 +280,7 @@ pub fn run() {
             settings_cmds::ui_update,
             settings_cmds::ui_bootstrap,
             settings_cmds::open_url,
+            provider_cmds::provider_reset_secrets,
             provider_cmds::provider_state,
             provider_cmds::provider_validate,
             provider_cmds::provider_save,

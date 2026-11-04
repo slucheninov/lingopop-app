@@ -215,3 +215,20 @@ pub async fn provider_clear_key(
     result.map_err(|key| i18n::t(state.ui.language(), key, &[]))?;
     Ok(provider_state_of(&state.config, provider))
 }
+
+/// Called only after the settings UI confirms losing all stored provider credentials.
+#[tauri::command]
+pub async fn provider_reset_secrets(
+    app: tauri::AppHandle,
+    state: State<'_, ShellState>,
+    provider: ProviderType,
+) -> Result<ProviderState, String> {
+    let _write = state.settings_write.lock().await;
+    let config = state.config.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || config.reset_secrets()).await;
+    let _ = app.emit("settings://changed", &settings_view(&state));
+    if !matches!(result, Ok(Ok(()))) {
+        return Err("Couldn't reset stored secrets.".into());
+    }
+    Ok(provider_state_of(&state.config, provider))
+}

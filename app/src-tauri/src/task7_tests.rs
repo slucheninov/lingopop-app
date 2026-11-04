@@ -312,3 +312,59 @@ fn provider_error_keys_are_translated_in_every_catalog() {
         }
     }
 }
+
+#[test]
+fn task7_locked_secrets_reset_restores_provider_writes() {
+    use lingopop_core::secrets::SecretStore;
+    struct Recoverable(std::sync::atomic::AtomicBool);
+    impl SecretProtector for Recoverable {
+        fn protect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Ok(d.to_vec())
+        }
+        fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+                Ok(d.to_vec())
+            } else {
+                Err(ProtectError::Unavailable)
+            }
+        }
+        fn reset_key(&self) -> Result<(), ProtectError> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secrets.dat");
+    std::fs::write(&path, b"existing ciphertext").unwrap();
+    let mut bundle = platform();
+    bundle.protector = Arc::new(Recoverable(Default::default()));
+    let (config, _, _) = load(&DataPaths::new(dir.path()), &bundle, Arc::new(SystemClock));
+    assert!(provider_state_of(&config, ProviderType::Claude).secrets_unavailable);
+    config.reset_secrets().unwrap();
+    assert!(!provider_state_of(&config, ProviderType::Claude).secrets_unavailable);
+    save_draft(
+        &config,
+        ProviderType::Claude,
+        &draft("new sentinel", "https://x"),
+    )
+    .unwrap();
+    assert!(config.has_api_key(ProviderType::Claude));
+    let _ = SecretStore::open(path, bundle.protector, Arc::new(SystemClock)).unwrap();
+}
+
+#[test]
+fn task7_platform_identity_is_separate_and_windows_unchanged() {
+    let base: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let mac: serde_json::Value =
+        serde_json::from_str(include_str!("../tauri.macos.conf.json")).unwrap();
+    assert_eq!(base["identifier"], "app.lingopop.windows");
+    assert_eq!(base["productName"], "LingoPop");
+    assert_eq!(mac["identifier"], "app.lingopop.tauri.macos");
+    assert_eq!(mac["productName"], "LingoPop Preview");
+    let path = crate::paths::data_dir_from(Some("home".into()));
+    assert!(path.ends_with(if cfg!(windows) {
+        "LingoPop"
+    } else {
+        "Library/Application Support/LingoPop-Tauri"
+    }));
+}

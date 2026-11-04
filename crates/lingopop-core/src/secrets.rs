@@ -7,8 +7,8 @@
 //! `providerSettings.v1` holding a JSON string
 //! `{"version":1,"providers":{"<raw>":{"baseURL":...,"model":...,...}}}`.
 //! Unknown entries survive a rewrite. The macOS quarantine marker and migration
-//! machinery is not ported: a file that cannot be read is moved aside and the
-//! store starts empty, so the user re-enters keys.
+//! machinery is not ported. Invalid data is quarantined; unavailable or missing
+//! protection keys lock the store without changing its file.
 //!
 //! Security: secret values are never put into error text or `Debug` output.
 //! (`decode_payload` returns the plain map, so do not `{:?}` its result.)
@@ -103,6 +103,10 @@ pub enum ProtectError {
 
 /// Seals and opens the plaintext payload (Windows DPAPI in Phase 3).
 pub trait SecretProtector: Send + Sync {
+    /// Explicit user reset only; protectors without a separate key need no action.
+    fn reset_key(&self) -> Result<(), ProtectError> {
+        Ok(())
+    }
     fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, ProtectError>;
     fn unprotect(&self, data: &[u8]) -> Result<Vec<u8>, ProtectError>;
 }
@@ -139,8 +143,8 @@ impl std::fmt::Debug for SecretStore {
 impl SecretStore {
     /// Loads the file without writing. No file or a zero-byte file is an empty
     /// store (`Missing`). A file that `unprotect` rejects, or whose plaintext is
-    /// not a flat string map (any size), is moved aside with `quarantine` and the
-    /// store starts empty (`CorruptBackedUp`).
+    /// not a flat string map (any size), is quarantined (`CorruptBackedUp`).
+    /// Unavailable or missing keys instead yield a read-only `Locked` store.
     pub fn open(
         path: PathBuf,
         protector: Arc<dyn SecretProtector>,
@@ -173,11 +177,27 @@ impl SecretStore {
         ))
     }
 
+    /// Explicit destructive recovery. Quarantine first, then replace the key. A failure
+    /// leaves this store locked, including when the file has already been moved aside.
+    pub fn reset(&mut self, clock: &dyn Clock) -> Result<(), SecretsError> {
+        self.locked = true;
+        if read_optional(&self.path)?.is_some() {
+            quarantine(&self.path, clock.now())?;
+        }
+        self.protector.reset_key()?;
+        self.entries.clear();
+        self.locked = false;
+        Ok(())
+    }
+
     pub fn is_locked(&self) -> bool {
         self.locked
     }
 
     pub fn api_key(&self, provider: ProviderType) -> Option<&str> {
+        if self.locked {
+            return None;
+        }
         self.entries
             .get(&api_key_entry(provider))
             .map(String::as_str)
@@ -206,6 +226,9 @@ impl SecretStore {
     }
 
     pub fn provider_settings(&self) -> ProviderSettingsState {
+        if self.locked {
+            return ProviderSettingsState::Absent;
+        }
         provider_settings_in(&self.entries)
     }
 
@@ -256,9 +279,7 @@ mod tests {
         }
 
         fn unprotect(&self, data: &[u8]) -> Result<Vec<u8>, ProtectError> {
-            let body = data
-                .strip_prefix(PREFIX)
-                .ok_or_else(|| ProtectError::Invalid)?;
+            let body = data.strip_prefix(PREFIX).ok_or(ProtectError::Invalid)?;
             Ok(body.iter().map(|b| b ^ 0x5A).collect())
         }
     }
