@@ -102,7 +102,7 @@ async fn gate_times_out_long_job_and_stays_locked_until_it_finishes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn gate_panic_is_reported_and_releases_lock() {
-    let g = gate(50, 150);
+    let g = gate(50, 2000); // the panic hook and unwind can exceed 150 ms on a cold Windows runner
     let r: Result<(), _> = g.run(|| panic!("boom")).await;
     assert_eq!(r, Err(GateError::Panicked));
     assert_eq!(g.run(|| Ok(1)).await, Ok(1));
