@@ -405,3 +405,56 @@ fn swift_observer_updates_registrations_without_a_resume_or_settings_change() {
     }
     observer.abort();
 }
+
+#[tokio::test]
+async fn unchanged_settings_blur_does_not_dirty_or_reregister_hotkeys() {
+    let (registry, _, fake) = swift_rig(Ok(false)).await;
+    crate::windows::on_settings_window_event(&registry, &tauri::WindowEvent::Focused(false));
+    assert!(!registry.inner.lock().unwrap().dirty);
+    // Apply the unchanged query result on the event-loop test thread.
+    registry.query_swift(false).await;
+    assert_eq!(fake.registered_count(), 2);
+    let changes = Arc::new(AtomicUsize::new(0));
+    let count = changes.clone();
+    let mut registry = registry;
+    registry.on_change = Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+    });
+    registry.query_swift(false).await;
+    assert_eq!(changes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn stale_suspend_post_cannot_register_using_cached_swift_state() {
+    let (mut registry, _) = rig();
+    let fake = FakeHotkeyService::new();
+    install_service_for_tests(Box::new(fake.clone()));
+    registry.source = Some(crate::swift_source::SwiftSource::new(Arc::new(
+        lingopop_platform::fake::FakeSystem::new(vec![]),
+    )));
+    {
+        let mut state = registry.inner.lock().unwrap();
+        state.wanted = wanted();
+        state.swift_blocked = false;
+        state.suspended = false;
+        state.dirty = true;
+    }
+    // A forced resume query has started, but its result has not reached MainThread.
+    registry.next_revision();
+    // This is a delayed no-query post from the preceding suspend.
+    registry.post_reconcile(None);
+    assert_eq!(fake.registered_count(), 0);
+}
+
+#[tokio::test]
+async fn lookup_drops_hotkeys_while_swift_is_blocked() {
+    let (registry, system, _) = swift_rig(Ok(false)).await;
+    let id = *registry.inner.lock().unwrap().by_id.keys().next().unwrap();
+    assert!(registry.lookup(id).is_some());
+    // Cover lookup's own gate before reconciliation removes the old active map.
+    registry.inner.lock().unwrap().swift_blocked = true;
+    assert_eq!(registry.lookup(id), None);
+    system.set_bundle_running(Ok(true));
+    registry.refresh_swift().await;
+    assert_eq!(registry.lookup(id), None);
+}

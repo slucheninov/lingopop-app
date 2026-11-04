@@ -63,7 +63,10 @@ impl HotkeyRegistry {
     pub fn with_swift_source(mut self, source: crate::swift_source::SwiftSource) -> Self {
         self.source = Some(source);
         {
-            let mut state = self.inner.lock().unwrap();
+            let mut state = self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.swift_blocked = true;
             state.dirty = true;
         }
@@ -87,7 +90,10 @@ impl HotkeyRegistry {
     }
     fn next_revision(&self) -> u64 {
         {
-            let mut state = self.inner.lock().unwrap();
+            let mut state = self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.revision += 1;
             state.revision
         }
@@ -96,13 +102,25 @@ impl HotkeyRegistry {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let blocked = tauri::async_runtime::spawn_blocking(move || source.is_running())
-            .await
-            .map_or(true, |result| result.unwrap_or(true));
+        let blocked = match tauri::async_runtime::spawn_blocking(move || source.is_running()).await
+        {
+            Ok(Ok(running)) => running,
+            Ok(Err(error)) => {
+                log::warn!("swift source query failed: {error}");
+                true
+            }
+            Err(_) => {
+                log::warn!("swift source query panicked");
+                true
+            }
+        };
         self.post_reconcile(Some((revision, blocked, force)));
     }
     pub fn swift_blocked(&self) -> bool {
-        self.inner.lock().unwrap().swift_blocked
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .swift_blocked
     }
     pub fn status(&self) -> BTreeMap<AIOperation, HotkeyStatus> {
         self.inner
@@ -137,7 +155,7 @@ impl HotkeyRegistry {
         }
     }
     pub fn suspend(&self, suspended: bool) {
-        {
+        let changed = {
             let mut state = self
                 .inner
                 .lock()
@@ -145,20 +163,34 @@ impl HotkeyRegistry {
             if state.suspended == suspended && (suspended || self.source.is_none()) {
                 return;
             }
+            let changed = state.suspended != suspended;
             state.suspended = suspended;
-            state.dirty = true;
-        }
-        self.reconcile();
+            state.dirty |= changed;
+            changed
+        };
+        self.reconcile_with_force(changed);
     }
     fn reconcile(&self) {
-        if self.source.is_some() && !self.inner.lock().unwrap().suspended {
+        self.reconcile_with_force(true);
+    }
+    fn reconcile_with_force(&self, force: bool) {
+        if self.source.is_some()
+            && !self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .suspended
+        {
             let registry = self.clone();
             let revision = self.next_revision();
             tauri::async_runtime::spawn(async move {
-                registry.query_swift_at(revision, true).await;
+                registry.query_swift_at(revision, force).await;
             });
         } else {
-            self.inner.lock().unwrap().revision += 1;
+            self.inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .revision += 1;
             self.post_reconcile(None);
         }
     }
@@ -172,6 +204,11 @@ impl HotkeyRegistry {
                     .inner
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
+                // A delayed suspend post may run after resume requested a fresh query.
+                // Only a query result may register when a Swift source is installed.
+                if query.is_none() && registry.source.is_some() && !state.suspended {
+                    return;
+                }
                 if let Some((revision, blocked, force)) = query {
                     if revision != state.revision {
                         return;

@@ -6,7 +6,7 @@ use crate::{
     windows,
 };
 use lingopop_core::{
-    i18n, languages, operation::AIOperation, settings::Settings, ui_prefs::Language,
+    host::HostKind, i18n, languages, operation::AIOperation, settings::Settings, ui_prefs::Language,
 };
 use lingopop_orchestrator::{ConfigSource, StatusSink, TrayStatus, TriggerSource};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -24,20 +24,23 @@ pub(crate) enum Frame {
 pub(crate) trait IconSink: Send + Sync {
     fn set_icon(&self, frame: Frame);
 }
-// The synchronous sink only enqueues. The dispatcher posts to the main thread with no
-// orchestrator or icon mutex held; FIFO preserves the order of committed transitions.
-struct NativeIcon(tokio::sync::mpsc::UnboundedSender<Frame>);
+// On Windows the synchronous sink enqueues; its dispatcher posts outside locks in FIFO order.
+// Mac keeps the initial template and installs no status-frame dispatcher.
+struct NativeIcon {
+    #[cfg(not(target_os = "macos"))]
+    tx: tokio::sync::mpsc::UnboundedSender<Frame>,
+}
 impl NativeIcon {
+    #[cfg(target_os = "macos")]
+    fn new(_app: AppHandle, _tray: TrayIcon) -> Self {
+        // Keep the template installed by TrayIconBuilder. Plain set_icon clears its flag.
+        Self {}
+    }
+    #[cfg(not(target_os = "macos"))]
     fn new(app: AppHandle, tray: TrayIcon) -> Self {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         tauri::async_runtime::spawn(async move {
             while let Some(frame) = rx.recv().await {
-                #[cfg(target_os = "macos")]
-                let bytes: &'static [u8] = {
-                    let _ = frame;
-                    include_bytes!("../icons/tray/mac-template.png")
-                };
-                #[cfg(not(target_os = "macos"))]
                 let bytes: &'static [u8] = match frame {
                     Frame::Idle => include_bytes!("../icons/tray/idle.png"),
                     Frame::Working1 => include_bytes!("../icons/tray/working-1.png"),
@@ -60,12 +63,15 @@ impl NativeIcon {
                 }
             }
         });
-        Self(tx)
+        Self { tx }
     }
 }
 impl IconSink for NativeIcon {
     fn set_icon(&self, frame: Frame) {
-        let _ = self.0.send(frame);
+        #[cfg(not(target_os = "macos"))]
+        let _ = self.tx.send(frame);
+        #[cfg(target_os = "macos")]
+        let _ = frame;
     }
 }
 struct StatusState {
@@ -74,12 +80,17 @@ struct StatusState {
     task: Option<tokio::task::JoinHandle<()>>,
 }
 struct Icons {
+    host: HostKind,
     state: Mutex<StatusState>,
     sink: Arc<dyn IconSink>,
 }
 impl Icons {
     fn new(sink: Arc<dyn IconSink>) -> Arc<Self> {
+        Self::for_host(sink, crate::state::HOST)
+    }
+    fn for_host(sink: Arc<dyn IconSink>, host: HostKind) -> Arc<Self> {
         Arc::new(Self {
+            host,
             state: Mutex::new(StatusState {
                 current: TrayStatus::Idle,
                 generation: 0,
@@ -89,6 +100,10 @@ impl Icons {
         })
     }
     fn set(self: &Arc<Self>, status: TrayStatus) {
+        // Mac uses a static template: no dispatch, redraw or animation timer.
+        if self.host == HostKind::Unix {
+            return;
+        }
         let mut st = lock(&self.state);
         if status == TrayStatus::Idle && st.current == TrayStatus::Idle && st.task.is_none() {
             return;
@@ -380,11 +395,23 @@ mod tests {
     }
     fn rig() -> (Arc<Icons>, Arc<Recording>) {
         let sink = Arc::new(Recording::default());
-        (Icons::new(sink.clone()), sink)
+        (Icons::for_host(sink.clone(), HostKind::Windows), sink)
     }
     async fn advance(ms: u64) {
         tokio::time::advance(Duration::from_millis(ms)).await;
         tokio::task::yield_now().await;
+    }
+    #[tokio::test(start_paused = true)]
+    async fn mac_status_changes_never_dispatch_or_start_animation() {
+        let sink = Arc::new(Recording::default());
+        let icons = Icons::for_host(sink.clone(), HostKind::Unix);
+        for status in [TrayStatus::Working, TrayStatus::Error, TrayStatus::Idle] {
+            icons.set(status);
+            tokio::task::yield_now().await;
+            advance(5000).await;
+        }
+        assert!(sink.0.lock().unwrap().is_empty());
+        assert!(icons.state.lock().unwrap().task.is_none());
     }
     #[tokio::test(start_paused = true)]
     async fn repeated_idle_sends_no_frames() {
