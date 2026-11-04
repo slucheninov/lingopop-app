@@ -37,3 +37,35 @@ fn fake_returns_the_scripted_window_and_counts_calls() {
     assert_eq!(fake.last_external(), None);
     assert_eq!(fake.calls(), 2);
 }
+
+#[test]
+fn macos_tray_tracker_remembers_the_external_app_through_the_trait() {
+    // The same `LastForeground` seam the Windows hook tracker fills: our own windows never
+    // become the remembered target, a vanished application is forgotten.
+    use lingopop_platform::fake::FakeSleeper;
+    use lingopop_platform::macos_targets::{
+        AppIdentity, FakeApps, LastExternalTracker, TargetTracker,
+    };
+    use std::sync::Arc;
+
+    let id = |pid: i32, bundle: &str| AppIdentity {
+        pid,
+        bundle_id: Some(bundle.into()),
+        launch: Some(1),
+    };
+    let apps = FakeApps::new();
+    let tracker = Arc::new(TargetTracker::new(
+        apps.clone(),
+        Arc::new(FakeSleeper::new()),
+    ));
+    let last = LastExternalTracker::new(tracker.clone(), 1);
+    let tray: &dyn LastForeground = &last;
+    assert_eq!(tray.last_external(), None);
+    apps.set_frontmost(id(300, "com.example.Editor"));
+    let remembered = tray.last_external().unwrap();
+    apps.set_frontmost(id(1, "app.lingopop.tauri.macos"));
+    assert_eq!(tray.last_external(), Some(remembered));
+    assert_eq!(tracker.restore(remembered), Ok(()));
+    apps.quit(300);
+    assert_eq!(tray.last_external(), None);
+}

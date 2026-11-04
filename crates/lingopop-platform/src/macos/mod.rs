@@ -2,6 +2,7 @@
 //! Every `unsafe` block of the crate's macOS code lives under this module and
 //! carries a `// SAFETY:` comment.
 
+mod ax;
 mod capture;
 mod clipboard;
 mod foreground;

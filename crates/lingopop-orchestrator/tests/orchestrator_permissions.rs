@@ -15,7 +15,7 @@ use lingopop_core::time::{ManualClock, Timestamp};
 use lingopop_orchestrator::fake::{FakeConfig, FakePersist, FakePicker, FakePopup, PopupCall};
 use lingopop_orchestrator::messages::{
     KEY_INPUT_BLOCKED, KEY_PERMISSION_ACCESSIBILITY, KEY_PERMISSION_SCREEN_RECORDING,
-    KEY_SCREEN_RECORDING_RELAUNCH,
+    KEY_REPLACE_NEEDS_ACCESSIBILITY, KEY_SCREEN_RECORDING_RELAUNCH,
 };
 use lingopop_orchestrator::{
     Deps, GateTimeouts, Orchestrator, PlatformGate, PopupPhase, PopupViewModel,
@@ -55,6 +55,7 @@ struct Rig {
     permissions: Arc<FakePermissions>,
     clip: Arc<FakeClipboard>,
     keys: Arc<FakeKeys>,
+    fg: Arc<FakeForeground>,
     capture: Arc<FakeCapture>,
     /// What the capture service itself sees (it re-checks, like macOS does at capture time).
     capture_permissions: Arc<FakePermissions>,
@@ -80,6 +81,7 @@ fn rig() -> Rig {
         scale_factor: 1.0,
         primary: true,
     }];
+    let fg = FakeForeground::new(Some(WindowHandle(7)));
     let platform = Platform {
         overlay: Arc::new(lingopop_platform::fake::FakeOverlay::new(Ok(None))),
         system: Arc::new(lingopop_platform::fake::FakeSystem::new(vec![])),
@@ -88,7 +90,7 @@ fn rig() -> Rig {
         dismiss: Arc::new(FakeDismissWatcher::default()),
         clipboard: clip.clone(),
         keys: keys.clone(),
-        foreground: FakeForeground::new(Some(WindowHandle(7))),
+        foreground: fg.clone(),
         last_foreground: FakeLastForeground::new(None),
         monitors: Arc::new(FakeMonitors::new(Point { x: 5, y: 6 }, monitors)),
         capture: capture.clone(),
@@ -139,6 +141,7 @@ fn rig() -> Rig {
         permissions,
         clip,
         keys,
+        fg,
         capture,
         capture_permissions,
         picker,
@@ -402,6 +405,44 @@ async fn permission_logs_are_fixed_text_without_user_data() {
 }
 
 #[tokio::test]
+async fn revoked_accessibility_never_pastes() {
+    // Replace after Accessibility was revoked: the foreground look and the key synthesizer both
+    // see the revocation. The paste is never attempted, the user's clipboard is intact, the
+    // result stays on screen and the notice is the Replace-specific sentence (not the
+    // "read selected text" one).
+    let r = rig();
+    r.orch.trigger(AIOperation::Translate).await;
+    assert!(is_result(&last_model(&r)));
+    let revoked = FakePermissions::new();
+    revoked.set_state(ACC, PermissionState::Denied);
+    r.fg.require_permission(revoked.clone());
+    r.keys.require_permission(revoked);
+    let before = r.clip.text();
+    r.orch.replace().await;
+    let model = last_model(&r);
+    assert!(is_result(&model), "{model:?}");
+    assert_eq!(
+        model.notice.map(|n| n.key),
+        Some(KEY_REPLACE_NEEDS_ACCESSIBILITY.to_string())
+    );
+    assert_ne!(
+        KEY_REPLACE_NEEDS_ACCESSIBILITY,
+        KEY_PERMISSION_ACCESSIBILITY
+    );
+    let pastes = r
+        .keys
+        .events()
+        .into_iter()
+        .filter(|e| *e == lingopop_platform::fake::KeyCall::SendPaste)
+        .count();
+    assert_eq!(pastes, 0, "send_paste must never be called");
+    assert!(r.keys.pasted().is_empty());
+    assert_eq!(r.clip.text(), before, "the clipboard was put back");
+    // Replace is still on offer once access is back.
+    assert!(matches!(&model.phase, PopupPhase::Result(v) if v.show_replace));
+}
+
+#[tokio::test]
 async fn replace_without_accessibility_keeps_the_result_with_a_permission_notice() {
     let r = rig();
     r.orch.trigger(AIOperation::Translate).await;
@@ -414,6 +455,6 @@ async fn replace_without_accessibility_keeps_the_result_with_a_permission_notice
     assert!(is_result(&model), "{model:?}");
     assert_eq!(
         model.notice.map(|n| n.key),
-        Some(KEY_PERMISSION_ACCESSIBILITY.to_string())
+        Some(KEY_REPLACE_NEEDS_ACCESSIBILITY.to_string())
     );
 }

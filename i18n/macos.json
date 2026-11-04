@@ -89,6 +89,11 @@
     "pl": "Sprawdź ponownie",
     "uk": "Перевірити знову"
   },
+  "Replace needs Accessibility access. Allow LingoPop in System Settings, then try again.": {
+    "de": "Ersetzen benötigt Zugriff auf die Bedienungshilfen. Erlaube LingoPop in den Systemeinstellungen und versuche es dann erneut.",
+    "pl": "Zamiana wymaga dostępu do Dostępności. Zezwól LingoPop w Ustawieniach systemowych i spróbuj ponownie.",
+    "uk": "Для заміни потрібен доступ до «Універсального доступу». Дозвольте LingoPop у Системних налаштуваннях і спробуйте ще раз."
+  },
   "Request": {
     "de": "Anfordern",
     "pl": "Poproś o dostęp",

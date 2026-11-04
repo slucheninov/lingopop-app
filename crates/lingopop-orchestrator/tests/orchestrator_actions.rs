@@ -251,6 +251,37 @@ async fn replace_foreground_lost_shows_manual_paste_message() {
     assert!(r.keys.pasted().is_empty());
 }
 #[tokio::test]
+async fn target_lost_shows_manual_paste() {
+    // The original app is no longer in front (or its handle is stale / evicted): nothing is
+    // pasted, the displayed result is an ordinary clipboard entry, the manual-paste message is
+    // shown and the paste keystroke is never sent to whatever is in front now.
+    for stale in [false, true] {
+        let (r, _) = ready_rig();
+        ready(&r).await;
+        if stale {
+            r.fg.retire_target(WindowHandle(7));
+        } else {
+            r.fg.switch_foreground_on_next_target_check(WindowHandle(55));
+        }
+        r.orch.replace().await;
+        error(&r, KEY_FOREGROUND_LOST);
+        assert_eq!(r.clip.text().as_deref(), Some("DISPLAYED"));
+        assert!(r.keys.pasted().is_empty());
+        assert!(!r
+            .keys
+            .events()
+            .contains(&lingopop_platform::fake::KeyCall::SendPaste));
+        // Logs are fixed text: no displayed result, no selection.
+        let logs = r.logs.lock().unwrap().clone();
+        assert!(logs.iter().all(|l| !l.contains("DISPLAYED")), "{logs:?}");
+        assert!(
+            logs.iter()
+                .any(|l| l == "replace skipped: target is no longer in front"),
+            "{logs:?}"
+        );
+    }
+}
+#[tokio::test]
 async fn replace_without_target_leaves_text_on_clipboard() {
     let r = rig(Arc::new(FakeTransport::json(200, OK)), None);
     ready(&r).await;

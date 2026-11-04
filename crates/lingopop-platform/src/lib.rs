@@ -23,6 +23,8 @@ pub mod login_item;
 mod macos;
 #[path = "macos/geometry.rs"]
 pub mod macos_geometry;
+#[path = "macos/target_registry.rs"]
+pub mod macos_targets;
 pub mod monitors;
 pub mod native;
 pub mod ocr;
