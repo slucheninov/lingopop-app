@@ -350,6 +350,12 @@ pub struct UiBootstrap {
     pub popup_font_size: u32,
     pub initial_tab: Option<String>,
 }
+/// The platform file of the catalogs this build ships to the webview.
+#[cfg(target_os = "macos")]
+const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Macos;
+#[cfg(not(target_os = "macos"))]
+const CATALOG_PLATFORM: i18n::CatalogPlatform = i18n::CatalogPlatform::Windows;
+
 #[tauri::command]
 pub async fn ui_bootstrap(
     window: tauri::Window,
@@ -359,7 +365,7 @@ pub async fn ui_bootstrap(
     Ok(UiBootstrap {
         language: lang.code(),
         launched_language: lang,
-        catalog: i18n::catalog(lang),
+        catalog: i18n::catalog_for(CATALOG_PLATFORM, lang),
         version: lingopop_core::VERSION,
         popup_font_size: state.ui.prefs().popup_font_size,
         initial_tab: if window.label() == crate::windows::SETTINGS_LABEL {
