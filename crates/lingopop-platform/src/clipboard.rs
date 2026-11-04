@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use crate::error::{LogFn, PlatformError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// One clipboard representation. Not `Copy` since `NativePasteboard` owns its type name; the
+/// other variants keep their identity (Windows code clones or borrows them).
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum ClipboardFormat {
     UnicodeText,
     Html,
@@ -20,6 +22,53 @@ pub enum ClipboardFormat {
     CanIncludeInHistory,
     /// Registered `CanUploadToCloudClipboard` marker (Windows).
     CanUploadToCloud,
+    /// One pasteboard type of one pasteboard item (macOS): `item` is the position of the item on
+    /// the pasteboard, `type_name` the UTI / pasteboard type. Item boundaries and arbitrary
+    /// readable types survive a snapshot and restore this way.
+    NativePasteboard {
+        item: u32,
+        type_name: String,
+    },
+}
+
+/// `Debug` never prints a native type name unless it is a well-known system type (see
+/// `loggable_type_name`): app-defined type names can say something about the user's content.
+impl fmt::Debug for ClipboardFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnicodeText => f.write_str("UnicodeText"),
+            Self::Html => f.write_str("Html"),
+            Self::Rtf => f.write_str("Rtf"),
+            Self::Png => f.write_str("Png"),
+            Self::Dib => f.write_str("Dib"),
+            Self::FileList => f.write_str("FileList"),
+            Self::ExcludeFromMonitors => f.write_str("ExcludeFromMonitors"),
+            Self::CanIncludeInHistory => f.write_str("CanIncludeInHistory"),
+            Self::CanUploadToCloud => f.write_str("CanUploadToCloud"),
+            Self::NativePasteboard { item, type_name } => write!(
+                f,
+                "NativePasteboard {{ item: {item}, type: {} }}",
+                loggable_type_name(type_name)
+            ),
+        }
+    }
+}
+
+/// The type name as it may appear in `Debug` output and logs: system-defined names (`public.*`,
+/// `com.apple.*`, `org.nspasteboard.*`) verbatim, dynamic `dyn.*` types as `dyn.*`, anything else
+/// (app-defined) as `<custom type>`.
+#[doc(hidden)]
+pub fn loggable_type_name(name: &str) -> String {
+    if name.starts_with("dyn.") {
+        "dyn.*".to_owned()
+    } else if ["public.", "com.apple.", "org.nspasteboard."]
+        .iter()
+        .any(|p| name.starts_with(p))
+    {
+        name.to_owned()
+    } else {
+        "<custom type>".to_owned()
+    }
 }
 
 /// One clipboard format with its raw bytes. `Debug` prints the size only.
@@ -110,6 +159,13 @@ pub trait Clipboard: Send + Sync {
     fn write_text_transient(&self, text: &str) -> Result<(), PlatformError>;
     /// An ordinary text entry the user may paste manually.
     fn write_text(&self, text: &str) -> Result<(), PlatformError>;
+    /// The sequence number the clipboard had right after OUR most recent write (also a failed or
+    /// partial one), when the implementation can report it exactly (macOS: the value
+    /// `clearContents` returned). `None` = unknown; callers then read `sequence_number()` after
+    /// the write, which is exact on Windows because the clipboard is held across the write.
+    fn last_write_sequence(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// Restores the saved clipboard on drop (also on unwind), but never over a newer foreign write.
@@ -172,5 +228,31 @@ mod tests {
         for n in PROTECTION_FORMAT_NAMES {
             assert!(protection_unreadable(&["x".into(), unreadable_label(n)]));
         }
+    }
+
+    #[test]
+    fn native_format_is_clone_hash_eq_and_its_debug_hides_custom_names() {
+        use std::collections::HashSet;
+        let png = ClipboardFormat::NativePasteboard {
+            item: 1,
+            type_name: "public.png".into(),
+        };
+        let mut set = HashSet::new();
+        set.insert(png.clone());
+        assert!(set.contains(&png));
+        assert_eq!(
+            format!("{png:?}"),
+            "NativePasteboard { item: 1, type: public.png }"
+        );
+        let custom = ClipboardFormat::NativePasteboard {
+            item: 0,
+            type_name: "com.acme.client-list".into(),
+        };
+        assert_eq!(
+            format!("{custom:?}"),
+            "NativePasteboard { item: 0, type: <custom type> }"
+        );
+        assert_eq!(loggable_type_name("dyn.ah62d4rv4gu8"), "dyn.*");
+        assert_eq!(format!("{:?}", ClipboardFormat::Png), "Png");
     }
 }

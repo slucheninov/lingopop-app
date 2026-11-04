@@ -71,8 +71,14 @@ pub fn replace_selection(
     let snapshot = clip.snapshot()?;
     let guard = RestoreGuard::new(clip, snapshot, opts.log.clone());
     let written = clip.write_text_transient(text);
-    // Even a failed write may have emptied the clipboard: whatever it did is ours to undo.
-    guard.observe(clip.sequence_number());
+    // Even a failed write may have emptied the clipboard: whatever it did is ours to undo. The
+    // sequence is the one our own write produced when the implementation can say so exactly
+    // (macOS: what `clearContents` returned); a foreign write right after it is then never
+    // mistaken for ours.
+    guard.observe(
+        clip.last_write_sequence()
+            .unwrap_or_else(|| clip.sequence_number()),
+    );
     written?;
     keys.send_paste()?;
     sleeper.sleep(opts.restore_delay);

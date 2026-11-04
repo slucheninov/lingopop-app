@@ -67,7 +67,10 @@ pub fn capture_selection(
     // Wait BEFORE the snapshot: a foreign write during the wait would otherwise be clobbered by
     // restoring an older snapshot.
     wait_for_modifiers(keys, sleeper, opts)?;
-    let snapshot = clip.snapshot()?;
+    let snapshot = clip.snapshot().inspect_err(|e| {
+        // Fixed text plus the error's own payload-free `Display`.
+        log(opts, &format!("clipboard snapshot failed: {e}"));
+    })?;
     if !snapshot.skipped.is_empty() {
         log(
             opts,
