@@ -136,6 +136,28 @@ test('rejected_save_keeps_the_key_out_and_shows_the_error', async () => {
   expect(screen.queryByText('Saved')).toBeNull();
 });
 
+test('rejected_save_refreshes_state_and_keeps_the_error', async () => {
+  const error = "Couldn't save the API key. Check that the data folder is writable.";
+  let reads = 0;
+  setup({
+    provider_state: (args: unknown) => {
+      reads += 1;
+      const provider = (args as { provider: Provider }).provider;
+      return stateFor(provider, reads > 1 ? { model: 'committed-model' } : {});
+    },
+    provider_save: () => { throw error; },
+  });
+  await openProviders();
+  const input = await screen.findByPlaceholderText('Paste your API key') as HTMLInputElement;
+  await fireEvent.input(input, { target: { value: 'sk-1' } });
+  await fireEvent.click(saveButton());
+  await waitFor(() => expect(reads).toBe(2));
+  await waitFor(() => expect(screen.getByDisplayValue('committed-model')).toBeTruthy());
+  expect(screen.getByText(error)).toBeTruthy();
+  expect(input.value).toBe('');
+  expect(document.body.innerHTML).not.toContain('sk-1');
+});
+
 test('saved_label_goes_away_after_one_and_a_half_seconds', async () => {
   setup({ provider_save: providerState({ hasKey: true }) });
   await openProviders();

@@ -91,6 +91,13 @@
       flashTimer = setTimeout(() => { saved = false; }, 1500);
     } catch (error) {
       if (!disposed) failure = message(error);
+      // The connection may have been committed before the key write failed: refresh, keeping the original error.
+      if (!disposed) {
+        try {
+          const next = await getProviderState(provider);
+          if (!disposed) adopt(next);
+        } catch { /* keep the save error */ }
+      }
     } finally {
       if (!disposed) saving = false;
     }

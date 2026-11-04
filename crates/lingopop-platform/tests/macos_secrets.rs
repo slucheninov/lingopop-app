@@ -281,3 +281,73 @@ fn existing_ciphertext_with_missing_key_stays_locked() {
     assert_eq!(keys.inserts.load(Ordering::SeqCst), 0);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+/// Key store whose first insert after a delete can be made to fail.
+#[derive(Default)]
+struct RotationStore {
+    key: Mutex<Option<SecretKey>>,
+    fail_insert_once: std::sync::atomic::AtomicBool,
+    unreadable: bool,
+    deletes: AtomicUsize,
+}
+impl KeychainKeyStore for RotationStore {
+    fn load(&self) -> Result<Option<SecretKey>, ProtectError> {
+        if self.unreadable {
+            return Err(ProtectError::Unavailable);
+        }
+        Ok(self.key.lock().unwrap().clone())
+    }
+    fn insert_if_absent(&self, key: SecretKey) -> Result<SecretKey, ProtectError> {
+        if self.fail_insert_once.swap(false, Ordering::SeqCst) {
+            return Err(ProtectError::Unavailable);
+        }
+        Ok(self.key.lock().unwrap().get_or_insert(key).clone())
+    }
+    fn delete(&self) -> Result<(), ProtectError> {
+        self.deletes.fetch_add(1, Ordering::SeqCst);
+        *self.key.lock().unwrap() = None;
+        Ok(())
+    }
+}
+
+#[test]
+fn key_generation_failure_deletes_nothing() {
+    let keys = Arc::new(RotationStore::default());
+    let old = SecretKey::generate().unwrap();
+    *keys.key.lock().unwrap() = Some(old.clone());
+    let protector =
+        KeyStoreProtector::new(keys.clone()).with_generator(|| Err(ProtectError::Unavailable));
+    assert!(protector.regenerate_key().is_err());
+    assert_eq!(keys.deletes.load(Ordering::SeqCst), 0);
+    let kept = keys.key.lock().unwrap().clone().unwrap();
+    assert_eq!(kept.as_bytes(), old.as_bytes());
+}
+
+#[test]
+fn insert_failure_after_delete_restores_the_old_key() {
+    let keys = Arc::new(RotationStore::default());
+    let old = SecretKey::generate().unwrap();
+    *keys.key.lock().unwrap() = Some(old.clone());
+    keys.fail_insert_once.store(true, Ordering::SeqCst);
+    let protector = KeyStoreProtector::new(keys.clone());
+    assert!(matches!(
+        protector.regenerate_key(),
+        Err(ProtectError::Unavailable)
+    ));
+    assert_eq!(keys.deletes.load(Ordering::SeqCst), 1);
+    let restored = keys.key.lock().unwrap().clone().unwrap();
+    assert_eq!(restored.as_bytes(), old.as_bytes());
+}
+
+#[test]
+fn insert_failure_with_unreadable_old_key_reports_the_insert_error() {
+    let keys = Arc::new(RotationStore {
+        unreadable: true,
+        ..Default::default()
+    });
+    *keys.key.lock().unwrap() = Some(SecretKey::generate().unwrap());
+    keys.fail_insert_once.store(true, Ordering::SeqCst);
+    let protector = KeyStoreProtector::new(keys.clone());
+    assert!(protector.regenerate_key().is_err());
+    assert!(keys.key.lock().unwrap().is_none());
+}

@@ -80,6 +80,7 @@ pub trait KeychainKeyStore: Send + Sync {
 pub struct KeyStoreProtector {
     keys: std::sync::Arc<dyn KeychainKeyStore>,
     cache: std::sync::Mutex<KeyCache>,
+    generate: fn() -> Result<SecretKey, ProtectError>,
 }
 #[derive(Default)]
 struct KeyCache {
@@ -91,7 +92,14 @@ impl KeyStoreProtector {
         Self {
             keys,
             cache: std::sync::Mutex::new(KeyCache::default()),
+            generate: SecretKey::generate,
         }
+    }
+    /// Test seam: replaces the key generator so a generation failure can be simulated.
+    #[doc(hidden)]
+    pub fn with_generator(mut self, generate: fn() -> Result<SecretKey, ProtectError>) -> Self {
+        self.generate = generate;
+        self
     }
     fn key(&self, create: bool) -> Result<SecretKey, ProtectError> {
         let mut cache = self
@@ -106,7 +114,7 @@ impl KeyStoreProtector {
         }
         let key = match self.keys.load()? {
             Some(key) => key,
-            None if create && !cache.used => self.keys.insert_if_absent(SecretKey::generate()?)?,
+            None if create && !cache.used => self.keys.insert_if_absent((self.generate)()?)?,
             None => return Err(ProtectError::KeyMissing),
         };
         cache.used = true;
@@ -121,8 +129,21 @@ impl KeyStoreProtector {
         // Discard the prior zeroizing key even if deletion or insertion fails.
         cache.key = None;
         cache.used = true;
+        // Generate first: a generation failure changes nothing in the key store.
+        let new_key = (self.generate)()?;
+        // Best effort: reset runs on a locked store, so the old key may be unreadable.
+        let old_key = self.keys.load().ok().flatten();
         self.keys.delete()?;
-        cache.key = Some(self.keys.insert_if_absent(SecretKey::generate()?)?);
+        match self.keys.insert_if_absent(new_key) {
+            Ok(key) => cache.key = Some(key),
+            Err(error) => {
+                if let Some(old) = old_key {
+                    // Restore what was there; the original insert error is the one reported.
+                    let _ = self.keys.insert_if_absent(old);
+                }
+                return Err(error);
+            }
+        }
         Ok(())
     }
 }
