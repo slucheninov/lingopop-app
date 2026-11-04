@@ -1,5 +1,6 @@
 //! Global hotkey model. `key` is a W3C `KeyboardEvent.code` value.
 
+use crate::host::HostKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -91,6 +92,10 @@ impl Hotkey {
 
     /// `Ctrl+Alt+T`: `KeyX` shows `X`, `DigitN` shows `N`, other keys as is.
     pub fn display_string(&self) -> String {
+        self.display_for(HostKind::Windows)
+    }
+
+    pub fn display_for(&self, host: HostKind) -> String {
         let mut modifiers = self.modifiers.clone();
         modifiers.sort_unstable();
         modifiers.dedup();
@@ -104,7 +109,14 @@ impl Hotkey {
                     .filter(|rest| rest.len() == 1)
             })
             .unwrap_or(&self.key);
-        let mut parts: Vec<&str> = modifiers.into_iter().map(Modifier::label).collect();
+        let mut parts: Vec<&str> = modifiers
+            .into_iter()
+            .map(|m| match (host, m) {
+                (HostKind::Unix, Modifier::Win) => "⌘",
+                (HostKind::Unix, Modifier::Alt) => "⌥",
+                _ => m.label(),
+            })
+            .collect();
         parts.push(key);
         parts.join("+")
     }
@@ -112,6 +124,13 @@ impl Hotkey {
     /// Ctrl+Alt+T. Ctrl+Alt+letter is AltGr+letter on many layouts (Polish,
     /// German, ...), so defaults avoid letters AltGr maps to a character there
     /// (A C E L N O S X Z); T is not one of them.
+    pub fn default_translate_for(host: HostKind) -> Self {
+        match host {
+            HostKind::Unix => Self::new("KeyT", [Modifier::Alt]),
+            HostKind::Windows => Self::default_translate(),
+        }
+    }
+
     pub fn default_translate() -> Self {
         Self::new("KeyT", [Modifier::Ctrl, Modifier::Alt])
     }

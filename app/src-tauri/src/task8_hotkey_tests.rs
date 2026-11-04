@@ -235,7 +235,9 @@ fn rejected_patch_keeps_settings(hotkey: Hotkey, error: &str) {
 fn rejected_patch_in(hotkey: Hotkey, error: &str, language: lingopop_core::ui_prefs::Language) {
     let dir = tempfile::tempdir().unwrap();
     let (config, _, _) = crate::task4_tests::rig(dir.path());
-    config.update_settings(|_| {}).unwrap();
+    config
+        .update_settings(|s| *s = lingopop_core::settings::Settings::default())
+        .unwrap();
     let before = config.settings().to_json_bytes().unwrap();
     let bytes = std::fs::read(dir.path().join("settings.json")).unwrap();
     let patch = crate::settings_cmds::SettingsPatch::Hotkey {
@@ -294,4 +296,165 @@ fn queued_apply_uses_latest_wanted_and_suspension() {
         registry.status()[&AIOperation::ScreenTranslate],
         HotkeyStatus::Registered
     );
+}
+
+async fn swift_rig(
+    running: Result<bool, PlatformError>,
+) -> (
+    HotkeyRegistry,
+    Arc<lingopop_platform::fake::FakeSystem>,
+    FakeHotkeyService,
+) {
+    let system = Arc::new(lingopop_platform::fake::FakeSystem::new(vec![]));
+    system.set_bundle_running(running);
+    let fake = FakeHotkeyService::new();
+    install_service_for_tests(Box::new(fake.clone()));
+    let registry = HotkeyRegistry::new(Arc::new(InlineMainThread), Arc::new(|| {}))
+        .with_swift_source(crate::swift_source::SwiftSource::new(system.clone()));
+    registry.apply(wanted());
+    registry.refresh_swift().await;
+    (registry, system, fake)
+}
+#[tokio::test]
+async fn swift_running_prevents_duplicate_global_hotkeys() {
+    let (registry, _, fake) = swift_rig(Ok(true)).await;
+    assert_eq!(fake.registered_count(), 0);
+    assert_eq!(
+        registry.status()[&AIOperation::Translate],
+        HotkeyStatus::SwiftSuspended
+    );
+    registry.suspend(true);
+    registry.suspend(false);
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+}
+#[tokio::test]
+async fn swift_starts_after_setup_unregisters_hotkeys() {
+    let (registry, system, fake) = swift_rig(Ok(false)).await;
+    assert_eq!(fake.registered_count(), 2);
+    system.set_bundle_running(Ok(true));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+}
+#[tokio::test]
+async fn swift_exits_restores_hotkeys() {
+    let (registry, system, fake) = swift_rig(Ok(true)).await;
+    system.set_bundle_running(Ok(false));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 2);
+    assert_eq!(
+        registry.status()[&AIOperation::Translate],
+        HotkeyStatus::Registered
+    );
+}
+#[tokio::test]
+async fn swift_query_error_fails_closed() {
+    let (registry, system, fake) = swift_rig(Ok(false)).await;
+    system.set_bundle_running(Err(PlatformError::Unsupported("process query")));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+    registry.suspend(false);
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+}
+
+#[tokio::test]
+async fn swift_exit_rechecks_conflicts_and_keeps_recorder_suspended() {
+    let (registry, system, fake) = swift_rig(Ok(true)).await;
+    fake.block(&Hotkey::default_translate()).unwrap();
+    registry.suspend(true);
+    system.set_bundle_running(Ok(false));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+    registry.suspend(false);
+    registry.refresh_swift().await;
+    assert_eq!(
+        registry.status()[&AIOperation::Translate],
+        HotkeyStatus::Conflict
+    );
+    assert_eq!(fake.registered_count(), 1);
+}
+
+#[test]
+fn swift_observer_updates_registrations_without_a_resume_or_settings_change() {
+    struct Posted(std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>);
+    impl MainThread for Posted {
+        fn run(&self, job: Box<dyn FnOnce() + Send>) {
+            self.0.send(job).unwrap();
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let system = Arc::new(lingopop_platform::fake::FakeSystem::new(vec![]));
+    let fake = FakeHotkeyService::new();
+    install_service_for_tests(Box::new(fake.clone()));
+    let registry = HotkeyRegistry::new(Arc::new(Posted(tx)), Arc::new(|| {}))
+        .with_swift_source(crate::swift_source::SwiftSource::new(system.clone()));
+    registry.apply(wanted());
+    let observer = registry.observe_swift_every(std::time::Duration::from_millis(50));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    for (running, count) in [(false, 2), (true, 0), (false, 2)] {
+        system.set_bundle_running(Ok(running));
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            rx.recv_timeout(remaining)
+                .expect("observer must post a main-thread reconciliation")();
+            if fake.registered_count() == count {
+                break;
+            }
+        }
+    }
+    observer.abort();
+}
+
+#[tokio::test]
+async fn unchanged_settings_blur_does_not_dirty_or_reregister_hotkeys() {
+    let (registry, _, fake) = swift_rig(Ok(false)).await;
+    crate::windows::on_settings_window_event(&registry, &tauri::WindowEvent::Focused(false));
+    assert!(!registry.inner.lock().unwrap().dirty);
+    // Apply the unchanged query result on the event-loop test thread.
+    registry.query_swift(false).await;
+    assert_eq!(fake.registered_count(), 2);
+    let changes = Arc::new(AtomicUsize::new(0));
+    let count = changes.clone();
+    let mut registry = registry;
+    registry.on_change = Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+    });
+    registry.query_swift(false).await;
+    assert_eq!(changes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn stale_suspend_post_cannot_register_using_cached_swift_state() {
+    let (mut registry, _) = rig();
+    let fake = FakeHotkeyService::new();
+    install_service_for_tests(Box::new(fake.clone()));
+    registry.source = Some(crate::swift_source::SwiftSource::new(Arc::new(
+        lingopop_platform::fake::FakeSystem::new(vec![]),
+    )));
+    {
+        let mut state = registry.inner.lock().unwrap();
+        state.wanted = wanted();
+        state.swift_blocked = false;
+        state.suspended = false;
+        state.dirty = true;
+    }
+    // A forced resume query has started, but its result has not reached MainThread.
+    registry.next_revision();
+    // This is a delayed no-query post from the preceding suspend.
+    registry.post_reconcile(None);
+    assert_eq!(fake.registered_count(), 0);
+}
+
+#[tokio::test]
+async fn lookup_drops_hotkeys_while_swift_is_blocked() {
+    let (registry, system, _) = swift_rig(Ok(false)).await;
+    let id = *registry.inner.lock().unwrap().by_id.keys().next().unwrap();
+    assert!(registry.lookup(id).is_some());
+    // Cover lookup's own gate before reconciliation removes the old active map.
+    registry.inner.lock().unwrap().swift_blocked = true;
+    assert_eq!(registry.lookup(id), None);
+    system.set_bundle_running(Ok(true));
+    registry.refresh_swift().await;
+    assert_eq!(registry.lookup(id), None);
 }

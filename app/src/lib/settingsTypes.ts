@@ -4,7 +4,7 @@ import type { Operation, Provider } from './types';
 export type Language = 'en' | 'pl' | 'uk' | 'de';
 export type AppLanguage = 'system' | Language;
 export type Modifier = 'ctrl' | 'alt' | 'shift' | 'win';
-export type HotkeyStatus = 'registered' | 'conflict' | 'invalid' | 'none';
+export type HotkeyStatus = 'registered' | 'conflict' | 'invalid' | 'none' | 'swiftsuspended';
 export type TabId = 'main' | 'providers' | 'shortcuts' | 'usage' | 'magic' | 'about';
 
 export type UsagePeriod = 'day' | 'days7' | 'days30';
@@ -43,6 +43,7 @@ export interface SettingsView {
   fallbacks: Partial<Record<Provider, Provider>>;
   targetLanguage: string;
   hotkeys: Partial<Record<Operation, HotkeyView>>;
+  swiftRunning: boolean;
   hotkeyStatus: Partial<Record<Operation, HotkeyStatus>>;
   launchAtLogin: boolean;
   maxInputChars: number;
@@ -61,6 +62,18 @@ export interface SettingsView {
   version: string;
   latestVersion: string | null;
   providers: ProviderSummary[];
+  /** Which OS build this is: the Permissions section is shown on macOS only. */
+  platform: 'macos' | 'windows';
+}
+
+/** Mirrors `permissions_cmds.rs`: fixed ids only. */
+export type PermissionKindId = 'accessibility' | 'screenRecording';
+export type PermissionStateId = 'notDetermined' | 'denied' | 'granted' | 'restricted';
+export interface PermissionStatus {
+  kind: PermissionKindId;
+  state: PermissionStateId;
+  /** Screen Recording only: Settings was opened and this process still does not see the grant. */
+  relaunchHint: boolean;
 }
 
 export type SettingsPatch =
@@ -76,7 +89,9 @@ export type SettingsPatch =
 
 export type UiPatch = { field: 'popupFontSize'; value: number } | { field: 'appLanguage'; value: AppLanguage };
 
+export type HostKind = 'unix' | 'windows';
 export interface UiBootstrap {
+  host: HostKind;
   language: Language;
   launchedLanguage: Language;
   catalog: Record<string, string>;
@@ -113,6 +128,7 @@ export interface ProviderState {
   isActive: boolean;
   fallback: Provider | null;
   secretsUnavailable: boolean;
+  secretsLocked: boolean;
   connectionsCorrupt: boolean;
   keyGuideUrl: string;
 }

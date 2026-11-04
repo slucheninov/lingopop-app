@@ -6,6 +6,15 @@ use std::{
 };
 pub struct MacSystem;
 impl SystemInfo for MacSystem {
+    fn is_bundle_running(&self, bundle_id: &str) -> Result<bool, PlatformError> {
+        let identifier = objc2_foundation::NSString::from_str(bundle_id);
+        Ok(
+            !objc2_app_kit::NSRunningApplication::runningApplicationsWithBundleIdentifier(
+                &identifier,
+            )
+            .is_empty(),
+        )
+    }
     fn ui_languages(&self) -> Vec<String> {
         NSLocale::preferredLanguages()
             .iter()
@@ -39,5 +48,13 @@ impl SystemInfo for MacSystem {
             }
             std::thread::sleep(remaining.min(Duration::from_millis(100)));
         }
+    }
+}
+
+/// Called only by the shell's posted main-thread job.
+pub fn activate_app() {
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        #[allow(deprecated)]
+        objc2_app_kit::NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
     }
 }

@@ -129,6 +129,7 @@ fn rig_full(
             )),
             capture: Arc::new(FakeCapture::new([0; 4])),
             ocr: Arc::new(FakeOcr::new(Err(PlatformError::OcrUnavailable))),
+            permissions: Arc::new(lingopop_platform::AlwaysGranted),
             protector: Arc::new(Protector),
             sleeper,
         },

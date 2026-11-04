@@ -814,13 +814,7 @@ fn dpapi_tampered_ciphertext_fails_to_unprotect() {
     let truncated = &sealed[..sealed.len() - 1];
     for bad in [flipped.as_slice(), truncated] {
         match p.unprotect(bad) {
-            Err(ProtectError::Failed(message)) => {
-                assert!(
-                    message.starts_with("CryptUnprotectData failed (code "),
-                    "{message}"
-                );
-                assert!(!message.contains("sk-ant-FIXTURE"));
-            }
+            Err(error) => assert_eq!(error, ProtectError::Invalid),
             Ok(_) => panic!("tampered DPAPI data must not unprotect"),
         }
     }

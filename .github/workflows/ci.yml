@@ -49,7 +49,9 @@ jobs:
           python-version: "3.12"
       - name: Check localization catalogs
         shell: bash
-        run: python scripts/gen-localizations.py check
+        run: |
+          python scripts/gen-localizations.py check
+          python -m unittest discover -s scripts/tests -p 'test_localizations.py'
       - name: Test frontend
         shell: bash
         run: npm test --prefix app

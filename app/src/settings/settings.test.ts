@@ -50,7 +50,7 @@ test('bootstrap_initial_tab_opens_about', async () => {
 test('bootstrap_failure_falls_back_to_english', async () => {
   mockIpc({ ui_bootstrap: new Error('boom') });
   const result = await bootstrap();
-  expect(result).toEqual({ language: 'en', launchedLanguage: 'en', catalog: {}, version: '', popupFontSize: 13, initialTab: null });
+  expect(result).toEqual({ host: 'windows', language: 'en', launchedLanguage: 'en', catalog: {}, version: '', popupFontSize: 13, initialTab: null });
   expect(t('Close')).toBe('Close');
 });
 

@@ -1,0 +1,147 @@
+{
+  "Accessibility": {
+    "de": "Bedienungshilfen",
+    "pl": "Dostępność",
+    "uk": "Універсальний доступ"
+  },
+  "Accessibility access required": {
+    "de": "Zugriff auf Bedienungshilfen erforderlich",
+    "pl": "Wymagane uprawnienia Dostępności",
+    "uk": "Потрібен дозвіл «Універсальний доступ»"
+  },
+  "After granting access, fully quit and relaunch LingoPop.": {
+    "de": "Nach dem Erteilen des Zugriffs LingoPop vollständig beenden und neu starten.",
+    "pl": "Po przyznaniu dostępu całkowicie zamknij i ponownie uruchom LingoPop.",
+    "uk": "Після надання доступу повністю вийдіть з LingoPop і запустіть його знову."
+  },
+  "Click a shortcut field, then press a key combination. Use any of ⌃ ⌥ ⇧ ⌘ plus a key. Esc cancels recording. ✕ removes the shortcut.": {
+    "de": "Tastenkürzel-Feld anklicken und Tastenkombination drücken. Beliebige Kombination aus ⌃ ⌥ ⇧ ⌘ plus einer Taste verwenden. Esc bricht die Aufnahme ab. ✕ entfernt das Tastenkürzel.",
+    "pl": "Kliknij pole skrótu, a następnie naciśnij kombinację klawiszy. Użyj dowolnego z ⌃ ⌥ ⇧ ⌘ oraz klawisza. Esc anuluje nagrywanie. ✕ usuwa skrót.",
+    "uk": "Клацніть поле скорочення, потім натисніть комбінацію клавіш. Використовуйте будь-які з ⌃ ⌥ ⇧ ⌘ разом із клавішею. Esc скасовує запис. ✕ видаляє скорочення."
+  },
+  "Could not capture the screen. Check that Screen Recording permission is granted.": {
+    "de": "Bildschirm konnte nicht aufgenommen werden. Prüfen, ob die Berechtigung für die Bildschirmaufnahme erteilt wurde.",
+    "pl": "Nie udało się przechwycić ekranu. Sprawdź, czy przyznano uprawnienie Nagrywanie ekranu.",
+    "uk": "Не вдалося захопити екран. Перевірте, чи надано дозвіл на запис екрана."
+  },
+  "Couldn't open System Settings.": {
+    "de": "Die Systemeinstellungen konnten nicht geöffnet werden.",
+    "pl": "Nie udało się otworzyć Ustawień systemowych.",
+    "uk": "Не вдалося відкрити Системні налаштування."
+  },
+  "Couldn't switch back to the original app, so nothing was replaced. The text is on your clipboard; paste it manually with ⌘V.": {
+    "de": "Wechsel zurück zur ursprünglichen App war nicht möglich, daher wurde nichts ersetzt. Der Text liegt in der Zwischenablage und kann manuell mit ⌘V eingesetzt werden.",
+    "pl": "Nie udało się wrócić do pierwotnej aplikacji, więc nic nie zostało zamienione. Tekst jest w schowku; wklej go ręcznie za pomocą ⌘V.",
+    "uk": "Не вдалося повернутися до початкової програми, тому нічого не замінено. Текст у буфері обміну; вставте його вручну за допомогою ⌘V."
+  },
+  "Couldn't update permissions.": {
+    "de": "Berechtigungen konnten nicht aktualisiert werden.",
+    "pl": "Nie udało się zaktualizować uprawnień.",
+    "uk": "Не вдалося оновити дозволи."
+  },
+  "Denied": {
+    "de": "Verweigert",
+    "pl": "Odmówiono",
+    "uk": "Відхилено"
+  },
+  "Granted": {
+    "de": "Erteilt",
+    "pl": "Przyznano",
+    "uk": "Надано"
+  },
+  "LingoPop can't read selected text yet.": {
+    "de": "LingoPop kann markierten Text noch nicht lesen.",
+    "pl": "LingoPop nie może jeszcze odczytać zaznaczonego tekstu.",
+    "uk": "LingoPop ще не може читати виділений текст."
+  },
+  "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.": {
+    "de": "LingoPop benötigt Zugriff auf die Bedienungshilfen, um markierten Text zu lesen. Erteile ihn unter Einstellungen → Allgemein → Berechtigungen.",
+    "pl": "LingoPop potrzebuje dostępu do Dostępności, aby odczytać zaznaczony tekst. Przyznaj go w Ustawienia → Ogólne → Uprawnienia.",
+    "uk": "LingoPop потрібен доступ до «Універсального доступу», щоб читати виділений текст. Надайте його в Налаштування → Основні → Дозволи."
+  },
+  "LingoPop needs Screen Recording access to translate the screen. Grant it in Settings → Main → Permissions.": {
+    "de": "LingoPop benötigt Zugriff auf die Bildschirmaufnahme, um den Bildschirm zu übersetzen. Erteile ihn unter Einstellungen → Allgemein → Berechtigungen.",
+    "pl": "LingoPop potrzebuje dostępu do Nagrywania ekranu, aby tłumaczyć ekran. Przyznaj go w Ustawienia → Ogólne → Uprawnienia.",
+    "uk": "LingoPop потрібен доступ до запису екрана, щоб перекладати екран. Надайте його в Налаштування → Основні → Дозволи."
+  },
+  "Not requested yet": {
+    "de": "Noch nicht angefordert",
+    "pl": "Jeszcze nie poproszono",
+    "uk": "Ще не запитано"
+  },
+  "Open Settings": {
+    "de": "Einstellungen öffnen",
+    "pl": "Otwórz Ustawienia",
+    "uk": "Відкрити налаштування"
+  },
+  "Permissions": {
+    "de": "Berechtigungen",
+    "pl": "Uprawnienia",
+    "uk": "Дозволи"
+  },
+  "Re-check": {
+    "de": "Erneut prüfen",
+    "pl": "Sprawdź ponownie",
+    "uk": "Перевірити знову"
+  },
+  "Request": {
+    "de": "Anfordern",
+    "pl": "Poproś o dostęp",
+    "uk": "Запитати"
+  },
+  "Required for Screen Translate.": {
+    "de": "Erforderlich für die Bildschirmübersetzung.",
+    "pl": "Wymagane do tłumaczenia ekranu.",
+    "uk": "Потрібно для перекладу екрана."
+  },
+  "Required to read selected text and paste results.": {
+    "de": "Erforderlich, um markierten Text zu lesen und Ergebnisse einzufügen.",
+    "pl": "Wymagane do odczytu zaznaczonego tekstu i wklejania wyników.",
+    "uk": "Потрібно, щоб читати виділений текст і вставляти результати."
+  },
+  "Restricted by a profile or administrator": {
+    "de": "Durch ein Profil oder einen Administrator eingeschränkt",
+    "pl": "Ograniczone przez profil lub administratora",
+    "uk": "Обмежено профілем або адміністратором"
+  },
+  "Screen Recording": {
+    "de": "Bildschirmaufnahme",
+    "pl": "Nagrywanie ekranu",
+    "uk": "Запис екрана"
+  },
+  "Screen Recording access required": {
+    "de": "Zugriff auf Bildschirmaufnahme erforderlich",
+    "pl": "Wymagane uprawnienia Nagrywania ekranu",
+    "uk": "Потрібен дозвіл «Запис екрана»"
+  },
+  "Steps:\n1. Open System Settings → Privacy & Security → %@\n2. Make sure LingoPop is in the list and the toggle is ON\n3. Quit LingoPop completely (menu bar → Quit) and relaunch\n\nmacOS only reads the new permission after a full restart of the app.": {
+    "de": "Schritte:\n1. Systemeinstellungen → Datenschutz & Sicherheit → %@ öffnen\n2. Sicherstellen, dass LingoPop in der Liste steht und der Schalter EIN ist\n3. LingoPop vollständig beenden (Menüleiste → Beenden) und neu starten\n\nmacOS liest die neue Berechtigung erst nach einem vollständigen Neustart der App.",
+    "pl": "Kroki:\n1. Otwórz Ustawienia systemowe → Prywatność i ochrona → %@\n2. Upewnij się, że LingoPop jest na liście, a przełącznik jest WŁĄCZONY\n3. Całkowicie zamknij LingoPop (pasek menu → Wyjdź) i uruchom ponownie\n\nmacOS odczytuje nowe uprawnienie dopiero po pełnym ponownym uruchomieniu aplikacji.",
+    "uk": "Кроки:\n1. Відкрийте Системні налаштування → Приватність і безпека → %@\n2. Переконайтеся, що LingoPop є в списку, а перемикач УВІМКНЕНО\n3. Повністю вийдіть з LingoPop (рядок меню → Вийти) і запустіть знову\n\nmacOS зчитує новий дозвіл лише після повного перезапуску програми."
+  },
+  "⚠ Re-check Accessibility…": {
+    "de": "⚠ Bedienungshilfen erneut prüfen…",
+    "pl": "⚠ Sprawdź ponownie Dostępność…",
+    "uk": "⚠ Перевірити «Універсальний доступ» знову…"
+  },
+  "Press a key combo (⌘ / Option)…": {
+    "pl": "Naciśnij kombinację klawiszy (⌘ / Option)…",
+    "uk": "Натисніть комбінацію клавіш (⌘ / Option)…",
+    "de": "Tastenkombination drücken (⌘ / Option)…"
+  },
+  "Quit the Swift LingoPop to enable shortcuts in LingoPop Preview.": {
+    "pl": "Zamknij aplikację LingoPop w Swift, aby włączyć skróty w LingoPop Preview.",
+    "uk": "Закрийте LingoPop на Swift, щоб увімкнути скорочення в LingoPop Preview.",
+    "de": "Beende die Swift-Version von LingoPop, um Kurzbefehle in LingoPop Preview zu aktivieren."
+  },
+  "Suspended while Swift LingoPop is running.": {
+    "pl": "Wstrzymano, gdy LingoPop w Swift jest uruchomiony.",
+    "uk": "Призупинено, поки працює LingoPop на Swift.",
+    "de": "Pausiert, solange die Swift-Version von LingoPop läuft."
+  },
+  "Click a shortcut field, then press a key combination. Use ⌘, Option, Control or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.": {
+    "pl": "Kliknij pole skrótu i naciśnij kombinację klawiszy. Użyj ⌘, Option, Control lub Shift z klawiszem. Esc anuluje nagrywanie. ✕ usuwa skrót.",
+    "uk": "Натисніть поле скорочення, а потім комбінацію клавіш. Використовуйте ⌘, Option, Control або Shift із клавішею. Esc скасовує запис. ✕ видаляє скорочення.",
+    "de": "Klicke auf ein Kurzbefehlfeld und drücke eine Tastenkombination. Verwende ⌘, Option, Control oder Shift mit einer Taste. Esc bricht die Aufnahme ab. ✕ entfernt den Kurzbefehl."
+  }
+}

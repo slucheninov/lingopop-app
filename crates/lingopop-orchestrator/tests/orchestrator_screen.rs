@@ -162,6 +162,7 @@ fn rig_gated(
         monitors: Arc::new(FakeMonitors::new(Point { x: 5, y: 6 }, monitor_list())),
         capture: capture.clone(),
         ocr: ocr.clone(),
+        permissions: Arc::new(lingopop_platform::AlwaysGranted),
         protector: Arc::new(PlainProtector),
         sleeper,
     };

@@ -7,7 +7,14 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+dev-plaintext = []
+
 [dependencies]
+aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+zeroize = "=1.9.1"
+getrandom = "=0.4.3"
 crossbeam-channel = "0.5.17"
 keyboard-types = "0.8.3"
 lingopop-core = { path = "../lingopop-core" }
@@ -46,12 +53,17 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "=3.7.0"
+security-framework-sys = "=2.17.0"
+core-foundation = "=0.10.1"
 core-graphics = "0.25.0"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
     "libc",
+    "NSApplication",
     "NSPasteboard",
+    "NSResponder",
     "NSRunningApplication",
     "NSWorkspace",
 ] }

@@ -16,7 +16,7 @@ fn native_bundle_on_macos_has_unsupported_capture_and_ocr() {
         platform.ocr.recognize(&image).map(|_| ()),
         Err(PlatformError::Unsupported("OCR on macOS"))
     );
-    assert_eq!(platform.protector.protect(b"abc").unwrap(), b"abc");
+    // Construction must not access the real login keychain.
 }
 
 #[test]

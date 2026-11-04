@@ -31,7 +31,7 @@ function stateFor(provider: Provider, patch: Partial<ProviderState> = {}): Provi
     models: keyless || provider === 'DeepL' ? [] : ['model-a', 'model-b'],
     fields: keyless ? ['baseUrl', 'model'] : provider === 'Microsoft Translator' ? ['apiKey', 'baseUrl', 'region']
       : provider === 'Google Translate' ? ['apiKey', 'baseUrl', 'model', 'referer'] : ['apiKey', 'baseUrl', 'model'],
-    operations: ['Translate', 'Screen Translate'], isActive: false, fallback: null, secretsUnavailable: false, connectionsCorrupt: false,
+    operations: ['Translate', 'Screen Translate'], isActive: false, fallback: null, secretsUnavailable: false, secretsLocked: false, connectionsCorrupt: false,
     keyGuideUrl: `${GUIDE}${ANCHORS[provider]}`, ...patch,
   };
 }
@@ -134,6 +134,28 @@ test('rejected_save_keeps_the_key_out_and_shows_the_error', async () => {
   expect(input.value).toBe('');
   expect(document.body.innerHTML).not.toContain('sk-1');
   expect(screen.queryByText('Saved')).toBeNull();
+});
+
+test('rejected_save_refreshes_state_and_keeps_the_error', async () => {
+  const error = "Couldn't save the API key. Check that the data folder is writable.";
+  let reads = 0;
+  setup({
+    provider_state: (args: unknown) => {
+      reads += 1;
+      const provider = (args as { provider: Provider }).provider;
+      return stateFor(provider, reads > 1 ? { model: 'committed-model' } : {});
+    },
+    provider_save: () => { throw error; },
+  });
+  await openProviders();
+  const input = await screen.findByPlaceholderText('Paste your API key') as HTMLInputElement;
+  await fireEvent.input(input, { target: { value: 'sk-1' } });
+  await fireEvent.click(saveButton());
+  await waitFor(() => expect(reads).toBe(2));
+  await waitFor(() => expect(screen.getByDisplayValue('committed-model')).toBeTruthy());
+  expect(screen.getByText(error)).toBeTruthy();
+  expect(input.value).toBe('');
+  expect(document.body.innerHTML).not.toContain('sk-1');
 });
 
 test('saved_label_goes_away_after_one_and_a_half_seconds', async () => {
@@ -349,4 +371,24 @@ test('switching_provider_discards_draft', async () => {
   expect((await screen.findByPlaceholderText('Model name') as HTMLInputElement).value).toBe('claude-model');
   expect(keyInput().value).toBe('');
   expect(document.body.innerHTML).not.toContain('DRAFT');
+});
+
+
+test('unavailable_store_without_lock_does_not_offer_destructive_reset', async () => {
+  setup({ provider_state: providerState({ secretsUnavailable: true }) });
+  await openProviders();
+  await screen.findByText(/secrets\.dat is unreadable/);
+  expect(screen.queryByRole('button', { name: 'Reset stored secrets' })).toBeNull();
+});
+
+
+test('locked_store_offers_reset_only_after_confirmation', async () => {
+  setup({ provider_state: providerState({ secretsUnavailable: true, secretsLocked: true }), provider_reset_secrets: stateFor('Claude') });
+  await openProviders();
+  await fireEvent.click(await screen.findByRole('button', { name: 'Reset stored secrets' }));
+  expect(calls('provider_reset_secrets')).toHaveLength(0);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Reset stored secrets' }));
+  await waitFor(() => expect(calls('provider_reset_secrets')).toHaveLength(1));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Reset stored secrets' })).toBeNull());
 });

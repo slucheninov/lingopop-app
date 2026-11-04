@@ -1,5 +1,5 @@
-//! macOS DEV implementations of the platform traits, so the owner can run the app on the dev Mac.
-//! Never shipped. Every `unsafe` block of the crate's macOS code lives under this module and
+//! macOS adapters, including Keychain secrets and the remaining dev stubs.
+//! Every `unsafe` block of the crate's macOS code lives under this module and
 //! carries a `// SAFETY:` comment.
 
 mod capture;
@@ -30,3 +30,12 @@ pub use login_item::MacLoginItem;
 
 mod overlay;
 pub use overlay::MacOverlay;
+
+mod permissions;
+pub use permissions::MacPermissions;
+
+pub mod keychain;
+mod secrets;
+pub use secrets::MacProtector;
+
+pub use system::activate_app;

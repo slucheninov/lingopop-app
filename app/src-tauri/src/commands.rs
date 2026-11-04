@@ -26,6 +26,8 @@ pub struct ShellState {
     pub hooks: Arc<dyn crate::settings_cmds::SettingsHooks>,
     /// Serializes settings/UI saves through their side effects and emitted views.
     pub settings_write: tokio::sync::Mutex<()>,
+    /// Permission panes opened in System Settings (the retry-after-grant hint).
+    pub permission_hints: Arc<crate::permissions_cmds::PermissionHints>,
     pub window_locks: std::collections::BTreeMap<&'static str, tokio::sync::Mutex<()>>,
 }
 

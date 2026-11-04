@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { icons, providerColors, providerIcons } from '../lib/icons';
   import { t } from '../lib/i18n';
-  import { clearProviderKey, getProviderState, openUrl, saveProvider, validateProvider } from '../lib/settingsIpc';
+  import { resetProviderSecrets, clearProviderKey, getProviderState, openUrl, saveProvider, validateProvider } from '../lib/settingsIpc';
   import type { DraftErrors, ProviderFieldName, ProviderState, SettingsPatch, SettingsView } from '../lib/settingsTypes';
   import type { Provider } from '../lib/types';
   // The parent keys this component by provider, so every unsaved edit (and the key) is dropped on a switch.
@@ -17,6 +17,21 @@
   let region = $state('');
   let errors = $state<DraftErrors>({ baseUrl: null, referer: null, region: null });
   let failure = $state<string | null>(null);
+  let confirmReset = $state(false);
+  let cancelReset = $state<HTMLButtonElement | null>(null);
+  $effect(() => { if (confirmReset) cancelReset?.focus(); });
+  async function resetSecrets() {
+    if (saving) return;
+    confirmReset = false;
+    saving = true;
+    failure = null;
+    apiKey = '';
+    try {
+      const next = await resetProviderSecrets(provider);
+      if (!disposed) adopt(next);
+    } catch { if (!disposed) failure = t("Couldn't reset stored secrets."); }
+    finally { if (!disposed) saving = false; }
+  }
   let saved = $state(false);
   let saving = $state(false);
   let disposed = false;
@@ -76,6 +91,13 @@
       flashTimer = setTimeout(() => { saved = false; }, 1500);
     } catch (error) {
       if (!disposed) failure = message(error);
+      // The connection may have been committed before the key write failed: refresh, keeping the original error.
+      if (!disposed) {
+        try {
+          const next = await getProviderState(provider);
+          if (!disposed) adopt(next);
+        } catch { /* keep the save error */ }
+      }
     } finally {
       if (!disposed) saving = false;
     }
@@ -204,6 +226,20 @@
       <p class="caption">{t('Triggered on 429 (rate limit), 5xx (server error), and network errors.')}</p>
     </section>
 
+    {#if info.secretsLocked}
+      <section>
+        {#if confirmReset}
+          <p>{t('Reset all stored API keys and provider connections? You will need to enter them again.')}</p>
+          <div class="row">
+            <button type="button" bind:this={cancelReset} onclick={() => { confirmReset = false; }}>{t('Cancel')}</button>
+            <button type="button" onclick={resetSecrets} disabled={saving}>{t('Reset stored secrets')}</button>
+          </div>
+        {:else}
+          <button type="button" onclick={() => { confirmReset = true; }} disabled={saving}>{t('Reset stored secrets')}</button>
+        {/if}
+        {@render errorLine()}
+      </section>
+    {/if}
     <div class="footer">
       {#if saved}<span class="saved">{@html icons.check}{t('Saved')}</span>{/if}
       {#if blocked}<p class="field-error">{t("Provider settings can't be saved because secrets.dat is unreadable. Remove or rename it and enter your keys again.")}</p>{/if}

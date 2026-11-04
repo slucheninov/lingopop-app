@@ -1,0 +1,10 @@
+Hide LingoPop
+Quit LingoPop from the menu bar and open it again to apply the new language.
+Select text anywhere on your Mac, press a shortcut, and get an instant AI translation, grammar fix, or rewrite in a popup near your cursor.
+Supports Claude, OpenAI, Gemini, Grok, Google Translate, DeepL, and Microsoft Translator. API keys and provider settings are stored locally in an encrypted file. Usage statistics, and optionally translation history, can sync between Macs via iCloud Drive.
+Sync translation history to iCloud
+Sync usage statistics via iCloud Drive
+iCloud Drive available
+iCloud Drive sync
+iCloud Drive unavailable
+Syncs usage statistics and, if enabled, translation history between Macs signed into the same Apple ID. Settings, provider settings and API keys stay local on each Mac.
