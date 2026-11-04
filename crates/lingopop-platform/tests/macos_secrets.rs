@@ -41,10 +41,12 @@ use std::sync::{
 struct FakeStore {
     key: Mutex<Option<SecretKey>>,
     unavailable: bool,
+    loads: AtomicUsize,
     inserts: AtomicUsize,
 }
 impl KeychainKeyStore for FakeStore {
     fn load(&self) -> Result<Option<SecretKey>, ProtectError> {
+        self.loads.fetch_add(1, Ordering::SeqCst);
         if self.unavailable {
             Err(ProtectError::Unavailable)
         } else {
@@ -195,18 +197,18 @@ fn reset_quarantines_file_and_regenerates_key() {
 }
 
 #[test]
-fn key_disappearing_after_open_never_generates_replacement() {
+fn loaded_key_is_cached_and_never_replaced_when_keychain_item_disappears() {
     let keys = Arc::new(FakeStore::default());
     let protector = KeyStoreProtector::new(keys.clone());
     let sealed = protector.protect(b"sentinel").unwrap();
     protector.unprotect(&sealed).unwrap();
     *keys.key.lock().unwrap() = None;
-    assert!(matches!(
-        protector.protect(b"new sentinel"),
-        Err(ProtectError::KeyMissing)
-    ));
+    let next = protector.protect(b"new sentinel").unwrap();
+    assert_eq!(protector.unprotect(&next).unwrap(), b"new sentinel");
     assert_eq!(keys.inserts.load(Ordering::SeqCst), 1);
+    assert_eq!(keys.loads.load(Ordering::SeqCst), 1);
 }
+
 #[test]
 fn protector_error_text_and_debug_are_fixed() {
     for e in [

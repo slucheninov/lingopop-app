@@ -41,6 +41,31 @@ pub struct ShellConfig {
     settings: Mutex<Settings>,
     path: PathBuf,
     secrets: Option<Mutex<SecretStore>>,
+    secrets_metadata: Mutex<SecretsMetadata>,
+}
+
+// Key-free committed metadata. Never held during protector/filesystem calls.
+struct SecretsMetadata {
+    available: bool,
+    locked: bool,
+    connections: ProviderSettingsState,
+    has_keys: std::collections::BTreeSet<ProviderType>,
+}
+impl SecretsMetadata {
+    fn from_store(store: Option<&SecretStore>) -> Self {
+        Self {
+            available: store.is_some_and(|s| !s.is_locked()),
+            locked: store.is_some_and(SecretStore::is_locked),
+            connections: store.map_or(
+                ProviderSettingsState::Absent,
+                SecretStore::provider_settings,
+            ),
+            has_keys: ProviderType::ALL
+                .into_iter()
+                .filter(|p| store.is_some_and(|s| s.has_api_key(*p)))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -80,9 +105,9 @@ impl ShellConfig {
         if !secrets.is_locked() {
             return Err(SecretsWriteError::Unavailable);
         }
-        secrets
-            .reset(&lingopop_core::time::SystemClock)
-            .map_err(Into::into)
+        let result = secrets.reset(&lingopop_core::time::SystemClock);
+        *lock(&self.secrets_metadata) = SecretsMetadata::from_store(Some(&secrets));
+        result.map_err(Into::into)
     }
     pub fn update_settings(
         &self,
@@ -98,13 +123,14 @@ impl ShellConfig {
         Ok(settings.clone())
     }
     pub fn set_api_key(&self, provider: ProviderType, key: &str) -> Result<(), SecretsWriteError> {
-        lock(
+        let mut secrets = lock(
             self.secrets
                 .as_ref()
                 .ok_or(SecretsWriteError::Unavailable)?,
-        )
-        .set_api_key(provider, key)
-        .map_err(Into::into)
+        );
+        let result = secrets.set_api_key(provider, key);
+        *lock(&self.secrets_metadata) = SecretsMetadata::from_store(Some(&secrets));
+        result.map_err(Into::into)
     }
     pub fn set_connection(
         &self,
@@ -122,19 +148,17 @@ impl ShellConfig {
             ProviderSettingsState::Corrupt => return Err(SecretsWriteError::Corrupt),
         };
         map.insert(provider, settings);
-        secrets.set_provider_settings(&map).map_err(Into::into)
+        let result = secrets.set_provider_settings(&map);
+        *lock(&self.secrets_metadata) = SecretsMetadata::from_store(Some(&secrets));
+        result.map_err(Into::into)
     }
     pub fn has_api_key(&self, provider: ProviderType) -> bool {
-        self.secrets
-            .as_ref()
-            .is_some_and(|s| lock(s).has_api_key(provider))
+        lock(&self.secrets_metadata).has_keys.contains(&provider)
     }
     pub fn connection(&self, provider: ProviderType) -> ProviderConnectionSettings {
         let mut map = default_providers();
-        if let Some(s) = &self.secrets {
-            if let ProviderSettingsState::Loaded(m) = lock(s).provider_settings() {
-                map.extend(m);
-            }
+        if let ProviderSettingsState::Loaded(m) = &lock(&self.secrets_metadata).connections {
+            map.extend(m.clone());
         }
         map.remove(&provider)
             .unwrap_or_else(|| ProviderConnectionSettings {
@@ -145,15 +169,16 @@ impl ShellConfig {
             })
     }
     pub fn secrets_locked(&self) -> bool {
-        self.secrets.as_ref().is_some_and(|s| lock(s).is_locked())
+        lock(&self.secrets_metadata).locked
     }
     pub fn secrets_available(&self) -> bool {
-        self.secrets.as_ref().is_some_and(|s| !lock(s).is_locked())
+        lock(&self.secrets_metadata).available
     }
     pub fn connections_corrupt(&self) -> bool {
-        self.secrets
-            .as_ref()
-            .is_some_and(|s| matches!(lock(s).provider_settings(), ProviderSettingsState::Corrupt))
+        matches!(
+            lock(&self.secrets_metadata).connections,
+            ProviderSettingsState::Corrupt
+        )
     }
 }
 
@@ -401,6 +426,7 @@ pub fn load(
         Arc::new(ShellConfig {
             settings: Mutex::new(settings),
             path: paths.settings_json(),
+            secrets_metadata: Mutex::new(SecretsMetadata::from_store(secrets.as_ref())),
             secrets: secrets.map(Mutex::new),
         }),
         Arc::new(ShellStores {

@@ -76,22 +76,53 @@ pub trait KeychainKeyStore: Send + Sync {
     fn delete(&self) -> Result<(), ProtectError>;
 }
 /// Portable protector logic; native Keychain operations are injected.
+/// A successfully loaded key is cached until explicit reset or protector drop.
 pub struct KeyStoreProtector {
     keys: std::sync::Arc<dyn KeychainKeyStore>,
-    key_used: std::sync::atomic::AtomicBool,
+    cache: std::sync::Mutex<KeyCache>,
+}
+#[derive(Default)]
+struct KeyCache {
+    key: Option<SecretKey>,
+    used: bool,
 }
 impl KeyStoreProtector {
     pub fn new(keys: std::sync::Arc<dyn KeychainKeyStore>) -> Self {
         Self {
             keys,
-            key_used: std::sync::atomic::AtomicBool::new(false),
+            cache: std::sync::Mutex::new(KeyCache::default()),
         }
     }
+    fn key(&self, create: bool) -> Result<SecretKey, ProtectError> {
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !create {
+            cache.used = true;
+        }
+        if let Some(key) = &cache.key {
+            return Ok(key.clone());
+        }
+        let key = match self.keys.load()? {
+            Some(key) => key,
+            None if create && !cache.used => self.keys.insert_if_absent(SecretKey::generate()?)?,
+            None => return Err(ProtectError::KeyMissing),
+        };
+        cache.used = true;
+        cache.key = Some(key.clone());
+        Ok(key)
+    }
     pub fn regenerate_key(&self) -> Result<(), ProtectError> {
+        let mut cache = self
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Discard the prior zeroizing key even if deletion or insertion fails.
+        cache.key = None;
+        cache.used = true;
         self.keys.delete()?;
-        self.keys.insert_if_absent(SecretKey::generate()?)?;
-        self.key_used
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        cache.key = Some(self.keys.insert_if_absent(SecretKey::generate()?)?);
         Ok(())
     }
 }
@@ -100,24 +131,12 @@ impl lingopop_core::secrets::SecretProtector for KeyStoreProtector {
         self.regenerate_key()
     }
     fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, ProtectError> {
-        let key = match self.keys.load()? {
-            Some(key) => key,
-            None if self.key_used.load(std::sync::atomic::Ordering::SeqCst) => {
-                return Err(ProtectError::KeyMissing)
-            }
-            None => self.keys.insert_if_absent(SecretKey::generate()?)?,
-        };
-        self.key_used
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        seal(&key, plain)
+        seal(&self.key(true)?, plain)
     }
     fn unprotect(&self, bytes: &[u8]) -> Result<Vec<u8>, ProtectError> {
         if bytes.len() < 32 || !bytes.starts_with(MAGIC) {
             return Err(ProtectError::Invalid);
         }
-        self.key_used
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        let key = self.keys.load()?.ok_or(ProtectError::KeyMissing)?;
-        open(&key, bytes)
+        open(&self.key(false)?, bytes)
     }
 }

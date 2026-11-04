@@ -413,3 +413,66 @@ fn task7_reset_none_store_is_refused() {
     assert!(!provider_state_of(&config, ProviderType::Claude).secrets_locked);
     assert!(dir.path().join("secrets.dat").is_dir());
 }
+
+#[test]
+fn task7_slow_keychain_does_not_block_settings_view_or_provider_state() {
+    use lingopop_platform::secrets_aead::{KeyStoreProtector, KeychainKeyStore, SecretKey};
+    struct SlowKeys {
+        entered: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+        key: Mutex<Option<SecretKey>>,
+    }
+    impl KeychainKeyStore for SlowKeys {
+        fn load(&self) -> Result<Option<SecretKey>, ProtectError> {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(self.key.lock().unwrap().clone())
+        }
+        fn insert_if_absent(&self, key: SecretKey) -> Result<SecretKey, ProtectError> {
+            Ok(self.key.lock().unwrap().get_or_insert(key).clone())
+        }
+        fn delete(&self) -> Result<(), ProtectError> {
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let mut bundle = platform();
+    bundle.protector = Arc::new(KeyStoreProtector::new(Arc::new(SlowKeys {
+        entered: entered_tx,
+        release: Mutex::new(release_rx),
+        key: Mutex::new(None),
+    })));
+    let (config, _, ui) = load(&DataPaths::new(dir.path()), &bundle, Arc::new(SystemClock));
+    let writer_config = config.clone();
+    let writer =
+        std::thread::spawn(move || writer_config.set_api_key(ProviderType::Claude, "sentinel"));
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    let reader_config = config.clone();
+    let (view_tx, view_rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let view = crate::settings_cmds::settings_view_parts(&reader_config, &ui, &[]);
+        let provider = provider_state_of(&reader_config, ProviderType::Claude);
+        view_tx.send((view, provider)).unwrap();
+    });
+    let read = view_rx.recv_timeout(std::time::Duration::from_secs(1));
+    // Always release/join before asserting so a regression never hangs the test process.
+    release_tx.send(()).unwrap();
+    writer.join().unwrap().unwrap();
+    reader.join().unwrap();
+    let (view, provider) = read.expect("settings view blocked behind the Keychain prompt");
+    assert!(
+        !view
+            .providers
+            .iter()
+            .find(|p| p.provider == ProviderType::Claude)
+            .unwrap()
+            .has_key
+    );
+    assert!(!provider.has_key);
+    assert!(!provider.secrets_unavailable);
+    assert!(provider_state_of(&config, ProviderType::Claude).has_key);
+}

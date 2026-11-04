@@ -197,8 +197,11 @@ pub async fn provider_save(
     draft: ProviderDraft,
 ) -> Result<ProviderState, String> {
     let _write = state.settings_write.lock().await;
-    let result = save_draft(&state.config, provider, &draft);
-    drop(draft);
+    let config = state.config.clone();
+    let result =
+        tauri::async_runtime::spawn_blocking(move || save_draft(&config, provider, &draft))
+            .await
+            .unwrap_or(Err(KEY_SETTINGS_NOT_SAVED));
     // A failed key write still changed the connection: always tell the windows to re-read.
     let _ = app.emit("settings://changed", &settings_view(&state));
     result.map_err(|key| i18n::t(state.ui.language(), key, &[]))?;
@@ -212,7 +215,10 @@ pub async fn provider_clear_key(
     provider: ProviderType,
 ) -> Result<ProviderState, String> {
     let _write = state.settings_write.lock().await;
-    let result = clear_key_of(&state.config, provider);
+    let config = state.config.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || clear_key_of(&config, provider))
+        .await
+        .unwrap_or(Err(KEY_KEY_NOT_SAVED));
     let _ = app.emit("settings://changed", &settings_view(&state));
     result.map_err(|key| i18n::t(state.ui.language(), key, &[]))?;
     Ok(provider_state_of(&state.config, provider))
