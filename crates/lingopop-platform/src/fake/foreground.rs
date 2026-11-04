@@ -4,8 +4,10 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::log::{Event, EventLog};
+use super::permissions::FakePermissions;
 use crate::error::PlatformError;
 use crate::foreground::{ForegroundWindow, WindowHandle};
+use crate::permissions::{PermissionKind, PermissionState};
 
 struct State {
     current: Option<WindowHandle>,
@@ -15,6 +17,13 @@ struct State {
     /// A successful restore waiting for enough `current()` polls to take effect.
     pending: Option<(WindowHandle, u32)>,
     restored: Vec<WindowHandle>,
+    /// Targets whose registry entry is gone (like a macOS handle that was evicted or expired).
+    retired: HashSet<WindowHandle>,
+    /// The foreground moves to this window at the next `is_current_target` call, as if the
+    /// user switched apps right after the restore succeeded.
+    drift: Option<WindowHandle>,
+    target_checks: Vec<WindowHandle>,
+    permissions: Option<Arc<FakePermissions>>,
 }
 
 pub struct FakeForeground {
@@ -32,6 +41,10 @@ impl FakeForeground {
                 after_polls: 1,
                 pending: None,
                 restored: Vec::new(),
+                retired: HashSet::new(),
+                drift: None,
+                target_checks: Vec::new(),
+                permissions: None,
             }),
             log: Mutex::new(None),
         })
@@ -65,6 +78,28 @@ impl FakeForeground {
     /// After `restore`, `current()` reports the target from its `n`-th call on (default 1).
     pub fn foreground_after_polls(&self, n: u32) {
         self.state().after_polls = n.max(1);
+    }
+
+    /// Like macOS: while Accessibility is not `Granted`, `is_current_target` fails with
+    /// `PermissionDenied(Accessibility)` (the call is still recorded).
+    pub fn require_permission(&self, permissions: Arc<FakePermissions>) {
+        self.state().permissions = Some(permissions);
+    }
+
+    /// `window` becomes a stale target: `is_current_target` answers `Ok(false)` for it.
+    pub fn retire_target(&self, window: WindowHandle) {
+        self.state().retired.insert(window);
+    }
+
+    /// The foreground becomes `window` the next time `is_current_target` is called (a switch
+    /// between the restore and the keystroke).
+    pub fn switch_foreground_on_next_target_check(&self, window: WindowHandle) {
+        self.state().drift = Some(window);
+    }
+
+    /// Every `is_current_target` argument, in call order.
+    pub fn target_checks(&self) -> Vec<WindowHandle> {
+        self.state().target_checks.clone()
     }
 
     pub fn restored(&self) -> Vec<WindowHandle> {
@@ -109,5 +144,22 @@ impl ForegroundWindow for FakeForeground {
 
     fn is_elevated(&self, window: WindowHandle) -> bool {
         self.state().elevated.contains(&window)
+    }
+
+    fn is_current_target(&self, window: WindowHandle) -> Result<bool, PlatformError> {
+        let mut s = self.state();
+        s.target_checks.push(window);
+        if let Some(p) = &s.permissions {
+            if p.peek(PermissionKind::Accessibility) != PermissionState::Granted {
+                return Err(PlatformError::PermissionDenied(
+                    PermissionKind::Accessibility,
+                ));
+            }
+        }
+        if let Some(other) = s.drift.take() {
+            s.current = Some(other);
+            s.pending = None;
+        }
+        Ok(!s.retired.contains(&window) && s.current == Some(window))
     }
 }

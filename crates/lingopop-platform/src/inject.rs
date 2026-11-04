@@ -43,7 +43,9 @@ impl fmt::Debug for ReplaceOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceOutcome {
     Pasted,
-    /// The target could not be brought to the front; the text is on the clipboard as plain text.
+    /// The target could not be brought to the front, or the foreground moved away before the
+    /// keystroke (`ForegroundWindow::is_current_target` is not atomic); nothing was pasted and
+    /// the text is on the clipboard as plain text.
     ForegroundLost,
 }
 
@@ -82,6 +84,22 @@ pub fn replace_selection(
             .unwrap_or_else(|| clip.sequence_number()),
     );
     written?;
+    // The last look before the keystroke. NOT atomic: the user can still switch apps between
+    // this answer and `send_paste`, so this narrows the race, it does not remove it. A
+    // foreground that moved after the restore means the paste must go nowhere: the text stays
+    // on the clipboard for a manual paste instead. A failed check (macOS: Accessibility
+    // revoked) is returned as it is and nothing is sent.
+    if !fg.is_current_target(target)? {
+        if let Some(l) = &opts.log {
+            l("replace skipped: target is no longer in front");
+        }
+        // Undo our transient write first (the guard only restores over our own write), then
+        // leave the text as an ordinary entry, like the restore-failed path above.
+        drop(guard);
+        clip.check_preservable()?;
+        clip.write_text(text)?;
+        return Ok(ReplaceOutcome::ForegroundLost);
+    }
     keys.send_paste()?;
     sleeper.sleep(opts.restore_delay);
     drop(guard);

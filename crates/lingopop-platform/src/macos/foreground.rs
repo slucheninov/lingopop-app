@@ -42,4 +42,8 @@ impl ForegroundWindow for MacForeground {
     fn is_elevated(&self, _window: WindowHandle) -> bool {
         false
     }
+
+    fn is_current_target(&self, window: WindowHandle) -> Result<bool, PlatformError> {
+        Ok(self.current() == Some(window))
+    }
 }
