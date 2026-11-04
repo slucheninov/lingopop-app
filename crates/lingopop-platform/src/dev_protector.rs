@@ -4,10 +4,7 @@ use lingopop_core::secrets::{ProtectError, SecretProtector};
 
 /// NOT FOR SHIPPING: stores `secrets.dat` as PLAINTEXT (identity "encryption").
 ///
-/// The macOS build exists only so the owner can run the app on the dev Mac; a Keychain
-/// implementation would be real work for a platform that is never shipped, and the mac app has
-/// its own store. This type is compiled out on Windows (`#[cfg(not(windows))]`), so a shipped
-/// build cannot select it by mistake; Windows uses `WindowsProtector` (DPAPI).
+/// Available only for tests or an explicit dev-plaintext feature; native() never selects it.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct DevPlaintextProtector;
 

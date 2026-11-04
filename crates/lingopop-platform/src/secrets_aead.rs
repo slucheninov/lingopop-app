@@ -68,3 +68,40 @@ pub fn open(key: &SecretKey, bytes: &[u8]) -> Result<Vec<u8>, ProtectError> {
         )
         .map_err(|_| ProtectError::Invalid)
 }
+
+/// Atomic insertion MUST return the existing durable key on a duplicate; never update it.
+pub trait KeychainKeyStore: Send + Sync {
+    fn load(&self) -> Result<Option<SecretKey>, ProtectError>;
+    fn insert_if_absent(&self, key: SecretKey) -> Result<SecretKey, ProtectError>;
+    fn delete(&self) -> Result<(), ProtectError>;
+}
+/// Portable protector logic; native Keychain operations are injected.
+pub struct KeyStoreProtector {
+    keys: std::sync::Arc<dyn KeychainKeyStore>,
+}
+impl KeyStoreProtector {
+    pub fn new(keys: std::sync::Arc<dyn KeychainKeyStore>) -> Self {
+        Self { keys }
+    }
+    pub fn regenerate_key(&self) -> Result<(), ProtectError> {
+        self.keys.delete()?;
+        self.keys.insert_if_absent(SecretKey::generate()?)?;
+        Ok(())
+    }
+}
+impl lingopop_core::secrets::SecretProtector for KeyStoreProtector {
+    fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, ProtectError> {
+        let key = match self.keys.load()? {
+            Some(key) => key,
+            None => self.keys.insert_if_absent(SecretKey::generate()?)?,
+        };
+        seal(&key, plain)
+    }
+    fn unprotect(&self, bytes: &[u8]) -> Result<Vec<u8>, ProtectError> {
+        if bytes.len() < 32 || !bytes.starts_with(MAGIC) {
+            return Err(ProtectError::Invalid);
+        }
+        let key = self.keys.load()?.ok_or(ProtectError::KeyMissing)?;
+        open(&key, bytes)
+    }
+}

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 const FALLBACK_DIR: &str = "LingoPop-data";
 
 /// The data directory for the running OS: `%APPDATA%\LingoPop` on Windows,
-/// `~/Library/Application Support/LingoPop-dev` on macOS (dev only). When the environment
+/// `~/Library/Application Support/LingoPop-Tauri` on macOS (preview identity). When the environment
 /// variable is missing the current directory's `LingoPop-data` is used (the caller logs it).
 pub fn data_dir() -> PathBuf {
     #[cfg(windows)]
@@ -26,7 +26,7 @@ pub fn data_dir_from(base: Option<OsString>) -> PathBuf {
         Some(home) => PathBuf::from(home)
             .join("Library")
             .join("Application Support")
-            .join("LingoPop-dev"),
+            .join("LingoPop-Tauri"),
         None => PathBuf::from(FALLBACK_DIR),
     }
 }
@@ -42,8 +42,8 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(name, "LingoPop");
         } else {
-            assert_eq!(name, "LingoPop-dev");
-            assert!(dir.ends_with("Library/Application Support/LingoPop-dev"));
+            assert_eq!(name, "LingoPop-Tauri");
+            assert!(dir.ends_with("Library/Application Support/LingoPop-Tauri"));
         }
     }
 

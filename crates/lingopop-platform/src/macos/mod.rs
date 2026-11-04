@@ -30,3 +30,7 @@ pub use login_item::MacLoginItem;
 
 mod overlay;
 pub use overlay::MacOverlay;
+
+pub mod keychain;
+mod secrets;
+pub use secrets::MacProtector;

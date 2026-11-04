@@ -68,12 +68,12 @@ pub fn native() -> Platform {
 }
 
 /// The macOS dev implementations: text-only clipboard, no screen capture or OCR, and the
-/// PLAINTEXT `DevPlaintextProtector`. Dev only, never shipped.
+/// Keychain-backed secret protection.
 #[cfg(target_os = "macos")]
 pub fn native() -> Platform {
-    use crate::dev_protector::DevPlaintextProtector;
     use crate::macos::{MacCapture, MacClipboard, MacForeground, MacKeys, MacMonitors, MacOcr};
     use crate::sleeper::SystemSleeper;
+    use crate::MacProtector;
 
     Platform {
         overlay: Arc::new(crate::MacOverlay),
@@ -88,7 +88,7 @@ pub fn native() -> Platform {
         monitors: Arc::new(MacMonitors::new()),
         capture: Arc::new(MacCapture::new()),
         ocr: Arc::new(MacOcr::new()),
-        protector: Arc::new(DevPlaintextProtector::new()),
+        protector: Arc::new(MacProtector::new()),
         sleeper: Arc::new(SystemSleeper::new()),
     }
 }

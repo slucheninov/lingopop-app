@@ -7,7 +7,7 @@
 
 pub mod capture;
 pub mod clipboard;
-#[cfg(not(windows))]
+#[cfg(any(test, feature = "dev-plaintext"))]
 pub mod dev_protector;
 pub mod dismiss;
 pub mod error;
@@ -35,7 +35,7 @@ mod windows;
 #[cfg(target_os = "macos")]
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
-    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPopupWindow,
+    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPopupWindow, MacProtector,
 };
 #[cfg(windows)]
 pub use crate::windows::{
@@ -45,7 +45,7 @@ pub use crate::windows::{
 };
 pub use capture::{CapturedImage, ScreenCapture};
 pub use clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
-#[cfg(not(windows))]
+#[cfg(any(test, feature = "dev-plaintext"))]
 pub use dev_protector::DevPlaintextProtector;
 pub use error::{set_platform_log, LogFn, PlatformError};
 pub use foreground::{ForegroundWindow, WindowHandle};
@@ -75,3 +75,6 @@ pub use system::SystemInfo;
 
 pub mod overlay;
 pub use overlay::RegionOverlay;
+
+#[cfg(target_os = "macos")]
+pub use macos::keychain::LoginKeyStore;

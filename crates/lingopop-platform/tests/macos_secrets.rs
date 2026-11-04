@@ -1,4 +1,4 @@
-use lingopop_core::secrets::ProtectError;
+use lingopop_core::secrets::{ProtectError, SecretProtector};
 use lingopop_platform::secrets_aead::{open, seal, SecretKey};
 #[test]
 fn aead_roundtrip_uses_fresh_nonce() {
@@ -27,4 +27,141 @@ fn aead_tamper_wrong_key_or_unknown_magic_is_invalid() {
     for i in 0..a.len() {
         assert!(open(&key, &a[..i]).is_err());
     }
+}
+
+use lingopop_core::{
+    fsio::LoadOutcome, provider::ProviderType, secrets::SecretStore, time::SystemClock,
+};
+use lingopop_platform::secrets_aead::{KeyStoreProtector, KeychainKeyStore};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
+#[derive(Default)]
+struct FakeStore {
+    key: Mutex<Option<SecretKey>>,
+    unavailable: bool,
+    inserts: AtomicUsize,
+}
+impl KeychainKeyStore for FakeStore {
+    fn load(&self) -> Result<Option<SecretKey>, ProtectError> {
+        if self.unavailable {
+            Err(ProtectError::Unavailable)
+        } else {
+            Ok(self.key.lock().unwrap().clone())
+        }
+    }
+    fn insert_if_absent(&self, key: SecretKey) -> Result<SecretKey, ProtectError> {
+        self.inserts.fetch_add(1, Ordering::SeqCst);
+        if self.unavailable {
+            return Err(ProtectError::Unavailable);
+        }
+        Ok(self.key.lock().unwrap().get_or_insert(key).clone())
+    }
+    fn delete(&self) -> Result<(), ProtectError> {
+        *self.key.lock().unwrap() = None;
+        Ok(())
+    }
+}
+#[test]
+fn unavailable_keychain_never_replaces_ciphertext() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secrets.dat");
+    let before = seal(&SecretKey::generate().unwrap(), b"{}").unwrap();
+    std::fs::write(&path, &before).unwrap();
+    let keys = Arc::new(FakeStore {
+        unavailable: true,
+        ..Default::default()
+    });
+    let (mut store, outcome) = SecretStore::open(
+        path.clone(),
+        Arc::new(KeyStoreProtector::new(keys.clone())),
+        Arc::new(SystemClock),
+    )
+    .unwrap();
+    assert_eq!(outcome, LoadOutcome::Locked);
+    assert!(store.set_api_key(ProviderType::Claude, "sentinel").is_err());
+    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert_eq!(keys.inserts.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+#[test]
+fn concurrent_first_launch_returns_one_durable_key() {
+    let keys = Arc::new(FakeStore::default());
+    let handles: Vec<_> = (0..16)
+        .map(|_| {
+            let keys = keys.clone();
+            std::thread::spawn(move || KeyStoreProtector::new(keys).protect(b"sentinel").unwrap())
+        })
+        .collect();
+    let protector = KeyStoreProtector::new(keys);
+    for h in handles {
+        assert_eq!(
+            protector.unprotect(&h.join().unwrap()).unwrap(),
+            b"sentinel"
+        );
+    }
+}
+#[test]
+fn failed_key_save_writes_no_secrets_file() {
+    struct Refuse;
+    impl KeychainKeyStore for Refuse {
+        fn load(&self) -> Result<Option<SecretKey>, ProtectError> {
+            Ok(None)
+        }
+        fn insert_if_absent(&self, _: SecretKey) -> Result<SecretKey, ProtectError> {
+            Err(ProtectError::Unavailable)
+        }
+        fn delete(&self) -> Result<(), ProtectError> {
+            Err(ProtectError::Unavailable)
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("secrets.dat");
+    let (mut store, _) = SecretStore::open(
+        path.clone(),
+        Arc::new(KeyStoreProtector::new(Arc::new(Refuse))),
+        Arc::new(SystemClock),
+    )
+    .unwrap();
+    assert!(store.set_api_key(ProviderType::Claude, "sentinel").is_err());
+    assert!(!path.exists());
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn native_mac_protector_is_not_identity() {
+    // Invalid bytes are rejected before Keychain access; no real item is touched.
+    let result = lingopop_platform::native()
+        .protector
+        .unprotect(b"plain sentinel");
+    assert!(matches!(result, Err(ProtectError::Invalid)));
+}
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "owner-run: touches the login keychain"]
+fn native_throwaway_keychain_roundtrip() {
+    let keys = lingopop_platform::LoginKeyStore::for_service(format!(
+        "app.lingopop.tests.task7.{}",
+        std::process::id()
+    ));
+    struct Cleanup<'a>(&'a dyn KeychainKeyStore);
+    impl Drop for Cleanup<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.delete();
+        }
+    }
+    let _cleanup = Cleanup(&keys);
+    let key = keys
+        .insert_if_absent(SecretKey::generate().unwrap())
+        .unwrap();
+    let stored = keys.load().unwrap().unwrap();
+    assert_eq!(
+        open(&stored, &seal(&key, b"sentinel").unwrap()).unwrap(),
+        b"sentinel"
+    );
+    let other = keys
+        .insert_if_absent(SecretKey::generate().unwrap())
+        .unwrap();
+    assert!(open(&other, &seal(&key, b"sentinel").unwrap()).is_ok());
 }
