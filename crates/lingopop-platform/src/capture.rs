@@ -1,3 +1,5 @@
+//! Capture regions use desktop coordinates; CapturedImage dimensions and RGBA data always
+//! use physical image pixels, including on Retina displays.
 //! Screen capture: the image type, PNG encoding and the capture trait.
 
 use crate::error::PlatformError;

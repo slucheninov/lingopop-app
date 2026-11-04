@@ -21,6 +21,8 @@ pub mod login_item;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 mod macos;
+#[path = "macos/geometry.rs"]
+pub mod macos_geometry;
 pub mod monitors;
 pub mod native;
 pub mod ocr;
