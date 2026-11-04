@@ -69,7 +69,7 @@ fn provider_save_ignores_fields_the_provider_does_not_show() {
 struct FailingProtector;
 impl SecretProtector for FailingProtector {
     fn protect(&self, _: &[u8]) -> Result<Vec<u8>, ProtectError> {
-        Err(ProtectError::Failed("protect boom".into()))
+        Err(ProtectError::Invalid)
     }
     fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
         Ok(d.to_vec())
@@ -83,7 +83,7 @@ impl SecretProtector for FailsAfterFirst {
         if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
             Ok(d.to_vec())
         } else {
-            Err(ProtectError::Failed("protect boom".into()))
+            Err(ProtectError::Invalid)
         }
     }
     fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {

@@ -29,6 +29,7 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 fn describe(outcome: &LoadOutcome) -> &'static str {
     match outcome {
+        LoadOutcome::Locked => "locked",
         LoadOutcome::Missing => "missing",
         LoadOutcome::Loaded => "loaded",
         LoadOutcome::Legacy => "legacy format, upgraded on next write",
@@ -131,7 +132,7 @@ impl ShellConfig {
             })
     }
     pub fn secrets_available(&self) -> bool {
-        self.secrets.is_some()
+        self.secrets.as_ref().is_some_and(|s| !lock(s).is_locked())
     }
     pub fn connections_corrupt(&self) -> bool {
         self.secrets

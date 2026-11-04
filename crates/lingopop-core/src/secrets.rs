@@ -91,10 +91,14 @@ pub fn set_provider_settings_in(
     Ok(())
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ProtectError {
-    #[error("protecting or unprotecting the secrets failed: {0}")]
-    Failed(String),
+    #[error("secret protection unavailable")]
+    Unavailable,
+    #[error("invalid protected secrets")]
+    Invalid,
+    #[error("secret protection key missing")]
+    KeyMissing,
 }
 
 /// Seals and opens the plaintext payload (Windows DPAPI in Phase 3).
@@ -119,6 +123,7 @@ pub struct SecretStore {
     path: PathBuf,
     protector: Arc<dyn SecretProtector>,
     entries: BTreeMap<String, String>,
+    locked: bool,
 }
 
 impl std::fmt::Debug for SecretStore {
@@ -144,28 +149,32 @@ impl SecretStore {
         let (entries, outcome) = match read_optional(&path)? {
             None => (BTreeMap::new(), LoadOutcome::Missing),
             Some(bytes) if bytes.is_empty() => (BTreeMap::new(), LoadOutcome::Missing),
-            Some(bytes) => {
-                let decoded = protector
-                    .unprotect(&bytes)
-                    .ok()
-                    .and_then(|plain| decode_payload(&plain));
-                match decoded {
+            Some(bytes) => match protector.unprotect(&bytes) {
+                Err(ProtectError::Unavailable | ProtectError::KeyMissing) => {
+                    (BTreeMap::new(), LoadOutcome::Locked)
+                }
+                result => match result.ok().and_then(|plain| decode_payload(&plain)) {
                     Some(entries) => (entries, LoadOutcome::Loaded),
                     None => {
                         let backup = quarantine(&path, clock.now())?;
                         (BTreeMap::new(), LoadOutcome::CorruptBackedUp(backup))
                     }
-                }
-            }
+                },
+            },
         };
         Ok((
             SecretStore {
                 path,
                 protector,
                 entries,
+                locked: outcome == LoadOutcome::Locked,
             },
             outcome,
         ))
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
     }
 
     pub fn api_key(&self, provider: ProviderType) -> Option<&str> {
@@ -180,6 +189,9 @@ impl SecretStore {
 
     /// Stores the trimmed key; a key that is empty after trimming deletes the entry.
     pub fn set_api_key(&mut self, provider: ProviderType, key: &str) -> Result<(), SecretsError> {
+        if self.locked {
+            return Err(ProtectError::Unavailable.into());
+        }
         let name = api_key_entry(provider);
         let key = key.trim();
         let mut next = self.entries.clone();
@@ -208,6 +220,9 @@ impl SecretStore {
     }
 
     fn persist(&mut self, next: BTreeMap<String, String>) -> Result<(), SecretsError> {
+        if self.locked {
+            return Err(ProtectError::Unavailable.into());
+        }
         let sealed = self.protector.protect(&encode_payload(&next)?)?;
         atomic_write(&self.path, &sealed, true)?;
         self.entries = next;
@@ -243,7 +258,7 @@ mod tests {
         fn unprotect(&self, data: &[u8]) -> Result<Vec<u8>, ProtectError> {
             let body = data
                 .strip_prefix(PREFIX)
-                .ok_or_else(|| ProtectError::Failed("missing prefix".into()))?;
+                .ok_or_else(|| ProtectError::Invalid)?;
             Ok(body.iter().map(|b| b ^ 0x5A).collect())
         }
     }
@@ -252,11 +267,11 @@ mod tests {
 
     impl SecretProtector for FailingProtector {
         fn protect(&self, _: &[u8]) -> Result<Vec<u8>, ProtectError> {
-            Err(ProtectError::Failed("protect refused".into()))
+            Err(ProtectError::Invalid)
         }
 
         fn unprotect(&self, _: &[u8]) -> Result<Vec<u8>, ProtectError> {
-            Err(ProtectError::Failed("unprotect refused".into()))
+            Err(ProtectError::Invalid)
         }
     }
 
@@ -268,7 +283,7 @@ mod tests {
     impl SecretProtector for FlakyProtector {
         fn protect(&self, plain: &[u8]) -> Result<Vec<u8>, ProtectError> {
             if self.fail_protect.load(Ordering::SeqCst) {
-                return Err(ProtectError::Failed("protect refused".into()));
+                return Err(ProtectError::Invalid);
             }
             XorProtector.protect(plain)
         }
@@ -322,6 +337,39 @@ mod tests {
             ProviderSettingsState::Loaded(map) => map,
             other => panic!("expected Loaded, got {other:?}"),
         }
+    }
+
+    struct Classified(ProtectError);
+    impl SecretProtector for Classified {
+        fn protect(&self, _: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Err(self.0)
+        }
+        fn unprotect(&self, _: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Err(self.0)
+        }
+    }
+    #[test]
+    fn key_missing_never_quarantines() {
+        for error in [ProtectError::KeyMissing, ProtectError::Unavailable] {
+            let fx = fixture();
+            fs::write(&fx.path, b"durable ciphertext").unwrap();
+            let (mut store, outcome) = fx.open_with(Arc::new(Classified(error))).unwrap();
+            assert_eq!(outcome, LoadOutcome::Locked);
+            assert!(store.set_api_key(ProviderType::Claude, "sentinel").is_err());
+            assert!(store.set_api_key(ProviderType::Claude, "").is_err());
+            assert_eq!(fs::read(&fx.path).unwrap(), b"durable ciphertext");
+            assert_eq!(fx.names(), ["secrets.dat"]);
+        }
+    }
+    #[test]
+    fn dpapi_failure_still_quarantines() {
+        let fx = fixture();
+        fs::write(&fx.path, b"invalid").unwrap();
+        let (_, outcome) = fx
+            .open_with(Arc::new(Classified(ProtectError::Invalid)))
+            .unwrap();
+        assert!(matches!(outcome, LoadOutcome::CorruptBackedUp(_)));
+        assert!(!fx.path.exists());
     }
 
     // ---- payload ----

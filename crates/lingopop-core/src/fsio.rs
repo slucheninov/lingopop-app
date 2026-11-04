@@ -21,6 +21,8 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// How a store file was found on `open`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadOutcome {
+    /// Existing secrets are inaccessible; preserve them and refuse all writes.
+    Locked,
     /// No file, or an empty / whitespace-only / BOM-only one.
     Missing,
     /// A current envelope was read.
