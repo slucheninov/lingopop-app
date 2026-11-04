@@ -219,7 +219,7 @@
       <p class="caption">{t('Triggered on 429 (rate limit), 5xx (server error), and network errors.')}</p>
     </section>
 
-    {#if info.secretsUnavailable}
+    {#if info.secretsLocked}
       <section>
         {#if confirmReset}
           <p>{t('Reset all stored API keys and provider connections? You will need to enter them again.')}</p>

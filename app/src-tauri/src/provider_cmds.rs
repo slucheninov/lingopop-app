@@ -61,6 +61,7 @@ pub struct ProviderState {
     pub is_active: bool,
     pub fallback: Option<ProviderType>,
     pub secrets_unavailable: bool,
+    pub secrets_locked: bool,
     pub connections_corrupt: bool,
     pub key_guide_url: String,
 }
@@ -91,6 +92,7 @@ pub fn provider_state_of(config: &ShellConfig, provider: ProviderType) -> Provid
         is_active: settings.active_provider == provider,
         fallback: settings.fallback(provider),
         secrets_unavailable: !config.secrets_available(),
+        secrets_locked: config.secrets_locked(),
         connections_corrupt: config.connections_corrupt(),
         key_guide_url: key_guide_url(provider),
     }

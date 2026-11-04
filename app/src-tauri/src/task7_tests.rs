@@ -268,6 +268,7 @@ fn provider_state_json_shape() {
         "isActive",
         "fallback",
         "secretsUnavailable",
+        "secretsLocked",
         "connectionsCorrupt",
         "keyGuideUrl",
     ] {
@@ -367,4 +368,48 @@ fn task7_platform_identity_is_separate_and_windows_unchanged() {
     } else {
         "Library/Application Support/LingoPop-Tauri"
     }));
+}
+
+#[test]
+fn task7_reset_healthy_store_is_refused_without_touching_file_or_key() {
+    struct CountReset(std::sync::atomic::AtomicUsize);
+    impl SecretProtector for CountReset {
+        fn protect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Ok(d.to_vec())
+        }
+        fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, ProtectError> {
+            Ok(d.to_vec())
+        }
+        fn reset_key(&self) -> Result<(), ProtectError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let keys = Arc::new(CountReset(Default::default()));
+    let mut bundle = platform();
+    bundle.protector = keys.clone();
+    let (config, _, _) = load(&DataPaths::new(dir.path()), &bundle, Arc::new(SystemClock));
+    save_draft(
+        &config,
+        ProviderType::Claude,
+        &draft("sentinel", "https://x"),
+    )
+    .unwrap();
+    let path = dir.path().join("secrets.dat");
+    let before = std::fs::read(&path).unwrap();
+    assert!(config.reset_secrets().is_err());
+    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert_eq!(keys.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(config.secrets_available());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+#[test]
+fn task7_reset_none_store_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("secrets.dat")).unwrap();
+    let (config, _, _) = rig(dir.path());
+    assert!(config.reset_secrets().is_err());
+    assert!(!provider_state_of(&config, ProviderType::Claude).secrets_locked);
+    assert!(dir.path().join("secrets.dat").is_dir());
 }

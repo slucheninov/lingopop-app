@@ -113,6 +113,7 @@ export interface ProviderState {
   isActive: boolean;
   fallback: Provider | null;
   secretsUnavailable: boolean;
+  secretsLocked: boolean;
   connectionsCorrupt: boolean;
   keyGuideUrl: string;
 }

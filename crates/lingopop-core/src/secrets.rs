@@ -180,8 +180,9 @@ impl SecretStore {
     /// Explicit destructive recovery. Quarantine first, then replace the key. A failure
     /// leaves this store locked, including when the file has already been moved aside.
     pub fn reset(&mut self, clock: &dyn Clock) -> Result<(), SecretsError> {
+        let exists = self.path.try_exists()?;
         self.locked = true;
-        if read_optional(&self.path)?.is_some() {
+        if exists {
             quarantine(&self.path, clock.now())?;
         }
         self.protector.reset_key()?;
@@ -391,6 +392,17 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, LoadOutcome::CorruptBackedUp(_)));
         assert!(!fx.path.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn secrets_reset_existence_error_does_not_lock_healthy_store() {
+        let fx = fixture();
+        let (mut store, _) = fx.open();
+        // ELOOP is deterministic even with root privileges; permissions are not.
+        std::os::unix::fs::symlink(&fx.path, &fx.path).unwrap();
+        assert!(store.reset(fx.clock.as_ref()).is_err());
+        assert!(!store.is_locked());
     }
 
     // ---- payload ----

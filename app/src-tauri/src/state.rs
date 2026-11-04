@@ -76,7 +76,11 @@ impl ShellConfig {
             .secrets
             .as_ref()
             .ok_or(SecretsWriteError::Unavailable)?;
-        lock(secrets)
+        let mut secrets = lock(secrets);
+        if !secrets.is_locked() {
+            return Err(SecretsWriteError::Unavailable);
+        }
+        secrets
             .reset(&lingopop_core::time::SystemClock)
             .map_err(Into::into)
     }
@@ -139,6 +143,9 @@ impl ShellConfig {
                 referer: None,
                 region: None,
             })
+    }
+    pub fn secrets_locked(&self) -> bool {
+        self.secrets.as_ref().is_some_and(|s| lock(s).is_locked())
     }
     pub fn secrets_available(&self) -> bool {
         self.secrets.as_ref().is_some_and(|s| !lock(s).is_locked())
