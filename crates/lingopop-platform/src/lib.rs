@@ -82,3 +82,6 @@ pub use overlay::RegionOverlay;
 
 #[cfg(target_os = "macos")]
 pub use macos::keychain::LoginKeyStore;
+
+#[cfg(target_os = "macos")]
+pub use macos::activate_app;

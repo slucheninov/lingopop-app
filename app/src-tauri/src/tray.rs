@@ -32,6 +32,12 @@ impl NativeIcon {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         tauri::async_runtime::spawn(async move {
             while let Some(frame) = rx.recv().await {
+                #[cfg(target_os = "macos")]
+                let bytes: &'static [u8] = {
+                    let _ = frame;
+                    include_bytes!("../icons/tray/mac-template.png")
+                };
+                #[cfg(not(target_os = "macos"))]
                 let bytes: &'static [u8] = match frame {
                     Frame::Idle => include_bytes!("../icons/tray/idle.png"),
                     Frame::Working1 => include_bytes!("../icons/tray/working-1.png"),
@@ -194,9 +200,14 @@ fn target_items(current: &str) -> Vec<String> {
 }
 impl TrayController {
     pub fn build(app: &AppHandle, language: Language) -> tauri::Result<Arc<Self>> {
+        #[cfg(target_os = "macos")]
+        let idle =
+            tauri::image::Image::from_bytes(include_bytes!("../icons/tray/mac-template.png"))?;
+        #[cfg(not(target_os = "macos"))]
         let idle = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/idle.png"))?;
         let tray = TrayIconBuilder::new()
             .icon(idle)
+            .icon_as_template(cfg!(target_os = "macos"))
             .tooltip("LingoPop")
             .on_menu_event(|app, event| {
                 let app = app.clone();

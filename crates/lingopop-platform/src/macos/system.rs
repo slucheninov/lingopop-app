@@ -41,3 +41,11 @@ impl SystemInfo for MacSystem {
         }
     }
 }
+
+/// Called only by the shell's posted main-thread job.
+pub fn activate_app() {
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        #[allow(deprecated)]
+        objc2_app_kit::NSApplication::sharedApplication(mtm).activateIgnoringOtherApps(true);
+    }
+}

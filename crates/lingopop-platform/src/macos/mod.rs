@@ -37,3 +37,5 @@ pub use permissions::MacPermissions;
 pub mod keychain;
 mod secrets;
 pub use secrets::MacProtector;
+
+pub use system::activate_app;

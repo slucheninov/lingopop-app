@@ -150,6 +150,8 @@ pub fn parse_wait_pid(args: &[String]) -> Option<u32> {
 }
 
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     // Before `native()`: the platform logs its own startup failures (e.g. the tracker) through it.
     let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
     lingopop_platform::set_platform_log(log.clone());
