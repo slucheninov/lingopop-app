@@ -15,7 +15,9 @@ use objc2_app_kit::{
 use objc2_foundation::{NSArray, NSData, NSString};
 
 use crate::error::PlatformError;
-use crate::pasteboard::{PasteboardBackend, PasteboardClipboard, PasteboardItem};
+use crate::pasteboard::{
+    PasteboardBackend, PasteboardClipboard, PasteboardItem, UNSUPPORTED_SNAPSHOT,
+};
 
 /// `NSPasteboard` as a `PasteboardBackend`. It holds only the pasteboard's NAME (`None` = the
 /// general pasteboard) and looks the object up per call, so it is `Send + Sync` and never keeps
@@ -69,16 +71,16 @@ impl PasteboardBackend for NsPasteboard {
     fn item_types(&self) -> Result<Vec<Vec<String>>, PlatformError> {
         autoreleasepool(|_| {
             let pb = self.pasteboard();
+            // nil is AppKit's retrieval error, not an empty pasteboard (that is an empty
+            // array): treating it as empty would let a restore wipe the user's clipboard.
+            let Some(items) = pb.pasteboardItems() else {
+                return Err(PlatformError::Unsupported(UNSUPPORTED_SNAPSHOT));
+            };
             // `types` only lists names; no data is requested.
-            Ok(pb
-                .pasteboardItems()
-                .map(|items| {
-                    items
-                        .iter()
-                        .map(|item| item.types().iter().map(|t| t.to_string()).collect())
-                        .collect()
-                })
-                .unwrap_or_default())
+            Ok(items
+                .iter()
+                .map(|item| item.types().iter().map(|t| t.to_string()).collect())
+                .collect())
         })
     }
 

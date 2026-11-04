@@ -174,3 +174,28 @@ fn replace_transient_write_failure_restores_emptied_clipboard() {
     assert_eq!(r.clip.text(), some("ORIGINAL"));
     assert!(r.keys.events().is_empty());
 }
+
+#[test]
+fn replace_fallback_refuses_when_the_clipboard_is_not_preservable() {
+    let r = rig();
+    r.clip.set_unpreservable(true);
+    r.fg.fail_restore(true);
+    assert_eq!(
+        replace(&r),
+        Err(PlatformError::Unsupported("pasteboard snapshot"))
+    );
+    assert_eq!(r.clip.text(), some("ORIGINAL"));
+    let calls = r.clip.calls();
+    assert!(!calls.contains(&ClipboardCall::Write));
+    assert!(!calls.contains(&ClipboardCall::WriteTransient));
+    assert!(r.keys.events().is_empty());
+}
+
+#[test]
+fn replace_default_clipboard_is_always_preservable_and_takes_no_extra_call() {
+    // The default `check_preservable` is `Ok(())`: the Windows-like path is unchanged.
+    let r = rig();
+    r.fg.fail_restore(true);
+    assert_eq!(replace(&r), Ok(ReplaceOutcome::ForegroundLost));
+    assert_eq!(r.clip.calls(), vec![ClipboardCall::Write]);
+}

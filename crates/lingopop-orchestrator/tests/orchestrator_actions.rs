@@ -751,3 +751,35 @@ async fn newer_trigger_prevents_input_blocked_auto_close() {
     assert!(r.popup.is_visible());
     assert!(matches!(model(&r).phase, PopupPhase::Result(_)));
 }
+
+#[tokio::test]
+async fn replace_fallback_refuses_unpreservable_clipboard_and_keeps_replace() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.clip.set_unpreservable(true);
+    r.fg.fail_restore(true);
+    let before = r.clip.entries();
+    r.orch.replace().await;
+    assert_eq!(r.clip.entries(), before, "nothing was written");
+    assert_eq!(result_text(&r), "DISPLAYED");
+    assert_eq!(
+        notice_key(&r).as_deref(),
+        Some(lingopop_orchestrator::messages::KEY_PASTEBOARD_UNSUPPORTED)
+    );
+    assert!(replace_shown(&r), "a confirmed failure keeps Replace");
+    assert!(r.popup.is_visible());
+}
+#[tokio::test]
+async fn replace_without_target_refuses_unpreservable_clipboard() {
+    let r = rig(Arc::new(FakeTransport::json(200, OK)), None);
+    ready(&r).await;
+    r.clip.set_unpreservable(true);
+    let before = r.clip.entries();
+    r.orch.replace().await;
+    assert_eq!(r.clip.entries(), before, "nothing was written");
+    assert_eq!(
+        notice_key(&r).as_deref(),
+        Some(lingopop_orchestrator::messages::KEY_PASTEBOARD_UNSUPPORTED)
+    );
+    assert!(replace_shown(&r));
+}

@@ -64,6 +64,8 @@ pub fn replace_selection(
     }
 
     if !bring_to_front(fg, sleeper, target, opts) {
+        // No snapshot is taken on this path, so make sure overwriting loses nothing.
+        clip.check_preservable()?;
         clip.write_text(text)?;
         return Ok(ReplaceOutcome::ForegroundLost);
     }

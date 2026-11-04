@@ -100,6 +100,9 @@ impl Orchestrator {
                             },
                         )
                     } else {
+                        // Nothing is snapshotted here: refuse to overwrite what a restore
+                        // could not bring back.
+                        clip.check_preservable()?;
                         clip.write_text(&text)?;
                         Ok(ReplaceOutcome::ForegroundLost)
                     }

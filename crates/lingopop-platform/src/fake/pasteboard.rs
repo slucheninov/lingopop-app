@@ -17,6 +17,7 @@ struct State {
     clears: usize,
     unreadable: HashSet<(u32, String)>,
     fail_write: bool,
+    fail_enumeration: bool,
     read_hook: Option<Hook>,
 }
 
@@ -40,6 +41,7 @@ impl FakePasteboard {
                 clears: 0,
                 unreadable: HashSet::new(),
                 fail_write: false,
+                fail_enumeration: false,
                 read_hook: None,
             })),
         }
@@ -97,6 +99,11 @@ impl FakePasteboard {
         self.state().fail_write = true;
     }
 
+    /// `item_types` fails like `pasteboardItems` returning nil (until `set_enumeration_failure(false)`).
+    pub fn set_enumeration_failure(&self, fail: bool) {
+        self.state().fail_enumeration = fail;
+    }
+
     /// Runs `hook` at the start of every data read (to simulate a foreign write at that moment).
     pub fn on_read(&self, hook: Box<dyn Fn(&FakePasteboard) + Send + Sync>) {
         self.state().read_hook = Some(Arc::from(hook));
@@ -128,9 +135,13 @@ impl PasteboardBackend for FakePasteboard {
     }
 
     fn item_types(&self) -> Result<Vec<Vec<String>>, PlatformError> {
-        Ok(self
-            .state()
-            .items
+        let s = self.state();
+        if s.fail_enumeration {
+            return Err(PlatformError::Unsupported(
+                crate::pasteboard::UNSUPPORTED_SNAPSHOT,
+            ));
+        }
+        Ok(s.items
             .iter()
             .map(|item| item.iter().map(|(t, _)| t.clone()).collect())
             .collect())

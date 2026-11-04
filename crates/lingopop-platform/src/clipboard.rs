@@ -166,6 +166,14 @@ pub trait Clipboard: Send + Sync {
     fn last_write_sequence(&self) -> Option<u64> {
         None
     }
+    /// Whether the current contents could be snapshotted and restored faithfully, WITHOUT
+    /// changing the clipboard. Callers that overwrite it without a snapshot (the Replace
+    /// fallback that leaves text for a manual paste) check this first and write nothing on
+    /// `Err`. Default `Ok(())`: Windows keeps its behaviour and opens no extra clipboard. macOS
+    /// returns `Unsupported("pasteboard snapshot")` for content a restore would drop.
+    fn check_preservable(&self) -> Result<(), PlatformError> {
+        Ok(())
+    }
 }
 
 /// Restores the saved clipboard on drop (also on unwind), but never over a newer foreign write.
@@ -207,8 +215,10 @@ impl Drop for RestoreGuard<'_> {
         if now == self.snapshot.sequence || self.observed.get() != Some(now) {
             return;
         }
-        // The decision above is only a pre-check: `restore_if` repeats it atomically with the
-        // clipboard being held, so a write that lands in between is not clobbered.
+        // The decision above is only a pre-check: `restore_if` repeats it. Windows re-checks
+        // while holding the clipboard open (a write cannot land in between); macOS compares
+        // `changeCount` immediately before `clearContents`, best effort: NSPasteboard has no
+        // cross-process compare-and-swap.
         if let Err(e) = self.clip.restore_if(&self.snapshot, now) {
             if let Some(log) = &self.log {
                 log(&format!("clipboard restore failed: {e}"));

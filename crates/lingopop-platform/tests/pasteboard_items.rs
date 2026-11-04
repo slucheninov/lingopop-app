@@ -473,3 +473,77 @@ fn clipboard_format_stays_hashable_and_clonable_without_copy() {
     assert_ne!(a, native(1, TEXT));
     assert_ne!(a, ClipboardFormat::UnicodeText);
 }
+
+#[test]
+fn enumeration_failure_is_unsupported_not_an_empty_snapshot() {
+    let r = rig(vec![item(&[(TEXT, b"mine")])]);
+    r.pb.set_enumeration_failure(true);
+    assert_eq!(r.clip.snapshot().unwrap_err(), unsupported());
+    assert_eq!(capture(&r), Err(unsupported()));
+    assert_eq!((send_copy_count(&r), r.pb.clear_calls()), (0, 0));
+    assert_eq!(r.clip.check_preservable(), Err(unsupported()));
+
+    // Only a SUCCESSFUL empty enumeration is an empty snapshot.
+    r.pb.set_enumeration_failure(false);
+    let empty = rig(Vec::new());
+    assert!(empty.clip.snapshot().unwrap().entries.is_empty());
+}
+
+#[test]
+fn check_preservable_follows_snapshot_completeness_and_changes_nothing() {
+    let ok = rig(vec![item(&[(TEXT, b"hi"), ("public.png", b"img")])]);
+    assert_eq!(ok.clip.check_preservable(), Ok(()));
+    for bad in [
+        item(&[(TEXT, b"hi"), (PROMISED, b"x")]),
+        item(&[(TEXT, b"hi"), ("dyn.ah62d4rv4gu8", b"x")]),
+    ] {
+        let r = rig(vec![bad]);
+        assert_eq!(r.clip.check_preservable(), Err(unsupported()));
+        assert_eq!(r.pb.clear_calls(), 0);
+    }
+    let unreadable = rig(vec![item(&[(TEXT, b"hi"), ("public.png", b"img")])]);
+    unreadable.pb.set_unreadable(0, "public.png");
+    assert_eq!(unreadable.clip.check_preservable(), Err(unsupported()));
+    let big = vec![0u8; MAX_TYPE_BYTES + 1];
+    let oversized = rig(vec![item(&[("public.png", &big)])]);
+    assert_eq!(oversized.clip.check_preservable(), Err(unsupported()));
+    assert_eq!(oversized.pb.clear_calls(), 0);
+}
+
+#[test]
+fn replace_fallback_refuses_to_overwrite_unpreservable_content() {
+    let original = vec![item(&[(TEXT, b"hi"), (PROMISED, b"file:///x")])];
+    let r = rig(original.clone());
+    r.fg.fail_restore(true);
+    let result = replace_selection(
+        &*r.fg,
+        &r.clip,
+        &*r.keys,
+        &*r.sleeper,
+        TARGET,
+        "NEW",
+        &ReplaceOptions::default(),
+    );
+    assert_eq!(result, Err(unsupported()));
+    assert_eq!(r.pb.items(), original, "contents unchanged");
+    assert_eq!(r.pb.clear_calls(), 0, "no clear, so no write either");
+    assert_eq!(r.pb.read_count_of(PROMISED), 0);
+    assert!(r.keys.events().is_empty());
+}
+
+#[test]
+fn replace_fallback_still_writes_when_the_content_is_preservable() {
+    let r = rig(vec![item(&[(TEXT, b"mine"), ("public.png", b"img")])]);
+    r.fg.fail_restore(true);
+    let result = replace_selection(
+        &*r.fg,
+        &r.clip,
+        &*r.keys,
+        &*r.sleeper,
+        TARGET,
+        "NEW",
+        &ReplaceOptions::default(),
+    );
+    assert_eq!(result, Ok(ReplaceOutcome::ForegroundLost));
+    assert_eq!(r.pb.items(), vec![item(&[(TEXT, b"NEW")])]);
+}

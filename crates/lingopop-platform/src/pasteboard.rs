@@ -54,7 +54,9 @@ pub type PasteboardItem = Vec<(String, Vec<u8>)>;
 pub trait PasteboardBackend: Send + Sync {
     /// `NSPasteboard.changeCount`.
     fn change_count(&self) -> u64;
-    /// Type names of every pasteboard item, in item order. Never reads data.
+    /// Type names of every pasteboard item, in item order. Never reads data. `Err` when the
+    /// pasteboard could not be enumerated (AppKit returns nil): never an empty list, which would
+    /// look like an empty clipboard and make a later restore wipe it.
     fn item_types(&self) -> Result<Vec<Vec<String>>, PlatformError>;
     /// The data of one type of one item; `Ok(None)` when the owner provides none (nil).
     fn read(&self, item: u32, type_name: &str) -> Result<Option<Vec<u8>>, PlatformError>;
@@ -253,6 +255,16 @@ impl<B: PasteboardBackend> Clipboard for PasteboardClipboard<B> {
 
     fn read_text(&self) -> Result<Option<String>, PlatformError> {
         self.backend.read_text()
+    }
+
+    fn check_preservable(&self) -> Result<(), PlatformError> {
+        // Same completeness rule as `snapshot()`, without keeping anything.
+        let collected = collect(&self.backend)?;
+        if collected.complete {
+            Ok(())
+        } else {
+            Err(PlatformError::Unsupported(UNSUPPORTED_SNAPSHOT))
+        }
     }
 
     fn write_text_transient(&self, text: &str) -> Result<(), PlatformError> {
