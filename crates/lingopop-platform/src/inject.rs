@@ -79,10 +79,10 @@ pub fn replace_selection(
     // sequence is the one our own write produced when the implementation can say so exactly
     // (macOS: what `clearContents` returned); a foreign write right after it is then never
     // mistaken for ours.
-    guard.observe(
-        clip.last_write_sequence()
-            .unwrap_or_else(|| clip.sequence_number()),
-    );
+    let own = clip
+        .last_write_sequence()
+        .unwrap_or_else(|| clip.sequence_number());
+    guard.observe(own);
     written?;
     // The last look before the keystroke. NOT atomic: the user can still switch apps between
     // this answer and `send_paste`, so this narrows the race, it does not remove it. A
@@ -93,8 +93,18 @@ pub fn replace_selection(
         if let Some(l) = &opts.log {
             l("replace skipped: target is no longer in front");
         }
-        // Undo our transient write first (the guard only restores over our own write), then
-        // leave the text as an ordinary entry, like the restore-failed path above.
+        // Undo our transient write first (the guard only restores over our own write). If
+        // another app wrote the clipboard since, that content is theirs: the guard leaves it
+        // alone and so must we, so no fallback write; a confirmed failure lets the caller
+        // keep the result and offer an explicit Copy. Otherwise leave the text as an ordinary
+        // entry, like the restore-failed path above.
+        if clip.sequence_number() != own {
+            drop(guard);
+            if let Some(l) = &opts.log {
+                l("replace skipped: clipboard changed by another app");
+            }
+            return Err(PlatformError::ClipboardBusy);
+        }
         drop(guard);
         clip.check_preservable()?;
         clip.write_text(text)?;

@@ -26,7 +26,10 @@ struct State {
     permissions: Option<Arc<FakePermissions>>,
 }
 
+type TargetCheckHook = Arc<dyn Fn() + Send + Sync>;
+
 pub struct FakeForeground {
+    target_check_hook: Mutex<Option<TargetCheckHook>>,
     state: Mutex<State>,
     log: Mutex<Option<Arc<EventLog>>>,
 }
@@ -34,6 +37,7 @@ pub struct FakeForeground {
 impl FakeForeground {
     pub fn new(current: Option<WindowHandle>) -> Arc<Self> {
         Arc::new(Self {
+            target_check_hook: Mutex::new(None),
             state: Mutex::new(State {
                 current,
                 elevated: HashSet::new(),
@@ -97,6 +101,15 @@ impl FakeForeground {
         self.state().drift = Some(window);
     }
 
+    /// Runs `hook` at the start of every `is_current_target` call (a side effect landing between
+    /// the transient write and the keystroke, e.g. a foreign clipboard write).
+    pub fn on_target_check(&self, hook: Box<dyn Fn() + Send + Sync>) {
+        *self
+            .target_check_hook
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(Arc::from(hook));
+    }
+
     /// Every `is_current_target` argument, in call order.
     pub fn target_checks(&self) -> Vec<WindowHandle> {
         self.state().target_checks.clone()
@@ -147,6 +160,14 @@ impl ForegroundWindow for FakeForeground {
     }
 
     fn is_current_target(&self, window: WindowHandle) -> Result<bool, PlatformError> {
+        let hook = self
+            .target_check_hook
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(h) = hook {
+            h();
+        }
         let mut s = self.state();
         s.target_checks.push(window);
         if let Some(p) = &s.permissions {

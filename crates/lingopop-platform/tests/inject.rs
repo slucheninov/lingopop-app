@@ -227,6 +227,20 @@ fn foreground_change_after_restore_never_sends_to_the_new_app() {
 }
 
 #[test]
+fn lost_target_never_overwrites_a_foreign_clipboard_write() {
+    let r = rig();
+    r.fg.switch_foreground_on_next_target_check(WindowHandle(55));
+    let clip = r.clip.clone();
+    r.fg.on_target_check(Box::new(move || clip.set_external_text("FOREIGN")));
+    assert_eq!(replace(&r), Err(PlatformError::ClipboardBusy));
+    assert_eq!(r.clip.text(), some("FOREIGN"));
+    assert!(r.keys.pasted().is_empty());
+    assert!(!r.keys.events().contains(&KeyCall::SendPaste));
+    assert!(!r.clip.calls().contains(&ClipboardCall::Write));
+    assert!(!r.clip.calls().contains(&ClipboardCall::Restore));
+}
+
+#[test]
 fn stale_target_is_a_lost_target_not_a_paste() {
     let r = rig();
     r.fg.retire_target(T);
