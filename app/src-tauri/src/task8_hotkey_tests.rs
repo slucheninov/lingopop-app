@@ -390,8 +390,8 @@ fn swift_observer_updates_registrations_without_a_resume_or_settings_change() {
     let registry = HotkeyRegistry::new(Arc::new(Posted(tx)), Arc::new(|| {}))
         .with_swift_source(crate::swift_source::SwiftSource::new(system.clone()));
     registry.apply(wanted());
-    let observer = registry.observe_swift();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let observer = registry.observe_swift_every(std::time::Duration::from_millis(50));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     for (running, count) in [(false, 2), (true, 0), (false, 2)] {
         system.set_bundle_running(Ok(running));
         loop {

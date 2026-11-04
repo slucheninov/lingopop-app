@@ -73,11 +73,17 @@ impl HotkeyRegistry {
         self
     }
     pub fn observe_swift(&self) -> tauri::async_runtime::JoinHandle<()> {
+        self.observe_swift_every(std::time::Duration::from_secs(5))
+    }
+    pub(crate) fn observe_swift_every(
+        &self,
+        interval: std::time::Duration,
+    ) -> tauri::async_runtime::JoinHandle<()> {
         let registry = self.clone();
         tauri::async_runtime::spawn(async move {
             loop {
                 registry.query_swift(false).await;
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                tokio::time::sleep(interval).await;
             }
         })
     }

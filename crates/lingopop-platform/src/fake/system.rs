@@ -22,7 +22,10 @@ impl FakeSystem {
         }
     }
     pub fn set_bundle_running(&self, result: Result<bool, PlatformError>) {
-        *self.running.lock().unwrap() = result;
+        *self
+            .running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = result;
     }
     pub fn opened(&self) -> Vec<String> {
         self.opened
@@ -37,7 +40,10 @@ impl FakeSystem {
 impl SystemInfo for FakeSystem {
     fn is_bundle_running(&self, bundle_id: &str) -> Result<bool, PlatformError> {
         assert_eq!(bundle_id, "com.lingopop.app");
-        self.running.lock().unwrap().clone()
+        self.running
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
     fn ui_languages(&self) -> Vec<String> {
         self.languages.clone()

@@ -188,7 +188,9 @@ impl ConfigSource for ShellConfig {
     }
 
     fn snapshot(&self) -> ConfigSnapshot {
-        let settings = lock(&self.settings);
+        // Clone and release the settings guard before touching `secrets`: keychain
+        // writes hold that lock across a possible user prompt.
+        let settings = lock(&self.settings).clone();
         match &self.secrets {
             Some(secrets) => {
                 let secrets = lock(secrets);
