@@ -2287,6 +2287,7 @@ name = "lingopop-platform"
 version = "0.2.0-alpha.7"
 dependencies = [
  "aes-gcm",
+ "block2",
  "core-foundation 0.10.1",
  "core-graphics",
  "crossbeam-channel",

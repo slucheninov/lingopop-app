@@ -112,3 +112,50 @@ fn invalid_geometry_is_rejected() {
     assert!(retina().capture_plan(Rect::new(0, 0, 0, 10)).is_err());
     assert!(MacGeometry::new(1, 900.0, vec![display(1, 0.0, 0.0, 10.0, 10.0, 0.0)]).is_err());
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn native_monitors_read_off_main_uses_cache_without_marker() {
+    use lingopop_platform::{MacMonitors, Monitors};
+    let monitors = MacMonitors::from_geometry(retina());
+    let worker = monitors.clone();
+    let got = std::thread::spawn(move || worker.monitors().unwrap())
+        .join()
+        .unwrap();
+    assert_eq!(got[0].scale_factor, 1.0);
+    assert_eq!(got[0].bounds, Rect::new(0, 0, 1440, 900));
+    assert_eq!(monitors.topology_revision(), 1);
+}
+
+#[test]
+fn topology_change_with_same_ids_invalidates_plan() {
+    let cache = TopologyCache::new(retina());
+    let plan = cache
+        .snapshot()
+        .capture_plan(Rect::new(10, 20, 100, 50))
+        .unwrap();
+    cache
+        .publish(900.0, vec![display(1, 0.0, 0.0, 1440.0, 900.0, 1.0)])
+        .unwrap();
+    assert_eq!(
+        cache.snapshot().ensure_current(&plan),
+        Err(PlatformError::InvalidRegion)
+    );
+    assert!(MacGeometry::new(1, 900.0, vec![])
+        .unwrap()
+        .ensure_current(&plan)
+        .is_err());
+}
+#[test]
+fn above_left_displays_and_fractional_capture_are_local() {
+    let g = MacGeometry::new(
+        1,
+        900.0,
+        vec![display(2, -1000.25, -800.5, 1000.25, 800.5, 1.5)],
+    )
+    .unwrap();
+    let p = g.capture_plan(Rect::new(-1000, -800, 100, 50)).unwrap();
+    assert_eq!(p.output_size, (150, 75));
+    assert_eq!(p.tiles[0].pixel_crop, Rect::new(0, 0, 151, 76));
+    assert_eq!(g.monitors()[0].bounds, Rect::new(-1001, -801, 1001, 801));
+}

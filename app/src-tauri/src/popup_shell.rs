@@ -18,7 +18,7 @@
 //! The orchestrator owns the geometry: it passes the origin and the LOGICAL size (what the
 //! frontend measures, reported through `popup_resized`) to every `show_at` / `resize`, clamped
 //! into the work area, and builds the dismiss rect from the same numbers. This shell only
-//! converts logical to physical pixels with the scale of the monitor under the origin and places
+//! converts logical sizes to desktop units with the scale of the monitor under the origin and places
 //! the window. `resize` is called under the orchestrator's commit mutex and only while the popup
 //! is visible (a resize never re-shows a popup that Close just hid).
 
@@ -116,16 +116,30 @@ impl ShellPopup {
                 let Some(window) = self.window() else {
                     return false;
                 };
-                window
+                // tao converts LogicalPosition directly from top-left Y-down points to
+                // AppKit. PhysicalPosition would divide Quartz points by the backing scale.
+                #[cfg(target_os = "macos")]
+                let placed = window
+                    .set_position(tauri::LogicalPosition::new(
+                        f64::from(rect.x),
+                        f64::from(rect.y),
+                    ))
+                    .and_then(|()| {
+                        window.set_size(tauri::LogicalSize::new(
+                            f64::from(rect.width.max(1)),
+                            f64::from(rect.height.max(1)),
+                        ))
+                    });
+                #[cfg(not(target_os = "macos"))]
+                let placed = window
                     .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
                     .and_then(|()| {
                         window.set_size(tauri::PhysicalSize::new(
                             rect.width.max(1) as u32,
                             rect.height.max(1) as u32,
                         ))
-                    })
-                    .and_then(|()| window.show())
-                    .is_ok()
+                    });
+                placed.and_then(|()| window.show()).is_ok()
             }
             Err(e) => {
                 log::warn!("popup show failed: {e}");
