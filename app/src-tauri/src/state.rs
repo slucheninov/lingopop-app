@@ -375,14 +375,14 @@ pub fn load(
     let launched = prefs
         .app_language
         .effective(&platform.system.ui_languages());
-    let settings = match Settings::load(&paths.settings_json(), clock.as_ref()) {
+    let settings = match Settings::load(&paths.settings_json(), clock.as_ref(), HOST) {
         Ok((settings, outcome)) => {
             log::info!("settings: {}", describe(&outcome));
             settings
         }
         Err(e) => {
             log::error!("settings could not be read, using defaults: {e}");
-            Settings::default()
+            Settings::default_for(HOST)
         }
     };
 
@@ -442,3 +442,8 @@ pub fn load(
         }),
     )
 }
+
+#[cfg(target_os = "macos")]
+pub const HOST: lingopop_core::host::HostKind = lingopop_core::host::HostKind::Unix;
+#[cfg(not(target_os = "macos"))]
+pub const HOST: lingopop_core::host::HostKind = lingopop_core::host::HostKind::Windows;

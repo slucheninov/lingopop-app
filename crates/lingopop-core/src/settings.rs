@@ -3,6 +3,7 @@
 //! settings (those live in `secrets.dat`) and the legacy singular `hotkey` are not
 //! part of the Windows format. Decoding is lenient per field (RF 2 / RF 3).
 
+use crate::host::HostKind;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
@@ -133,14 +134,27 @@ pub fn sanitize_magic_prompt(input: &str) -> String {
 }
 
 impl Settings {
+    pub fn default_for(host: HostKind) -> Self {
+        Self {
+            hotkeys: BTreeMap::from([(
+                AIOperation::Translate,
+                Hotkey::default_translate_for(host),
+            )]),
+            ..Self::default()
+        }
+    }
     /// Lenient decode (a UTF-8 BOM is tolerated): the root must be an object, every
     /// field is decoded on its own and a bad one gets its default.
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Settings, SettingsError> {
+        Self::from_json_bytes_for(bytes, HostKind::Windows)
+    }
+
+    pub fn from_json_bytes_for(bytes: &[u8], host: HostKind) -> Result<Settings, SettingsError> {
         let value: Value = serde_json::from_slice(strip_bom(bytes))?;
         let Value::Object(object) = value else {
             return Err(SettingsError::NotAnObject);
         };
-        let defaults = Settings::default();
+        let defaults = Settings::default_for(host);
         Ok(Settings {
             active_provider: field(&object, "activeProvider").unwrap_or(defaults.active_provider),
             fallbacks: field(&object, "fallbacks").unwrap_or(defaults.fallbacks),
@@ -184,18 +198,25 @@ impl Settings {
 
     /// Reads `path`; never writes. Missing or blank = defaults; an unparsable or
     /// non-object file is moved aside with `quarantine` and defaults are used.
-    pub fn load(path: &Path, clock: &dyn Clock) -> Result<(Settings, LoadOutcome), SettingsError> {
+    pub fn load(
+        path: &Path,
+        clock: &dyn Clock,
+        host: HostKind,
+    ) -> Result<(Settings, LoadOutcome), SettingsError> {
         let Some(bytes) = read_optional(path)? else {
-            return Ok((Settings::default(), LoadOutcome::Missing));
+            return Ok((Settings::default_for(host), LoadOutcome::Missing));
         };
         if is_blank(&bytes) {
-            return Ok((Settings::default(), LoadOutcome::Missing));
+            return Ok((Settings::default_for(host), LoadOutcome::Missing));
         }
-        match Settings::from_json_bytes(&bytes) {
+        match Settings::from_json_bytes_for(&bytes, host) {
             Ok(settings) => Ok((settings, LoadOutcome::Loaded)),
             Err(SettingsError::Json(_) | SettingsError::NotAnObject) => {
                 let backup = quarantine(path, clock.now())?;
-                Ok((Settings::default(), LoadOutcome::CorruptBackedUp(backup)))
+                Ok((
+                    Settings::default_for(host),
+                    LoadOutcome::CorruptBackedUp(backup),
+                ))
             }
             Err(other) => Err(other),
         }
@@ -525,7 +546,7 @@ mod tests {
     fn load_missing_file_gives_defaults_and_writes_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let (s, outcome) = Settings::load(&path, &clock()).unwrap();
+        let (s, outcome) = Settings::load(&path, &clock(), HostKind::Windows).unwrap();
         assert_eq!(s, Settings::default());
         assert_eq!(outcome, LoadOutcome::Missing);
         assert!(!path.exists());
@@ -538,7 +559,7 @@ mod tests {
         let path = dir.path().join("settings.json");
         for blank in [&b""[..], b"  \r\n\t", b"\xEF\xBB\xBF", b"\xEF\xBB\xBF \n"] {
             fs::write(&path, blank).unwrap();
-            let (s, outcome) = Settings::load(&path, &clock()).unwrap();
+            let (s, outcome) = Settings::load(&path, &clock(), HostKind::Windows).unwrap();
             assert_eq!(s, Settings::default());
             assert_eq!(outcome, LoadOutcome::Missing);
             assert_eq!(fs::read(&path).unwrap(), blank, "blank file left alone");
@@ -552,7 +573,7 @@ mod tests {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(br#"{"targetLanguage":"German"}"#);
         fs::write(&path, bytes).unwrap();
-        let (s, outcome) = Settings::load(&path, &clock()).unwrap();
+        let (s, outcome) = Settings::load(&path, &clock(), HostKind::Windows).unwrap();
         assert_eq!(s.target_language, "German");
         assert_eq!(outcome, LoadOutcome::Loaded);
     }
@@ -561,7 +582,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         fs::write(&path, content).unwrap();
-        let (s, outcome) = Settings::load(&path, &clock()).unwrap();
+        let (s, outcome) = Settings::load(&path, &clock(), HostKind::Windows).unwrap();
         assert_eq!(s, Settings::default());
         let LoadOutcome::CorruptBackedUp(backup) = outcome else {
             panic!("expected CorruptBackedUp, got {outcome:?}");
@@ -593,7 +614,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         fs::write(&path, b"{broken").unwrap();
-        let (settings, outcome) = Settings::load(&path, &clock()).unwrap();
+        let (settings, outcome) = Settings::load(&path, &clock(), HostKind::Windows).unwrap();
         assert!(matches!(outcome, LoadOutcome::CorruptBackedUp(_)));
         assert!(!path.exists());
         assert_eq!(
@@ -624,7 +645,7 @@ mod tests {
             vec!["settings.json".to_string()],
             "no temp files left"
         );
-        let (back, outcome) = Settings::load(&path, &clock()).unwrap();
+        let (back, outcome) = Settings::load(&path, &clock(), HostKind::Windows).unwrap();
         assert_eq!(back, s);
         assert_eq!(outcome, LoadOutcome::Loaded);
     }
