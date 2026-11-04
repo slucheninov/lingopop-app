@@ -50,6 +50,11 @@ const WINDOWS_ONLY_LITERALS = [
 // says `platform: "macos"`). They resolve through macos.json only and are not required in
 // windows.json. Same guard as above: each must be a real t() literal, in macos.json, not shared.
 const MACOS_ONLY_LITERALS = [
+  "Press a key combo (⌘ / Option)…",
+  "Quit the Swift LingoPop to enable shortcuts in LingoPop Preview.",
+  "Suspended while Swift LingoPop is running.",
+  "Click a shortcut field, then press a key combination. Use ⌘, Option, Control or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.",
+
   'Accessibility',
   'Screen Recording',
   'Permissions',

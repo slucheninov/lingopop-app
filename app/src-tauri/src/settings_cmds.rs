@@ -29,6 +29,7 @@ impl SettingsHooks for NoSettingsHooks {
 #[serde(rename_all = "lowercase")]
 pub enum HotkeyStatus {
     Registered,
+    SwiftSuspended,
     Conflict,
     Invalid,
     None,
@@ -55,6 +56,7 @@ pub struct SettingsView {
     pub fallbacks: BTreeMap<ProviderType, ProviderType>,
     pub target_language: String,
     pub hotkeys: BTreeMap<AIOperation, HotkeyView>,
+    pub swift_running: bool,
     pub hotkey_status: BTreeMap<AIOperation, HotkeyStatus>,
     pub launch_at_login: bool,
     pub max_input_chars: u32,
@@ -84,6 +86,7 @@ pub fn settings_view(state: &ShellState) -> SettingsView {
         &state.platform.system.ui_languages(),
     );
     view.hotkey_status = state.hotkeys.status();
+    view.swift_running = state.hotkeys.swift_blocked();
     view
 }
 pub fn settings_view_parts(
@@ -112,7 +115,7 @@ pub fn settings_view_parts(
                 HotkeyView {
                     key: h.key.clone(),
                     modifiers: h.modifiers.clone(),
-                    display: h.display_string(),
+                    display: h.display_for(crate::state::HOST),
                 },
             )
         })
@@ -122,6 +125,7 @@ pub fn settings_view_parts(
         fallbacks: s.fallbacks.0,
         target_language: s.target_language,
         hotkeys,
+        swift_running: false,
         hotkey_status: AIOperation::ALL
             .into_iter()
             .map(|op| (op, HotkeyStatus::None))
@@ -350,6 +354,7 @@ pub async fn ui_update(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiBootstrap {
+    pub host: &'static str,
     pub language: &'static str,
     pub launched_language: Language,
     pub catalog: &'static HashMap<String, String>,
@@ -370,6 +375,10 @@ pub async fn ui_bootstrap(
 ) -> Result<UiBootstrap, String> {
     let lang = state.ui.language();
     Ok(UiBootstrap {
+        host: match crate::state::HOST {
+            lingopop_core::host::HostKind::Unix => "unix",
+            lingopop_core::host::HostKind::Windows => "windows",
+        },
         language: lang.code(),
         launched_language: lang,
         catalog: i18n::catalog_for(CATALOG_PLATFORM, lang),

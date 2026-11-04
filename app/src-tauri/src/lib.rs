@@ -13,6 +13,7 @@ pub mod popup_shell;
 pub mod provider_cmds;
 pub mod settings_cmds;
 pub mod state;
+pub mod swift_source;
 pub mod tray;
 pub mod updates;
 pub mod usage_cmds;
@@ -224,6 +225,11 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
             let _ = events.emit("settings://changed", ());
         }),
     );
+    #[cfg(target_os = "macos")]
+    let hotkey_registry =
+        hotkey_registry.with_swift_source(swift_source::SwiftSource::new(platform.system.clone()));
+    #[cfg(target_os = "macos")]
+    hotkey_registry.observe_swift();
     let mut shell_hooks = ShellHooks::new(platform.login_item.clone());
     shell_hooks.hotkeys = Some(hotkey_registry.clone());
     let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);

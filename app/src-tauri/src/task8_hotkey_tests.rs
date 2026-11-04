@@ -235,7 +235,9 @@ fn rejected_patch_keeps_settings(hotkey: Hotkey, error: &str) {
 fn rejected_patch_in(hotkey: Hotkey, error: &str, language: lingopop_core::ui_prefs::Language) {
     let dir = tempfile::tempdir().unwrap();
     let (config, _, _) = crate::task4_tests::rig(dir.path());
-    config.update_settings(|_| {}).unwrap();
+    config
+        .update_settings(|s| *s = lingopop_core::settings::Settings::default())
+        .unwrap();
     let before = config.settings().to_json_bytes().unwrap();
     let bytes = std::fs::read(dir.path().join("settings.json")).unwrap();
     let patch = crate::settings_cmds::SettingsPatch::Hotkey {
@@ -294,4 +296,112 @@ fn queued_apply_uses_latest_wanted_and_suspension() {
         registry.status()[&AIOperation::ScreenTranslate],
         HotkeyStatus::Registered
     );
+}
+
+async fn swift_rig(
+    running: Result<bool, PlatformError>,
+) -> (
+    HotkeyRegistry,
+    Arc<lingopop_platform::fake::FakeSystem>,
+    FakeHotkeyService,
+) {
+    let system = Arc::new(lingopop_platform::fake::FakeSystem::new(vec![]));
+    system.set_bundle_running(running);
+    let fake = FakeHotkeyService::new();
+    install_service_for_tests(Box::new(fake.clone()));
+    let registry = HotkeyRegistry::new(Arc::new(InlineMainThread), Arc::new(|| {}))
+        .with_swift_source(crate::swift_source::SwiftSource::new(system.clone()));
+    registry.apply(wanted());
+    registry.refresh_swift().await;
+    (registry, system, fake)
+}
+#[tokio::test]
+async fn swift_running_prevents_duplicate_global_hotkeys() {
+    let (registry, _, fake) = swift_rig(Ok(true)).await;
+    assert_eq!(fake.registered_count(), 0);
+    assert_eq!(
+        registry.status()[&AIOperation::Translate],
+        HotkeyStatus::SwiftSuspended
+    );
+    registry.suspend(true);
+    registry.suspend(false);
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+}
+#[tokio::test]
+async fn swift_starts_after_setup_unregisters_hotkeys() {
+    let (registry, system, fake) = swift_rig(Ok(false)).await;
+    assert_eq!(fake.registered_count(), 2);
+    system.set_bundle_running(Ok(true));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+}
+#[tokio::test]
+async fn swift_exits_restores_hotkeys() {
+    let (registry, system, fake) = swift_rig(Ok(true)).await;
+    system.set_bundle_running(Ok(false));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 2);
+    assert_eq!(
+        registry.status()[&AIOperation::Translate],
+        HotkeyStatus::Registered
+    );
+}
+#[tokio::test]
+async fn swift_query_error_fails_closed() {
+    let (registry, system, fake) = swift_rig(Ok(false)).await;
+    system.set_bundle_running(Err(PlatformError::Unsupported("process query")));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+    registry.suspend(false);
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+}
+
+#[tokio::test]
+async fn swift_exit_rechecks_conflicts_and_keeps_recorder_suspended() {
+    let (registry, system, fake) = swift_rig(Ok(true)).await;
+    fake.block(&Hotkey::default_translate()).unwrap();
+    registry.suspend(true);
+    system.set_bundle_running(Ok(false));
+    registry.refresh_swift().await;
+    assert_eq!(fake.registered_count(), 0);
+    registry.suspend(false);
+    registry.refresh_swift().await;
+    assert_eq!(
+        registry.status()[&AIOperation::Translate],
+        HotkeyStatus::Conflict
+    );
+    assert_eq!(fake.registered_count(), 1);
+}
+
+#[test]
+fn swift_observer_updates_registrations_without_a_resume_or_settings_change() {
+    struct Posted(std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>);
+    impl MainThread for Posted {
+        fn run(&self, job: Box<dyn FnOnce() + Send>) {
+            self.0.send(job).unwrap();
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let system = Arc::new(lingopop_platform::fake::FakeSystem::new(vec![]));
+    let fake = FakeHotkeyService::new();
+    install_service_for_tests(Box::new(fake.clone()));
+    let registry = HotkeyRegistry::new(Arc::new(Posted(tx)), Arc::new(|| {}))
+        .with_swift_source(crate::swift_source::SwiftSource::new(system.clone()));
+    registry.apply(wanted());
+    let observer = registry.observe_swift();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    for (running, count) in [(false, 2), (true, 0), (false, 2)] {
+        system.set_bundle_running(Ok(running));
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            rx.recv_timeout(remaining)
+                .expect("observer must post a main-thread reconciliation")();
+            if fake.registered_count() == count {
+                break;
+            }
+        }
+    }
+    observer.abort();
 }

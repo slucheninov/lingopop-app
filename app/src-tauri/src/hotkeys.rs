@@ -34,10 +34,14 @@ struct RegistryState {
     status: BTreeMap<AIOperation, HotkeyStatus>,
     wanted: BTreeMap<AIOperation, Hotkey>,
     suspended: bool,
+    swift_blocked: bool,
+    revision: u64,
+    dirty: bool,
 }
 #[derive(Clone)]
 pub struct HotkeyRegistry {
     inner: Arc<Mutex<RegistryState>>,
+    source: Option<crate::swift_source::SwiftSource>,
     main: Arc<dyn MainThread>,
     on_change: Arc<dyn Fn() + Send + Sync>,
 }
@@ -51,9 +55,54 @@ impl HotkeyRegistry {
                     .collect(),
                 ..RegistryState::default()
             })),
+            source: None,
             main,
             on_change,
         }
+    }
+    pub fn with_swift_source(mut self, source: crate::swift_source::SwiftSource) -> Self {
+        self.source = Some(source);
+        {
+            let mut state = self.inner.lock().unwrap();
+            state.swift_blocked = true;
+            state.dirty = true;
+        }
+        self
+    }
+    pub fn observe_swift(&self) -> tauri::async_runtime::JoinHandle<()> {
+        let registry = self.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                registry.query_swift(false).await;
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        })
+    }
+    pub async fn refresh_swift(&self) {
+        self.query_swift(true).await;
+    }
+    async fn query_swift(&self, force: bool) {
+        let revision = self.next_revision();
+        self.query_swift_at(revision, force).await;
+    }
+    fn next_revision(&self) -> u64 {
+        {
+            let mut state = self.inner.lock().unwrap();
+            state.revision += 1;
+            state.revision
+        }
+    }
+    async fn query_swift_at(&self, revision: u64, force: bool) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        let blocked = tauri::async_runtime::spawn_blocking(move || source.is_running())
+            .await
+            .map_or(true, |result| result.unwrap_or(true));
+        self.post_reconcile(Some((revision, blocked, force)));
+    }
+    pub fn swift_blocked(&self) -> bool {
+        self.inner.lock().unwrap().swift_blocked
     }
     pub fn status(&self) -> BTreeMap<AIOperation, HotkeyStatus> {
         self.inner
@@ -67,7 +116,7 @@ impl HotkeyRegistry {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.suspended {
+        if state.suspended || state.swift_blocked {
             None
         } else {
             state.by_id.get(&id).copied()
@@ -80,6 +129,7 @@ impl HotkeyRegistry {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.wanted = hotkeys;
+            state.dirty = true;
             state.suspended
         };
         if !suspended {
@@ -92,34 +142,75 @@ impl HotkeyRegistry {
                 .inner
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if state.suspended == suspended {
+            if state.suspended == suspended && (suspended || self.source.is_none()) {
                 return;
             }
             state.suspended = suspended;
+            state.dirty = true;
         }
         self.reconcile();
     }
     fn reconcile(&self) {
+        if self.source.is_some() && !self.inner.lock().unwrap().suspended {
+            let registry = self.clone();
+            let revision = self.next_revision();
+            tauri::async_runtime::spawn(async move {
+                registry.query_swift_at(revision, true).await;
+            });
+        } else {
+            self.inner.lock().unwrap().revision += 1;
+            self.post_reconcile(None);
+        }
+    }
+    fn post_reconcile(&self, query: Option<(u64, bool, bool)>) {
         let registry = self.clone();
         self.main.run(Box::new(move || {
             // Read the CURRENT plan inside the serialized event-loop job. A queued apply
             // must not overwrite a newer suspend/resume with a stale captured plan.
-            let (active, wanted, suspended) = {
+            let (active, wanted, suspended, swift_blocked) = {
                 let mut state = registry
                     .inner
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some((revision, blocked, force)) = query {
+                    if revision != state.revision {
+                        return;
+                    }
+                    if !force && !state.dirty && blocked == state.swift_blocked {
+                        return;
+                    }
+                    state.swift_blocked = blocked;
+                }
+                state.dirty = false;
                 (
                     std::mem::take(&mut state.by_id),
                     state.wanted.clone(),
                     state.suspended,
+                    state.swift_blocked,
                 )
             };
             let result = SERVICE.with(|slot| {
                 let service = slot.borrow();
                 if let Some(service) = service.as_ref() {
                     unregister_all(service.as_ref(), active);
-                    if suspended {
+                    if swift_blocked {
+                        Some((
+                            HashMap::new(),
+                            AIOperation::ALL
+                                .into_iter()
+                                .map(|op| {
+                                    (
+                                        op,
+                                        if wanted.contains_key(&op) {
+                                            HotkeyStatus::SwiftSuspended
+                                        } else {
+                                            HotkeyStatus::None
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        ))
+                    } else if suspended {
                         None
                     } else {
                         Some(register_all(service.as_ref(), &wanted))

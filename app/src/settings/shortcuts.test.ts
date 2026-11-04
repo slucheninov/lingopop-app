@@ -80,3 +80,27 @@ test('unmount_while_the_suspend_request_is_pending_still_resumes_after_it', asyn
   release();
   await waitFor(() => expect(suspends()).toEqual([true, false]));
 });
+
+test('Mac Swift suspension notice and row status are visible', async () => {
+  await open({ settings_get: { ...baseView, platform: 'macos', swiftRunning: true, hotkeyStatus: { translate: 'swiftsuspended' } } });
+  expect(screen.getByRole('status').textContent).toContain('Quit the Swift LingoPop');
+  expect(screen.getByText('Suspended while Swift LingoPop is running.')).toBeTruthy();
+});
+test('Meta persists as win and Option dead-key text does not replace KeyboardEvent.code', () => {
+  const event = { code: 'KeyT', key: 'Dead', ctrlKey: false, altKey: true, shiftKey: false, metaKey: true };
+  expect(classifyKeydown(event)).toEqual({ kind: 'record', key: 'KeyT', modifiers: ['alt', 'win'] });
+});
+
+test('UiBootstrap host selects the Mac recorder prompt and instructions', async () => {
+  const { bootstrap } = await import('../lib/bootstrap');
+  mockIpc({ ui_bootstrap: { host: 'unix', language: 'en', catalog: {}, launchedLanguage: 'en', version: '', popupFontSize: 13, initialTab: null } });
+  await bootstrap();
+  const field = await open();
+  expect(screen.getByText(/Use ⌘, Option, Control or Shift/)).toBeTruthy();
+  await fireEvent.click(field);
+  expect(field.textContent).toBe('Press a key combo (⌘ / Option)…');
+  await fireEvent.keyDown(field, { code: 'KeyT', key: 'Dead', altKey: true, metaKey: true });
+  expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'hotkey', value: { operation: 'explain', hotkey: { key: 'KeyT', modifiers: ['alt', 'win'] } } } });
+  mockIpc({ ui_bootstrap: { host: 'windows', language: 'en', catalog: {} } });
+  await bootstrap();
+});

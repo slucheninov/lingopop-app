@@ -305,7 +305,7 @@ impl TrayController {
             let mut label = t(op.english_name());
             if let Some(h) = settings.hotkeys.get(&op) {
                 label.push('\t');
-                label.push_str(&h.display_string());
+                label.push_str(&h.display_for(crate::state::HOST));
             }
             add(&format!("op:{}", op.raw_value()), &label, true)?;
         }

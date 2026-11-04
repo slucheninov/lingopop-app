@@ -123,5 +123,25 @@
     "de": "⚠ Bedienungshilfen erneut prüfen…",
     "pl": "⚠ Sprawdź ponownie Dostępność…",
     "uk": "⚠ Перевірити «Універсальний доступ» знову…"
+  },
+  "Press a key combo (⌘ / Option)…": {
+    "pl": "Naciśnij kombinację klawiszy (⌘ / Option)…",
+    "uk": "Натисніть комбінацію клавіш (⌘ / Option)…",
+    "de": "Tastenkombination drücken (⌘ / Option)…"
+  },
+  "Quit the Swift LingoPop to enable shortcuts in LingoPop Preview.": {
+    "pl": "Zamknij aplikację LingoPop w Swift, aby włączyć skróty w LingoPop Preview.",
+    "uk": "Закрийте LingoPop на Swift, щоб увімкнути скорочення в LingoPop Preview.",
+    "de": "Beende die Swift-Version von LingoPop, um Kurzbefehle in LingoPop Preview zu aktivieren."
+  },
+  "Suspended while Swift LingoPop is running.": {
+    "pl": "Wstrzymano, gdy LingoPop w Swift jest uruchomiony.",
+    "uk": "Призупинено, поки працює LingoPop на Swift.",
+    "de": "Pausiert, solange die Swift-Version von LingoPop läuft."
+  },
+  "Click a shortcut field, then press a key combination. Use ⌘, Option, Control or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.": {
+    "pl": "Kliknij pole skrótu i naciśnij kombinację klawiszy. Użyj ⌘, Option, Control lub Shift z klawiszem. Esc anuluje nagrywanie. ✕ usuwa skrót.",
+    "uk": "Натисніть поле скорочення, а потім комбінацію клавіш. Використовуйте ⌘, Option, Control або Shift із клавішею. Esc скасовує запис. ✕ видаляє скорочення.",
+    "de": "Klicke auf ein Kurzbefehlfeld und drücke eine Tastenkombination. Verwende ⌘, Option, Control oder Shift mit einer Taste. Esc bricht die Aufnahme ab. ✕ entfernt den Kurzbefehl."
   }
 }
