@@ -259,11 +259,19 @@ impl<P: MacApps> TargetTracker<P> {
         self.apps.frontmost().filter(|f| f.pid > 0)
     }
 
-    /// `handle` names a live entry of the same process as `identity`.
-    pub fn entry_is_process(&self, handle: WindowHandle, identity: &AppIdentity) -> bool {
-        self.registry()
-            .get(self.clock.now(), handle)
-            .is_some_and(|t| t.identity.same_process(identity))
+    /// `handle` names a live entry of the same process as `identity`; when it does, the entry's
+    /// last-seen time is refreshed (the light poller sees the app in front).
+    pub fn refresh_if_process(&self, handle: WindowHandle, identity: &AppIdentity) -> bool {
+        let now = self.clock.now();
+        let mut registry = self.registry();
+        let names_it = registry
+            .get(now, handle)
+            .is_some_and(|t| t.identity.same_process(identity));
+        if names_it {
+            // The app is in front right now: seeing it again keeps its entry alive.
+            registry.touch(now, handle);
+        }
+        names_it
     }
 
     fn registry(&self) -> MutexGuard<'_, TargetRegistry<P::Ax>> {
@@ -412,7 +420,7 @@ impl<P: MacApps> LastExternalTracker<P> {
                 return;
             }
             let last = *self.last.lock().unwrap_or_else(|p| p.into_inner());
-            if last.is_some_and(|h| self.tracker.entry_is_process(h, &front)) {
+            if last.is_some_and(|h| self.tracker.refresh_if_process(h, &front)) {
                 return;
             }
         }

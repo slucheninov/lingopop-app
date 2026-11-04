@@ -12,6 +12,7 @@ use lingopop_platform::macos_targets::{
     AppIdentity, FakeApps, LastExternalTracker, MacApps, TargetRegistry, TargetTracker, CAPACITY,
     CONFIRM_WINDOW, ENTRY_LIFETIME,
 };
+use lingopop_platform::Sleeper;
 use lingopop_platform::{
     bring_to_front, ForegroundWindow, PermissionKind, PlatformError, ReplaceOptions, WindowHandle,
 };
@@ -407,6 +408,33 @@ fn the_background_poller_samples_identity_only_and_never_asks_for_ax() {
     let (h, _) = r.tracker.observe_frontmost_with(false).unwrap();
     r.tracker.restore(h).unwrap();
     assert_eq!(r.apps.activated(), vec![(SAFARI, None)]);
+}
+
+#[test]
+fn the_light_poller_keeps_an_entry_alive_while_the_app_stays_in_front() {
+    let r = rig();
+    let tray = last(&r);
+    r.apps.set_frontmost(safari());
+    r.apps.set_focused_window(SAFARI, 4);
+    let h = tray.last_external().unwrap(); // on demand: with the AX window
+                                           // Safari stays in front for far longer than ENTRY_LIFETIME; only the 250 ms poller runs.
+    for _ in 0..12 {
+        r.clock.advance(Duration::from_secs(60));
+        tray.observe_light();
+    }
+    assert!(Sleeper::now(&*r.clock) > ENTRY_LIFETIME);
+    assert_eq!(
+        r.tracker.is_current_target(h),
+        Ok(true),
+        "the original handle is still valid"
+    );
+    assert_eq!(
+        tray.last_external(),
+        Some(h),
+        "no fresh AX-less handle replaced it"
+    );
+    r.tracker.restore(h).unwrap();
+    assert_eq!(r.apps.activated().last(), Some(&(SAFARI, Some(4))));
 }
 
 // --- process identity: the kernel start time ---
