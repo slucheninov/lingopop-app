@@ -2,7 +2,8 @@
 //!
 //! Posting events needs the Accessibility permission: grant it to the terminal (or the app) that
 //! runs LingoPop in System Settings > Privacy & Security > Accessibility. Without it every `send_*`
-//! returns `InputBlocked` instead of silently doing nothing.
+//! returns `PermissionDenied(Accessibility)` instead of silently doing nothing; `InputBlocked`
+//! (the Windows UIPI error) is never produced on macOS.
 
 use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -10,6 +11,7 @@ use lingopop_core::hotkey::Modifier;
 
 use crate::error::PlatformError;
 use crate::keys::KeySynth;
+use crate::permissions::PermissionKind;
 
 /// `kVK_ANSI_C` / `kVK_ANSI_V`.
 const KEY_C: CGKeyCode = 8;
@@ -33,13 +35,20 @@ fn event_error() -> PlatformError {
     }
 }
 
-fn ensure_trusted() -> Result<(), PlatformError> {
-    // SAFETY: AXIsProcessTrusted takes no arguments and only reads the process's TCC state.
-    if unsafe { AXIsProcessTrusted() } != 0 {
+/// The pure half of the Accessibility check.
+fn require_trusted(trusted: bool) -> Result<(), PlatformError> {
+    if trusted {
         Ok(())
     } else {
-        Err(PlatformError::InputBlocked)
+        Err(PlatformError::PermissionDenied(
+            PermissionKind::Accessibility,
+        ))
     }
+}
+
+fn ensure_trusted() -> Result<(), PlatformError> {
+    // SAFETY: AXIsProcessTrusted takes no arguments and only reads the process's TCC state.
+    require_trusted(unsafe { AXIsProcessTrusted() } != 0)
 }
 
 fn post(key: CGKeyCode, down: bool, flags: CGEventFlags) -> Result<(), PlatformError> {
@@ -111,5 +120,37 @@ impl KeySynth for MacKeys {
 
     fn send_paste(&self) -> Result<(), PlatformError> {
         chord(KEY_V)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_accessibility_is_permission_denied_never_the_windows_uipi_error() {
+        assert_eq!(
+            require_trusted(false),
+            Err(PlatformError::PermissionDenied(
+                PermissionKind::Accessibility
+            ))
+        );
+        assert_ne!(require_trusted(false), Err(PlatformError::InputBlocked));
+        assert_eq!(require_trusted(true), Ok(()));
+    }
+
+    /// Owner-run: with Accessibility revoked the real synthesizer must refuse, not no-op.
+    #[test]
+    #[ignore = "owner-run: touches TCC"]
+    fn real_send_copy_without_accessibility_is_permission_denied() {
+        let result = MacKeys::new().send_copy();
+        println!("send_copy: {result:?}");
+        assert!(matches!(
+            result,
+            Ok(())
+                | Err(PlatformError::PermissionDenied(
+                    PermissionKind::Accessibility
+                ))
+        ));
     }
 }

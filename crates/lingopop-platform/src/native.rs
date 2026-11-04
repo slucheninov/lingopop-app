@@ -92,7 +92,7 @@ pub fn native() -> Platform {
         monitors: Arc::new(MacMonitors::new()),
         capture: Arc::new(MacCapture::new()),
         ocr: Arc::new(MacOcr::new()),
-        permissions: Arc::new(crate::permissions::AlwaysGranted),
+        permissions: Arc::new(crate::macos::MacPermissions::new()),
         protector: Arc::new(MacProtector::new()),
         sleeper: Arc::new(SystemSleeper::new()),
     }

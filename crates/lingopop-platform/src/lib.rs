@@ -36,7 +36,7 @@ mod windows;
 #[cfg(target_os = "macos")]
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
-    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPopupWindow, MacProtector,
+    MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPermissions, MacPopupWindow, MacProtector,
 };
 #[cfg(windows)]
 pub use crate::windows::{
