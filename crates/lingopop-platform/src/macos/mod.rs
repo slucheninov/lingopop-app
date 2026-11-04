@@ -11,7 +11,7 @@ mod monitors;
 mod ocr;
 
 pub use capture::MacCapture;
-pub use clipboard::MacClipboard;
+pub use clipboard::{MacClipboard, NsPasteboard};
 pub use foreground::MacForeground;
 pub use keys::MacKeys;
 pub use last_foreground::MacLastForeground;

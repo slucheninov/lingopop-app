@@ -4,6 +4,7 @@
 
 use lingopop_core::errors::TranslationError;
 use lingopop_core::provider::ProviderType;
+use lingopop_platform::pasteboard::UNSUPPORTED_SNAPSHOT;
 use lingopop_platform::{PermissionKind, PlatformError};
 
 use crate::gate::GateError;
@@ -33,6 +34,11 @@ pub const KEY_SCREEN_TIMEOUT: &str = "Screen capture or text recognition took to
 pub const KEY_PERMISSION_ACCESSIBILITY: &str = "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.";
 /// NEW (macOS only): Screen Recording is missing, so Screen Translate cannot capture.
 pub const KEY_PERMISSION_SCREEN_RECORDING: &str = "LingoPop needs Screen Recording access to translate the screen. Grant it in Settings → Main → Permissions.";
+/// NEW (macOS only): the previous clipboard holds content that cannot be preserved (promised,
+/// lazy, `dyn.*`, oversized or unreadable types), so the operation stops before it touches the
+/// clipboard.
+pub const KEY_PASTEBOARD_UNSUPPORTED: &str =
+    "Clipboard content can't be preserved. Nothing was changed.";
 /// Mac catalog key (`MainSettingsTab.swift`). Conditional wording, never a claim that access was
 /// granted: macOS reads a new Screen Recording grant only after a relaunch, so this process cannot
 /// tell. Detail line of the denied message on a retry after `request` already ran, and the line
@@ -85,6 +91,9 @@ pub fn platform_message(e: &PlatformError) -> UserMessageView {
             plain(KEY_PERMISSION_SCREEN_RECORDING)
         }
         PlatformError::InvalidRegion => selection_too_small(),
+        PlatformError::Unsupported(what) if *what == UNSUPPORTED_SNAPSHOT => {
+            plain(KEY_PASTEBOARD_UNSUPPORTED)
+        }
         PlatformError::Unsupported(_)
         | PlatformError::HotkeyConflict
         | PlatformError::InvalidHotkey
@@ -133,6 +142,25 @@ mod tests {
         assert_eq!(
             platform_message(&PlatformError::InputBlocked),
             plain(KEY_INPUT_BLOCKED)
+        );
+    }
+
+    #[test]
+    fn platform_message_unpreservable_pasteboard_has_its_own_key() {
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported(UNSUPPORTED_SNAPSHOT)),
+            plain(KEY_PASTEBOARD_UNSUPPORTED)
+        );
+        // Any other unsupported feature keeps the generic message.
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported("ocr")).key,
+            KEY_PLATFORM_GENERIC
+        );
+        assert_eq!(
+            gate_message(&GateError::Platform(PlatformError::Unsupported(
+                UNSUPPORTED_SNAPSHOT
+            ))),
+            plain(KEY_PASTEBOARD_UNSUPPORTED)
         );
     }
 
