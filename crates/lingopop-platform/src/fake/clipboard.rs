@@ -39,6 +39,7 @@ struct State {
     scheduled: Vec<(Duration, Mutation)>,
     fail: HashMap<FakeOp, PlatformError>,
     panic_on_read: bool,
+    unpreservable: bool,
 }
 
 pub struct FakeClipboard {
@@ -69,6 +70,7 @@ impl FakeClipboard {
                 scheduled: Vec::new(),
                 fail: HashMap::new(),
                 panic_on_read: false,
+                unpreservable: false,
             }),
             read_hook: Mutex::new(None),
             restore_hook: Mutex::new(None),
@@ -126,6 +128,12 @@ impl FakeClipboard {
     /// The next call of `op` returns `err` (one-shot).
     pub fn fail_next(&self, op: FakeOp, err: PlatformError) {
         self.state().fail.insert(op, err);
+    }
+
+    /// Like a macOS pasteboard holding content a restore would drop: `check_preservable` fails
+    /// with `Unsupported("pasteboard snapshot")`. The default (Windows-like) is preservable.
+    pub fn set_unpreservable(&self, unpreservable: bool) {
+        self.state().unpreservable = unpreservable;
     }
 
     pub fn panic_on_read_text(&self) {
@@ -277,6 +285,16 @@ impl Clipboard for FakeClipboard {
             panic!("FakeClipboard::read_text panicked on request");
         }
         Ok(s.text())
+    }
+
+    fn check_preservable(&self) -> Result<(), PlatformError> {
+        if self.state().unpreservable {
+            Err(PlatformError::Unsupported(
+                crate::pasteboard::UNSUPPORTED_SNAPSHOT,
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     fn write_text_transient(&self, text: &str) -> Result<(), PlatformError> {

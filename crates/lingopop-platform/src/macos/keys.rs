@@ -24,7 +24,6 @@ const KEY_CONTROL: CGKeyCode = 0x3B;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
-    fn AXIsProcessTrusted() -> u8;
     fn CGEventSourceFlagsState(state_id: i32) -> u64;
 }
 
@@ -47,8 +46,7 @@ fn require_trusted(trusted: bool) -> Result<(), PlatformError> {
 }
 
 fn ensure_trusted() -> Result<(), PlatformError> {
-    // SAFETY: AXIsProcessTrusted takes no arguments and only reads the process's TCC state.
-    require_trusted(unsafe { AXIsProcessTrusted() } != 0)
+    require_trusted(super::ax::process_trusted())
 }
 
 fn post(key: CGKeyCode, down: bool, flags: CGEventFlags) -> Result<(), PlatformError> {

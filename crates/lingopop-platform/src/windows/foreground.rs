@@ -105,6 +105,12 @@ impl ForegroundWindow for WindowsForeground {
         }
     }
 
+    fn is_current_target(&self, window: WindowHandle) -> Result<bool, PlatformError> {
+        // The same native comparison `current()` is polled with: the foreground HWND is the
+        // target HWND. A destroyed window can no longer be the foreground one. Not atomic.
+        Ok(self.current() == Some(window))
+    }
+
     fn is_elevated(&self, window: WindowHandle) -> bool {
         let mut pid = 0u32;
         // SAFETY: `pid` is writable; an invalid window yields thread id 0 and pid 0.

@@ -12,7 +12,6 @@ pub fn set_platform_log(log: std::sync::Arc<LogFn>) {
     let _ = PLATFORM_LOG.set(log);
 }
 
-#[cfg(windows)]
 pub(crate) fn platform_log(line: &str) {
     if let Some(log) = PLATFORM_LOG.get() {
         log(line);

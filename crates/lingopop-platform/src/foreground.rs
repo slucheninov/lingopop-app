@@ -14,6 +14,17 @@ pub trait ForegroundWindow: Send + Sync {
     /// Verified manually on Windows 11 on 2026-11-01 (non-elevated LingoPop against elevated
     /// Notepad reports `InputBlocked`; elevated LingoPop works).
     fn is_elevated(&self, window: WindowHandle) -> bool;
+    /// Whether `window` (a handle this service produced earlier) is still the window the user
+    /// is in right now: `Ok(true)` = it is the foreground target, `Ok(false)` = the foreground
+    /// moved to something else or the handle is stale / unknown (lost target). A missing
+    /// permission is NOT target loss: macOS reports `Err(PermissionDenied(Accessibility))`
+    /// and callers propagate it unchanged.
+    ///
+    /// NOT atomic. The answer can be stale the instant it is returned (the user may switch
+    /// apps between this call and the next keystroke), so it narrows the window in which a
+    /// paste lands in the wrong app, it does not close it. Call it as late as possible,
+    /// right before the keystroke.
+    fn is_current_target(&self, window: WindowHandle) -> Result<bool, PlatformError>;
 }
 
 /// UIPI drops input sent to a window whose process runs elevated when ours does not.

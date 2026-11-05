@@ -1,4 +1,5 @@
-//! Monitor geometry (physical virtual-screen pixels) and the pure popup placement.
+//! Desktop geometry: Windows physical virtual-screen pixels; macOS Quartz global points
+//! (top-left, Y-down). Capture images always use physical backing pixels.
 
 use crate::error::PlatformError;
 
@@ -92,7 +93,8 @@ impl Rect {
     }
 }
 
-/// One display in physical virtual-screen pixels; `scale_factor` = effective DPI / 96.
+/// One display in desktop space. Windows `scale_factor` = effective DPI / 96; macOS = 1.0
+/// for logical popup sizes. Actual Mac backing scale lives in `MacDisplay`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MonitorInfo {
     pub bounds: Rect,
@@ -102,6 +104,11 @@ pub struct MonitorInfo {
 }
 
 pub trait Monitors: Send + Sync {
+    /// Shell setup calls this on its existing monitor service. Windows/fakes need no setup.
+    /// Mac registers topology observation and handles refresh failure without aborting startup.
+    fn initialize_on_main_thread(&self) -> Result<(), PlatformError> {
+        Ok(())
+    }
     fn cursor_position(&self) -> Result<Point, PlatformError>;
     fn monitors(&self) -> Result<Vec<MonitorInfo>, PlatformError>;
 }
@@ -114,7 +121,7 @@ pub fn monitor_at(p: Point, monitors: &[MonitorInfo]) -> Option<&MonitorInfo> {
         .or_else(|| monitors.iter().min_by_key(|m| m.bounds.distance_sq(p)))
 }
 
-/// A logical size in physical pixels, each side rounded up.
+/// A logical popup size in desktop units, each side rounded up. The historic name is kept.
 pub fn physical_size(logical_width: f64, logical_height: f64, scale_factor: f64) -> Size {
     Size {
         width: (logical_width * scale_factor).ceil() as i32,
@@ -122,7 +129,7 @@ pub fn physical_size(logical_width: f64, logical_height: f64, scale_factor: f64)
     }
 }
 
-/// The top-left that keeps a popup of `size` (physical pixels of the monitor under `anchor`)
+/// The top-left that keeps a popup of `size` (desktop units of the monitor under `anchor`)
 /// inside that monitor's work area. A popup larger than the work area pins to its top-left.
 pub fn clamp_to_work_area(size: Size, anchor: Point, monitors: &[MonitorInfo]) -> Point {
     let Some(m) = monitor_at(anchor, monitors) else {

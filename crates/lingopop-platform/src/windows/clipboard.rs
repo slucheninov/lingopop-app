@@ -79,7 +79,7 @@ fn registered(name: &str) -> Result<u32, PlatformError> {
     }
 }
 
-fn format_id(format: ClipboardFormat) -> Result<u32, PlatformError> {
+fn format_id(format: &ClipboardFormat) -> Result<u32, PlatformError> {
     match format {
         ClipboardFormat::UnicodeText => Ok(u32::from(CF_UNICODETEXT.0)),
         ClipboardFormat::Html => registered("HTML Format"),
@@ -90,10 +90,14 @@ fn format_id(format: ClipboardFormat) -> Result<u32, PlatformError> {
         ClipboardFormat::ExcludeFromMonitors => registered(EXCLUDE_FROM_MONITORS),
         ClipboardFormat::CanIncludeInHistory => registered(CAN_INCLUDE_IN_HISTORY),
         ClipboardFormat::CanUploadToCloud => registered(CAN_UPLOAD_TO_CLOUD),
+        // Pasteboard entries only exist on macOS.
+        ClipboardFormat::NativePasteboard { .. } => {
+            Err(PlatformError::Unsupported("native pasteboard format"))
+        }
     }
 }
 
-fn format_name(format: ClipboardFormat) -> &'static str {
+fn format_name(format: &ClipboardFormat) -> &'static str {
     match format {
         ClipboardFormat::UnicodeText => "CF_UNICODETEXT",
         ClipboardFormat::Html => "HTML Format",
@@ -104,6 +108,7 @@ fn format_name(format: ClipboardFormat) -> &'static str {
         ClipboardFormat::ExcludeFromMonitors => EXCLUDE_FROM_MONITORS,
         ClipboardFormat::CanIncludeInHistory => CAN_INCLUDE_IN_HISTORY,
         ClipboardFormat::CanUploadToCloud => CAN_UPLOAD_TO_CLOUD,
+        ClipboardFormat::NativePasteboard { .. } => "native pasteboard format",
     }
 }
 
@@ -175,7 +180,7 @@ impl WindowsClipboard {
         let ids = snapshot
             .entries
             .iter()
-            .map(|e| format_id(e.format))
+            .map(|e| format_id(&e.format))
             .collect::<Result<Vec<_>, _>>()?;
         // Fail closed: a protection marker that was present but unreadable at snapshot time is
         // replaced by the full protected set, never dropped.
@@ -216,7 +221,7 @@ impl WindowsClipboard {
     /// and its sequence number has moved, so a `RestoreGuard` restores it).
     fn write(&self, text: &str, transient: bool) -> Result<(), PlatformError> {
         // Resolve every id first, so no failure can happen between opening and emptying.
-        let text_id = format_id(ClipboardFormat::UnicodeText)?;
+        let text_id = format_id(&ClipboardFormat::UnicodeText)?;
         let extra = if transient {
             protection_markers()?
         } else {
@@ -248,7 +253,7 @@ impl Clipboard for WindowsClipboard {
     fn snapshot(&self) -> Result<ClipboardSnapshot, PlatformError> {
         let ids = SNAPSHOT_ORDER
             .iter()
-            .map(|&f| format_id(f).map(|id| (f, id)))
+            .map(|f| format_id(f).map(|id| (f.clone(), id)))
             .collect::<Result<Vec<_>, _>>()?;
         let _guard = ClipboardGuard::open(None, self.sleeper.as_ref())?;
         let mut entries = Vec::new();
@@ -268,7 +273,7 @@ impl Clipboard for WindowsClipboard {
             match read_format(id) {
                 Ok(Some(data)) => entries.push(ClipboardEntry { format, data }),
                 Ok(None) => {}
-                Err(()) => skipped.push(unreadable_label(format_name(format))),
+                Err(()) => skipped.push(unreadable_label(format_name(&format))),
             }
         }
         // Read while the clipboard is open: nobody else can write in between.
@@ -293,7 +298,7 @@ impl Clipboard for WindowsClipboard {
     }
 
     fn read_text(&self) -> Result<Option<String>, PlatformError> {
-        let id = format_id(ClipboardFormat::UnicodeText)?;
+        let id = format_id(&ClipboardFormat::UnicodeText)?;
         let _guard = ClipboardGuard::open(None, self.sleeper.as_ref())?;
         let Ok(Some(bytes)) = read_format(id) else {
             return Ok(None);

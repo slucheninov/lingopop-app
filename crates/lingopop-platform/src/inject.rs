@@ -43,7 +43,9 @@ impl fmt::Debug for ReplaceOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceOutcome {
     Pasted,
-    /// The target could not be brought to the front; the text is on the clipboard as plain text.
+    /// The target could not be brought to the front, or the foreground moved away before the
+    /// keystroke (`ForegroundWindow::is_current_target` is not atomic); nothing was pasted and
+    /// the text is on the clipboard as plain text.
     ForegroundLost,
 }
 
@@ -64,6 +66,8 @@ pub fn replace_selection(
     }
 
     if !bring_to_front(fg, sleeper, target, opts) {
+        // No snapshot is taken on this path, so make sure overwriting loses nothing.
+        clip.check_preservable()?;
         clip.write_text(text)?;
         return Ok(ReplaceOutcome::ForegroundLost);
     }
@@ -71,9 +75,41 @@ pub fn replace_selection(
     let snapshot = clip.snapshot()?;
     let guard = RestoreGuard::new(clip, snapshot, opts.log.clone());
     let written = clip.write_text_transient(text);
-    // Even a failed write may have emptied the clipboard: whatever it did is ours to undo.
-    guard.observe(clip.sequence_number());
+    // Even a failed write may have emptied the clipboard: whatever it did is ours to undo. The
+    // sequence is the one our own write produced when the implementation can say so exactly
+    // (macOS: what `clearContents` returned); a foreign write right after it is then never
+    // mistaken for ours.
+    let own = clip
+        .last_write_sequence()
+        .unwrap_or_else(|| clip.sequence_number());
+    guard.observe(own);
     written?;
+    // The last look before the keystroke. NOT atomic: the user can still switch apps between
+    // this answer and `send_paste`, so this narrows the race, it does not remove it. A
+    // foreground that moved after the restore means the paste must go nowhere: the text stays
+    // on the clipboard for a manual paste instead. A failed check (macOS: Accessibility
+    // revoked) is returned as it is and nothing is sent.
+    if !fg.is_current_target(target)? {
+        if let Some(l) = &opts.log {
+            l("replace skipped: target is no longer in front");
+        }
+        // Undo our transient write first (the guard only restores over our own write). If
+        // another app wrote the clipboard since, that content is theirs: the guard leaves it
+        // alone and so must we, so no fallback write; a confirmed failure lets the caller
+        // keep the result and offer an explicit Copy. Otherwise leave the text as an ordinary
+        // entry, like the restore-failed path above.
+        if clip.sequence_number() != own {
+            drop(guard);
+            if let Some(l) = &opts.log {
+                l("replace skipped: clipboard changed by another app");
+            }
+            return Err(PlatformError::ClipboardBusy);
+        }
+        drop(guard);
+        clip.check_preservable()?;
+        clip.write_text(text)?;
+        return Ok(ReplaceOutcome::ForegroundLost);
+    }
     keys.send_paste()?;
     sleeper.sleep(opts.restore_delay);
     drop(guard);

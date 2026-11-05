@@ -294,7 +294,7 @@ fn clipboard_roundtrip_text_html_image() {
     ]);
     let clip = clipboard();
     let before = clip.snapshot().expect("snapshot");
-    let formats: Vec<ClipboardFormat> = before.entries.iter().map(|e| e.format).collect();
+    let formats: Vec<ClipboardFormat> = before.entries.iter().map(|e| e.format.clone()).collect();
     assert_eq!(
         formats,
         vec![
