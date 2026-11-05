@@ -1,4 +1,9 @@
 {
   "identifier": "app.lingopop.tauri.macos",
-  "productName": "LingoPop Preview"
+  "productName": "LingoPop Preview",
+  "bundle": {
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    }
+  }
 }

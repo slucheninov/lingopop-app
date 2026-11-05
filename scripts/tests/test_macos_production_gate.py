@@ -1,0 +1,133 @@
+"""Tests for scripts/check-macos-production.sh against the real tree and intentional fixtures.
+
+The guard complements the behaviour tests: it is the only thing that fails when the macOS native
+wiring, a release configuration or the macOS identity drifts back to something that must not ship.
+Each fixture is a temporary copy of the tree with exactly one defect.
+"""
+import json
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+SCRIPT = REPO / "scripts" / "check-macos-production.sh"
+COPIED = ["crates", "app/src-tauri", ".github/workflows", "app/package.json", "Cargo.toml"]
+IGNORE = shutil.ignore_patterns("target", "node_modules", "dist", "icons", ".git")
+
+
+def run(root: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", str(SCRIPT), str(root)], capture_output=True, text=True, check=False
+    )
+
+
+class MacosProductionGate(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        for rel in COPIED:
+            src = REPO / rel
+            dst = self.root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.copytree(src, dst, ignore=IGNORE)
+            elif src.exists():
+                shutil.copy2(src, dst)
+
+    def edit(self, rel: str, old: str, new: str):
+        path = self.root / rel
+        text = path.read_text()
+        self.assertIn(old, text, f"fixture anchor missing in {rel}")
+        path.write_text(text.replace(old, new, 1))
+
+    def assert_fails(self, needle: str):
+        result = run(self.root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(needle, result.stderr)
+
+    def test_the_real_tree_passes(self):
+        result = run(REPO)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("macOS production readiness: ok", result.stdout)
+
+    def test_the_copied_fixture_base_passes(self):
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_plaintext_protector_wiring_fails(self):
+        self.edit(
+            "crates/lingopop-platform/src/native.rs",
+            "protector: Arc::new(MacProtector::new()),",
+            "protector: Arc::new(crate::DevPlaintextProtector::new()),",
+        )
+        self.assert_fails("DevPlaintextProtector")
+
+    def test_dev_plaintext_enabled_for_a_dependency_fails(self):
+        cargo = self.root / "app/src-tauri/Cargo.toml"
+        cargo.write_text(
+            cargo.read_text()
+            + '\n[dependencies.lingopop-platform-fixture]\nfeatures = ["dev-plaintext"]\n'
+        )
+        self.assert_fails("dev-plaintext")
+
+    def test_dev_plaintext_in_a_default_feature_fails(self):
+        self.edit(
+            "crates/lingopop-platform/Cargo.toml",
+            "dev-plaintext = []",
+            'dev-plaintext = []\ndefault = ["dev-plaintext"]',
+        )
+        self.assert_fails("dev-plaintext")
+
+    def test_dev_plaintext_in_the_release_workflow_fails(self):
+        path = self.root / ".github/workflows/release.yml"
+        path.write_text(path.read_text() + "\n      - run: cargo build --features dev-plaintext\n")
+        self.assert_fails("dev-plaintext")
+
+    def test_an_ungated_production_reference_to_the_plaintext_protector_fails(self):
+        path = self.root / "app/src-tauri/src/state.rs"
+        path.write_text(path.read_text() + "\nfn leak() { let _ = lingopop_platform::DevPlaintextProtector::new(); }\n")
+        self.assert_fails("DevPlaintextProtector")
+
+    def test_a_dev_stub_marker_in_the_mac_adapters_fails(self):
+        path = self.root / "crates/lingopop-platform/src/macos/ocr.rs"
+        path.write_text(path.read_text() + '\nfn stub() -> PlatformError { PlatformError::Unsupported("OCR on macOS") }\n')
+        self.assert_fails("OCR on macOS")
+
+    def test_a_removed_mac_native_function_does_not_pass_vacuously(self):
+        self.edit(
+            "crates/lingopop-platform/src/native.rs",
+            "pub fn native() -> Platform {\n    use crate::macos::",
+            "pub fn native_renamed() -> Platform {\n    use crate::macos::",
+        )
+        self.assert_fails("macOS native() was not found")
+
+    def test_a_missing_production_adapter_fails(self):
+        self.edit(
+            "crates/lingopop-platform/src/native.rs",
+            "ocr: Arc::new(MacOcr::new()),",
+            "ocr: Arc::new(crate::fake::FakeOcr::new(Err(PlatformError::OcrUnavailable))),",
+        )
+        self.assert_fails("FakeOcr")
+
+    def test_the_macos_identity_and_minimum_os_are_checked(self):
+        path = "app/src-tauri/tauri.macos.conf.json"
+        config = json.loads((self.root / path).read_text())
+        self.assertEqual(config["identifier"], "app.lingopop.tauri.macos")
+        self.assertEqual(config["bundle"]["macOS"]["minimumSystemVersion"], "13.0")
+        self.edit(path, "app.lingopop.tauri.macos", "com.lingopop.app")
+        self.assert_fails("identifier")
+
+    def test_a_missing_minimum_os_fails(self):
+        self.edit("app/src-tauri/tauri.macos.conf.json", '"minimumSystemVersion": "13.0"', '"minimumSystemVersion": "12.0"')
+        self.assert_fails("minimumSystemVersion")
+
+    def test_a_version_key_in_the_macos_config_fails(self):
+        self.edit("app/src-tauri/tauri.macos.conf.json", '"productName"', '"version": "9.9.9",\n  "productName"')
+        self.assert_fails("version")
+
+
+if __name__ == "__main__":
+    unittest.main()
