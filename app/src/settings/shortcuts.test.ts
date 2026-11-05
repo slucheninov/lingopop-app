@@ -36,6 +36,13 @@ test('recorder_suspends_while_recording_and_recorded_chord_sends_hotkey_patch', 
   await fireEvent.click(field); await fireEvent.blur(field);
   await waitFor(() => expect(vi.mocked(invoke).mock.calls.filter(c => c[0] === 'hotkeys_suspend' && (c[1] as {suspended: boolean}).suspended === false)).toHaveLength(2));
 });
+test('recorder_focuses_itself_on_click_so_webkit_delivers_keydown', async () => {
+  const field = await open();
+  (document.activeElement as HTMLElement | null)?.blur();
+  expect(document.activeElement).not.toBe(field);
+  await fireEvent.click(field);
+  expect(document.activeElement).toBe(field);
+});
 test('clear_button_only_when_set_and_sends_null', async () => {
   await open();
   expect(screen.queryByRole('button', { name: 'Clear Explain' })).toBeNull();

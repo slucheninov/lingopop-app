@@ -13,6 +13,7 @@
   let busy = $state(false);
   let failure = $state<string | null>(null);
   let disposed = false;
+  let button: HTMLButtonElement | undefined = $state();
   // Suspend calls are chained: each waits for the previous one to settle, so a `false` (blur, Esc, unmount)
   // can never reach the shell before the `true` it undoes, whatever order the async Tauri tasks would run in.
   let inFlight: Promise<unknown> = Promise.resolve();
@@ -31,6 +32,9 @@
     if (busy) return;
     if (recording) { await stop(); return; }
     recording = true;
+    // WebKit (macOS WKWebView) does not focus a <button> on click, so its keydown would never
+    // fire; focus it explicitly so the recorder receives the chord on every engine.
+    button?.focus();
     failure = null;
     busy = true;
     try { await suspend(true); }
@@ -49,7 +53,7 @@
   }
   onDestroy(() => { disposed = true; void stop(); });
 </script>
-<button class:recording aria-label={label} aria-pressed={recording} title={recording ? prompt() : hotkey?.display ?? ''}
+<button bind:this={button} class:recording aria-label={label} aria-pressed={recording} title={recording ? prompt() : hotkey?.display ?? ''}
   onclick={() => { void toggle(); }} onkeydown={keydown} onblur={() => { void stop(); }}>
   {recording ? prompt() : hotkey?.display ?? '—'}
 </button>
