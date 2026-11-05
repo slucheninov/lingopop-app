@@ -7,8 +7,9 @@
 //! 2. snapshot the cached topology and ask the main thread (waiting OFF it, holding no lock)
 //!    to create the native overlay through an [`OverlayBackend`];
 //! 3. wait for a result, a cancel (a message or the dropped sender) or a topology change;
-//! 4. ask the main thread to remove the overlay and wait for that acknowledgment (bounded),
-//!    then give the compositor [`COMPOSITOR_SETTLE`], so the capture that follows can never
+//! 4. ask the main thread to remove the overlay AND hand focus back to the previously
+//!    frontmost app (`OverlayBackend::restore_previous_app`), wait for that acknowledgment
+//!    (bounded), then give the compositor [`COMPOSITOR_SETTLE`] (150 ms, Swift parity), so the capture that follows can never
 //!    contain the tint. A panic in between still posts the cleanup (`CleanupGuard`).
 //!
 //! Native input reaches [`OverlaySink::push`] in arrival order. The sink queues it and posts at
@@ -18,7 +19,8 @@
 //! `Up` is ten BACKING pixels on the display where the drag started
 //! ([`MacGeometry::selection_accepted`]); the result is in desktop (Quartz point) units.
 //!
-//! A change of the display topology revision while the overlay is up cancels the pick
+//! A change of the display topology revision while the overlay is up, or before a finished
+//! drag is returned, cancels the pick
 //! (`Ok(None)`, fixed log line) instead of capturing a region of another layout.
 use crate::error::platform_log;
 use crate::macos_geometry::{MacGeometry, TopologyCache};
@@ -32,9 +34,10 @@ use std::time::Duration;
 /// How often the waiting worker compares the topology revision (no event announces a display
 /// change to it: the cache is updated by the main-queue observer).
 pub const TOPOLOGY_POLL: Duration = Duration::from_millis(50);
-/// Time given to the window server after the overlay is ordered out, before the capture
-/// (the Windows overlay waits the same 50 ms after its compositor flush).
-pub const COMPOSITOR_SETTLE: Duration = Duration::from_millis(50);
+/// Time given to the window server and to the re-activated previous app after the overlay is
+/// ordered out, before the capture (Swift `ScreenTranslateFlow` waits 150 ms after
+/// re-activating `previousApp`).
+pub const COMPOSITOR_SETTLE: Duration = Duration::from_millis(150);
 /// Upper bound for the main thread to acknowledge the removal of the overlay.
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -62,6 +65,17 @@ pub trait OverlayBackend: Send + Sync + 'static {
     fn draw(&self, selection: Option<Rect>);
     /// Removes monitors and windows and restores the cursor, before returning; idempotent.
     fn cleanup(&self);
+    /// Hands focus back to the application that was frontmost when `create` activated ours
+    /// (remembered in `create` BEFORE activating; never our own app, only while it still
+    /// runs). Called right after `cleanup`, before the engine acknowledges it; idempotent.
+    fn restore_previous_app(&self);
+}
+
+/// Native teardown of one overlay: windows and monitors first, then focus back to the app
+/// the user came from (Swift `ScreenTranslateFlow` re-activates `previousApp`).
+fn teardown(backend: &dyn OverlayBackend) {
+    backend.cleanup();
+    backend.restore_previous_app();
 }
 
 /// The part of the selection that falls on a display, in display-local top-left coordinates
@@ -235,7 +249,11 @@ impl Drop for CleanupGuard {
         }
         self.sink.deactivate();
         let backend = self.backend.clone();
-        if self.main.post(Box::new(move || backend.cleanup())).is_err() {
+        if self
+            .main
+            .post(Box::new(move || teardown(&*backend)))
+            .is_err()
+        {
             platform_log("region overlay cleanup could not be posted");
         }
     }
@@ -286,7 +304,7 @@ impl<B: OverlayBackend> MacOverlay<B> {
         let (ack, acked) = bounded::<()>(1);
         let backend = self.backend.clone();
         guard.main.post(Box::new(move || {
-            backend.cleanup();
+            teardown(&*backend);
             let _ = ack.send(());
         }))?;
         match acked.recv_timeout(CLEANUP_TIMEOUT) {
@@ -366,7 +384,7 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             move || {
                 let created = backend.create(&geometry, sink);
                 if created.is_err() {
-                    backend.cleanup();
+                    teardown(&*backend);
                 }
                 created
             }
@@ -409,6 +427,12 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             }
             // A cancel that raced a finished selection wins: the caller abandoned the pick.
             Wait::Done(_) if cancelled(&cancel) => Ok(None),
+            // The display observer and the mouse-up both run on main: a topology published
+            // before the Up leaves a rect in OLD desktop coordinates, never hand it out.
+            Wait::Done(Ok(Some(_))) if self.topology.topology_revision() != revision => {
+                platform_log("region overlay cancelled: display topology changed");
+                Ok(None)
+            }
             Wait::Done(outcome) => outcome,
         };
         // Without a confirmed cleanup the capture could contain the tint: fail instead.

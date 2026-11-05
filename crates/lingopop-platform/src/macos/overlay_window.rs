@@ -21,16 +21,16 @@ use crate::macos_overlay::{selection_in_display, OverlayBackend, OverlaySink};
 use crate::overlay::{size_label, OverlayInput, BORDER_PT, DIM_ALPHA, LABEL_PT};
 use crate::{PlatformError, Rect};
 use block2::RcBlock;
-use objc2::rc::Retained;
+use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplicationDidResignActiveNotification, NSBackingStoreType, NSBezierPath, NSColor,
-    NSCompositingOperation, NSCursor, NSEvent, NSEventMask, NSEventType, NSFont,
-    NSFontAttributeName, NSFontWeightMedium, NSForegroundColorAttributeName, NSPanel, NSRectFill,
-    NSRectFillUsingOperation, NSResponder, NSScreenSaverWindowLevel, NSShadow,
-    NSShadowAttributeName, NSStringDrawing, NSView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowStyleMask,
+    NSApplicationActivationOptions, NSApplicationDidResignActiveNotification, NSBackingStoreType,
+    NSBezierPath, NSColor, NSCompositingOperation, NSCursor, NSEvent, NSEventMask, NSEventType,
+    NSFont, NSFontAttributeName, NSFontWeightMedium, NSForegroundColorAttributeName, NSPanel,
+    NSRectFill, NSRectFillUsingOperation, NSResponder, NSRunningApplication,
+    NSScreenSaverWindowLevel, NSShadow, NSShadowAttributeName, NSStringDrawing, NSView, NSWindow,
+    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{
     NSDictionary, NSNotificationCenter, NSObject, NSObjectProtocol, NSOperationQueue, NSPoint,
@@ -221,9 +221,35 @@ struct Native {
     resign: Option<ResignObserver>,
 }
 
+/// The application that was frontmost before the overlay activated ours: pid and launch date
+/// (a reused pid has another launch date).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PreviousApp {
+    pid: i32,
+    launch: Option<f64>,
+}
+
 thread_local! {
     /// The live overlay; touched only on the main thread.
     static ACTIVE: RefCell<Option<Native>> = const { RefCell::new(None) };
+    /// Remembered by `create` before activating, consumed by `restore_previous_app`.
+    static PREVIOUS: Cell<Option<PreviousApp>> = const { Cell::new(None) };
+}
+
+fn launch_seconds(app: &NSRunningApplication) -> Option<f64> {
+    app.launchDate().map(|d| d.timeIntervalSinceReferenceDate())
+}
+
+/// The frontmost application, unless it is this process (nothing to hand back to).
+fn frontmost_other_app() -> Option<PreviousApp> {
+    autoreleasepool(|_| {
+        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        let pid = app.processIdentifier();
+        (pid > 0 && pid as u32 != std::process::id()).then(|| PreviousApp {
+            pid,
+            launch: launch_seconds(&app),
+        })
+    })
 }
 
 /// The production overlay backend.
@@ -347,6 +373,9 @@ impl OverlayBackend for AppKitOverlay {
         ACTIVE.with(|a| *a.borrow_mut() = Some(native));
         result?;
         if ok {
+            // Remember who was in front BEFORE our app takes over, so the cleanup can give
+            // focus back (an accessory app has no key window afterwards, typing goes nowhere).
+            PREVIOUS.with(|p| p.set(frontmost_other_app()));
             super::activate_app();
             NSCursor::crosshairCursor().set();
             ACTIVE.with(|a| {
@@ -392,5 +421,29 @@ impl OverlayBackend for AppKitOverlay {
             e.panel.close();
         }
         NSCursor::arrowCursor().set();
+    }
+
+    fn restore_previous_app(&self) {
+        let Some(previous) = PREVIOUS.with(|p| p.take()) else {
+            return;
+        };
+        autoreleasepool(|_| {
+            let Some(app) =
+                NSRunningApplication::runningApplicationWithProcessIdentifier(previous.pid)
+            else {
+                return;
+            };
+            // Never ourselves, never an exited app, never a process that reused the pid.
+            if app.isTerminated()
+                || previous.pid as u32 == std::process::id()
+                || launch_seconds(&app) != previous.launch
+            {
+                return;
+            }
+            // Swift `ScreenTranslateFlow` uses `.activateIgnoringOtherApps` here as well.
+            #[allow(deprecated)]
+            let options = NSApplicationActivationOptions::ActivateIgnoringOtherApps;
+            let _ = app.activateWithOptions(options);
+        });
     }
 }

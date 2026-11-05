@@ -9,10 +9,21 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayCall {
-    Create { seq: u64, displays: usize },
+    Create {
+        seq: u64,
+        displays: usize,
+    },
     Draw(Option<Rect>),
-    CleanupStarted { seq: u64 },
-    Cleanup { seq: u64 },
+    CleanupStarted {
+        seq: u64,
+    },
+    Cleanup {
+        seq: u64,
+    },
+    /// The previously frontmost application was handed focus back.
+    RestorePreviousApp {
+        seq: u64,
+    },
 }
 
 #[derive(Default)]
@@ -75,6 +86,21 @@ impl FakeOverlayBackend {
             .iter()
             .filter_map(|c| match c {
                 OverlayCall::Create { seq, .. } => Some(*seq),
+                _ => None,
+            })
+            .nth(n.checked_sub(1)?)
+    }
+    /// How many times the previous application was restored.
+    pub fn restores(&self) -> usize {
+        self.count(|c| matches!(c, OverlayCall::RestorePreviousApp { .. }))
+    }
+    /// Sequence number of the `n`th (1-based) restore of the previous application.
+    pub fn restore_seq(&self, n: usize) -> Option<u64> {
+        self.state()
+            .calls
+            .iter()
+            .filter_map(|c| match c {
+                OverlayCall::RestorePreviousApp { seq } => Some(*seq),
                 _ => None,
             })
             .nth(n.checked_sub(1)?)
@@ -192,6 +218,15 @@ impl OverlayBackend for FakeOverlayBackend {
             s.live = s.live.saturating_sub(1);
         }
         s.calls.push(OverlayCall::Cleanup { seq });
+        drop(s);
+        self.changed.notify_all();
+    }
+
+    fn restore_previous_app(&self) {
+        let mut s = self.state();
+        s.seq += 1;
+        let seq = s.seq;
+        s.calls.push(OverlayCall::RestorePreviousApp { seq });
         drop(s);
         self.changed.notify_all();
     }

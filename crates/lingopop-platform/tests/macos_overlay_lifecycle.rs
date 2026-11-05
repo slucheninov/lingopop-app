@@ -42,13 +42,16 @@ struct Harness {
 }
 impl Harness {
     fn with(displays: Vec<MacDisplay>, pump: bool) -> Self {
+        Self::with_poll(displays, pump, Duration::from_millis(5))
+    }
+    fn with_poll(displays: Vec<MacDisplay>, pump: bool, poll: Duration) -> Self {
         let main = FakeMainThread::new();
         let backend = FakeOverlayBackend::new();
         let cache = TopologyCache::new(MacGeometry::new(1, 900.0, displays).unwrap());
         let sleeper = Arc::new(FakeSleeper::new());
         let overlay = Arc::new(
             MacOverlay::new(backend.clone(), Arc::new(cache.clone()), sleeper.clone())
-                .with_topology_poll(Duration::from_millis(5)),
+                .with_topology_poll(poll),
         );
         overlay.bind_main_thread(main.clone());
         let pump = pump.then(|| {
@@ -573,4 +576,99 @@ fn selection_is_clipped_into_display_local_top_left_coordinates() {
     assert_eq!(selection_in_display(d, Rect::new(10, 0, 100, 100)), None);
     // A bare click has no area.
     assert_eq!(selection_in_display(d, Rect::new(-10, 0, 0, 0)), None);
+}
+
+#[test]
+fn a_topology_change_in_the_tick_of_a_finished_drag_discards_the_rect() {
+    // A 60 s poll: only the finished drag can end this pick, the ticker never fires.
+    let h = Harness::with_poll(one_display(1.0), true, Duration::from_secs(60));
+    let (_tx, join) = h.pick_created(1);
+    assert!(h.backend.fire(OverlayInput::Down(p(10, 10))));
+    assert!(h.backend.fire(OverlayInput::Move(p(200, 200))));
+    // The display observer publishes a new revision before the mouse-up arrives.
+    h.cache.publish(900.0, one_display(2.0)).unwrap();
+    assert!(h.backend.fire(OverlayInput::Up(p(200, 200))));
+    assert_eq!(join.join().unwrap(), Ok(None));
+    assert_eq!((h.backend.creates(), h.backend.cleanups()), (1, 1));
+    assert_eq!(h.backend.native_active(), 0);
+}
+
+#[test]
+fn an_unchanged_topology_still_returns_the_finished_rect() {
+    let h = Harness::with_poll(one_display(1.0), true, Duration::from_secs(60));
+    let result = h.drag(&[
+        OverlayInput::Down(p(10, 10)),
+        OverlayInput::Move(p(200, 200)),
+        OverlayInput::Up(p(200, 200)),
+    ]);
+    assert_eq!(result, Ok(Some(Rect::new(10, 10, 190, 190))));
+}
+
+#[test]
+fn the_previous_app_is_restored_before_the_cleanup_acknowledgment_and_the_settle_is_150ms() {
+    use lingopop_platform::fake::OverlayCall;
+    let h = Harness::new(one_display(1.0));
+    h.backend.hold_cleanup(true);
+    let (_tx, join) = h.pick_created(1);
+    assert!(h.backend.fire(OverlayInput::Escape));
+    h.backend.wait_for_cleanups_started(1);
+    assert_eq!(
+        h.backend.restores(),
+        0,
+        "restore follows the window removal"
+    );
+    h.backend.hold_cleanup(false);
+    assert_eq!(join.join().unwrap(), Ok(None));
+    // pick returned, i.e. the acknowledgment happened: the restore is already recorded,
+    // after the native removal and before the settle sleep.
+    let calls = h.backend.calls();
+    let cleanup = calls
+        .iter()
+        .position(|c| matches!(c, OverlayCall::Cleanup { .. }))
+        .unwrap();
+    let restore = calls
+        .iter()
+        .position(|c| matches!(c, OverlayCall::RestorePreviousApp { .. }))
+        .unwrap();
+    assert!(cleanup < restore);
+    assert_eq!(h.backend.restores(), 1);
+    assert_eq!(COMPOSITOR_SETTLE, Duration::from_millis(150));
+    assert_eq!(h.sleeper.slept(), vec![Duration::from_millis(150)]);
+}
+
+#[test]
+fn every_exit_path_restores_the_previous_app_once() {
+    // selection
+    let h = Harness::new(one_display(1.0));
+    let _ = h.drag(&[
+        OverlayInput::Down(p(10, 10)),
+        OverlayInput::Move(p(200, 200)),
+        OverlayInput::Up(p(200, 200)),
+    ]);
+    assert_eq!(h.backend.restores(), 1, "selection");
+    // escape
+    let h = Harness::new(one_display(1.0));
+    let _ = h.drag(&[OverlayInput::Escape]);
+    assert_eq!(h.backend.restores(), 1, "escape");
+    // dropped cancel sender
+    let h = Harness::new(one_display(1.0));
+    let (tx, join) = h.pick_created(1);
+    drop(tx);
+    join.join().unwrap().unwrap();
+    assert_eq!(h.backend.restores(), 1, "cancel");
+    // topology change
+    let h = Harness::new(one_display(1.0));
+    let (_tx, join) = h.pick_created(1);
+    h.cache.publish(900.0, one_display(2.0)).unwrap();
+    join.join().unwrap().unwrap();
+    assert_eq!(h.backend.restores(), 1, "topology");
+    // failed create (the create job already cleaned up)
+    let h = Harness::new(one_display(1.0));
+    h.backend.fail_next_create(PlatformError::Os {
+        api: "create",
+        code: 1,
+    });
+    let (_tx, rx) = bounded(1);
+    assert!(h.overlay.pick(rx).is_err());
+    assert_eq!(h.backend.restores(), 1, "failed create");
 }
