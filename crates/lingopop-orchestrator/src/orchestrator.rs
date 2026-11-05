@@ -72,6 +72,15 @@ pub struct Deps {
     pub picker: Arc<dyn RegionPicker>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HideWaitError {
+    TimedOut,
+    Failed,
+    Disconnected,
+    Superseded,
+    Queue(PresentationQueueError),
+}
+
 pub(crate) struct Inner {
     pub deps: Deps,
     state: Mutex<SessionState>,
@@ -153,7 +162,8 @@ impl Orchestrator {
         let size = (width.min(MAX_LOGICAL_SIDE), height.min(MAX_LOGICAL_SIDE));
         let mut st = self.state();
         st.size = size;
-        if !matches!(st.visibility, Visibility::Pending(id) | Visibility::Visible(id) if id.generation == st.generation)
+        if st.pending_hiding
+            || !matches!(st.visibility, Visibility::Pending(id) | Visibility::Visible(id) if id.generation == st.generation)
         {
             return;
         }
@@ -338,13 +348,15 @@ impl Orchestrator {
             sequence: st.sequence,
         };
         self.inner.fence.advance(id);
+        let hiding = matches!(kind, PresentationKind::Hide);
         match self.deps().popup.submit(PresentationCommand { id, kind }) {
             Ok(rx) => {
                 st.visibility = Visibility::Pending(id);
+                st.pending_hiding = hiding;
                 Ok(rx)
             }
             Err(e) => {
-                st.visibility = Visibility::Hidden;
+                self.log_queue_error(e);
                 Err(e)
             }
         }
@@ -357,6 +369,14 @@ impl Orchestrator {
             return;
         }
         st.acked_sequence = ack.id.sequence;
+        let has_current_presentation = matches!(st.visibility, Visibility::Pending(id) | Visibility::Visible(id) if id.generation == st.generation);
+        if ack.effect_left_visible
+            && ack.result == Ok(PresentationVisibility::Superseded)
+            && !has_current_presentation
+        {
+            let _ = self.submit_locked(&mut st, PresentationKind::Hide);
+            return;
+        }
         if st.visibility != Visibility::Pending(ack.id) {
             if ack.result == Ok(PresentationVisibility::Visible)
                 && st.session.is_none()
@@ -390,16 +410,36 @@ impl Orchestrator {
                     st.watching = false;
                 }
                 if ack.result.is_err() {
-                    self.log("popup show failed");
+                    self.log(if st.pending_hiding {
+                        "popup hide failed"
+                    } else {
+                        "popup show failed"
+                    });
                 }
             }
         }
     }
 
+    fn log_queue_error(&self, error: PresentationQueueError) {
+        self.log(match error {
+            PresentationQueueError::Full => "popup presentation queue full",
+            PresentationQueueError::Closed => "popup presentation queue closed",
+        });
+    }
+
     /// Final Hide for a future shutdown caller. The caller supplies a deterministic deadline.
     pub async fn hide_and_wait(&self, deadline: impl Future<Output = ()>) -> bool {
-        let command = {
+        self.wait_for_hide(deadline).await.is_ok()
+    }
+
+    pub(crate) async fn wait_for_hide(
+        &self,
+        deadline: impl Future<Output = ()>,
+    ) -> Result<(), HideWaitError> {
+        let (command, previous, previous_hiding) = {
             let mut st = self.state();
+            let previous = st.visibility;
+            let previous_hiding = st.pending_hiding;
             st.sequence += 1;
             let id = PresentationId {
                 generation: st.generation,
@@ -407,24 +447,39 @@ impl Orchestrator {
             };
             self.inner.fence.advance(id);
             st.visibility = Visibility::Pending(id);
-            PresentationCommand {
-                id,
-                kind: PresentationKind::Hide,
-            }
+            st.pending_hiding = true;
+            (
+                PresentationCommand {
+                    id,
+                    kind: PresentationKind::Hide,
+                },
+                previous,
+                previous_hiding,
+            )
         };
         let id = command.id;
-        let Ok(receiver) = self.deps().popup.submit(command) else {
-            let mut st = self.state();
-            if st.visibility == Visibility::Pending(id) {
-                st.visibility = Visibility::Hidden;
+        let receiver = match self.deps().popup.submit(command) {
+            Ok(receiver) => receiver,
+            Err(error) => {
+                let mut st = self.state();
+                if st.visibility == Visibility::Pending(id) {
+                    st.visibility = previous;
+                    st.pending_hiding = previous_hiding;
+                }
+                self.log_queue_error(error);
+                return Err(HideWaitError::Queue(error));
             }
-            return false;
         };
         tokio::pin!(deadline);
         tokio::select! {
             biased;
-            ack = receiver => matches!(ack, Ok(PresentationAck { result: Ok(PresentationVisibility::Hidden), .. })) && self.inner.fence.is_current(id),
-            () = &mut deadline => false,
+            ack = receiver => match ack {
+                Ok(PresentationAck { result: Ok(PresentationVisibility::Hidden), .. }) if self.inner.fence.is_current(id) => Ok(()),
+                Ok(PresentationAck { result: Err(_), .. }) => Err(HideWaitError::Failed),
+                Ok(_) => Err(HideWaitError::Superseded),
+                Err(_) => Err(HideWaitError::Disconnected),
+            },
+            () = &mut deadline => Err(HideWaitError::TimedOut),
         }
     }
 

@@ -80,7 +80,28 @@ impl Orchestrator {
                 // show the result again.
                 (text, target)
             };
-            if !me.hide_and_wait(deadline).await {
+            if let Err(cause) = me.wait_for_hide(deadline).await {
+                if me.is_current(generation)
+                    && cause != crate::orchestrator::HideWaitError::Superseded
+                {
+                    use crate::{orchestrator::HideWaitError, PresentationQueueError};
+                    me.log(match cause {
+                        HideWaitError::TimedOut => "replace hide timed out",
+                        HideWaitError::Failed => "replace hide failed",
+                        HideWaitError::Disconnected => "replace hide disconnected",
+                        HideWaitError::Queue(PresentationQueueError::Closed) => {
+                            "replace hide closed"
+                        }
+                        HideWaitError::Queue(PresentationQueueError::Full) => "replace hide full",
+                        HideWaitError::Superseded => unreachable!(),
+                    });
+                    let error = if cause == HideWaitError::TimedOut {
+                        GateError::TimedOut
+                    } else {
+                        GateError::Platform(PlatformError::Unsupported("popup hide"))
+                    };
+                    me.present_notice(generation, gate_message(&error));
+                }
                 return;
             }
             {

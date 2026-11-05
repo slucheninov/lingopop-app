@@ -1,6 +1,9 @@
 //! The text-operation flow over platform fakes, a `FakeTransport` and a recording popup.
 
+#[path = "support/presentation_transport.rs"]
+mod presentation_transport;
 use lingopop_platform::fake::{FakeDismissWatcher, FakePopupWindow};
+use presentation_transport::AfterPresentation;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::ThreadId;
@@ -201,6 +204,11 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         ..Settings::default()
     };
     let config = Arc::new(FakeConfig::new(settings, snapshot_with(opts.keys_for)));
+    let popup_barrier = popup.clone();
+    let transport = Arc::new(AfterPresentation {
+        transport,
+        flush: Arc::new(move || popup_barrier.flush()),
+    });
     let deps = Deps {
         status: None,
         platform,
@@ -279,7 +287,7 @@ async fn translate_happy_path_shows_loading_then_result() {
     let r = rig(t.clone(), "Hello");
     r.orch.trigger(AIOperation::Translate).await;
     let calls = r.popup.calls();
-    assert!(!calls.is_empty());
+    assert_eq!(calls.len(), 2);
     let PopupCall::ShowAt(origin, loading) = &calls[0] else {
         panic!("first call must be show_at: {calls:?}")
     };
@@ -287,15 +295,12 @@ async fn translate_happy_path_shows_loading_then_result() {
         *origin,
         popup_origin(INITIAL_POPUP_SIZE, CURSOR, &monitor_list())
     );
-    if calls.len() > 1 {
-        assert_eq!(
-            *loading,
-            PopupViewModel::loading(AIOperation::Translate, "Hello")
-        );
-    }
-    let done = match calls.last().unwrap() {
-        PopupCall::ShowAt(_, m) | PopupCall::Update(m) => m,
-        _ => panic!("result expected"),
+    assert_eq!(
+        *loading,
+        PopupViewModel::loading(AIOperation::Translate, "Hello")
+    );
+    let PopupCall::Update(done) = &calls[1] else {
+        panic!("second call must update the result: {calls:?}");
     };
     assert_eq!(result_text(done), Some("TRANSLATED"));
     assert_eq!(t.requests().len(), 1);
@@ -480,7 +485,7 @@ async fn second_trigger_cancels_first_and_only_second_result_is_shown() {
         r.popup
             .calls()
             .iter()
-            .any(|c| matches!(c, PopupCall::ShowAt(_, m) | PopupCall::Update(m) if result_text(m) == Some("RESULT-TWO")))
+            .any(|c| matches!(c, PopupCall::Update(m) if result_text(m) == Some("RESULT-TWO")))
     })
     .await;
     release_tx.send(()).unwrap();
@@ -537,9 +542,7 @@ async fn orchestrator_never_calls_focus_on_popup() {
     let calls = r.popup.calls();
     assert!(matches!(calls[0], PopupCall::ShowAt(..)));
     // The PopupView trait has no focus method; only these three kinds can ever be recorded.
-    assert!(calls[1..]
-        .iter()
-        .all(|c| matches!(c, PopupCall::ShowAt(..) | PopupCall::Update(_))));
+    assert!(calls[1..].iter().all(|c| matches!(c, PopupCall::Update(_))));
 }
 
 #[tokio::test]

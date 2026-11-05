@@ -1,4 +1,6 @@
 //! Popup actions over real runner requests and deterministic platform fakes.
+#[path = "support/presentation_transport.rs"]
+mod presentation_transport;
 use lingopop_core::{
     http::{FakeTransport, HttpResponse, Transport},
     operation::AIOperation,
@@ -15,6 +17,7 @@ use lingopop_orchestrator::{
     INPUT_BLOCKED_AUTO_CLOSE, *,
 };
 use lingopop_platform::{fake::*, *};
+use presentation_transport::AfterPresentation;
 use std::sync::{Arc, Mutex};
 
 struct Protector;
@@ -105,6 +108,11 @@ fn rig_full(
     let sink = logs.clone();
     let log: Arc<lingopop_platform::LogFn> =
         Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string()));
+    let popup_barrier = popup.clone();
+    let t = Arc::new(AfterPresentation {
+        transport: t,
+        flush: Arc::new(move || popup_barrier.view.flush()),
+    });
     let orch = Orchestrator::new(Deps {
         status: None,
         platform: Platform {
@@ -183,7 +191,9 @@ fn body(t: &FakeTransport) -> serde_json::Value {
 async fn copy_writes_clipboard_and_keeps_popup() {
     let (r, _) = ready_rig();
     ready(&r).await;
+    let before = r.popup.view.calls();
     r.orch.copy().await;
+    assert_eq!(r.popup.view.calls(), before, "Copy makes no popup call");
     assert_eq!(r.clip.text().as_deref(), Some("DISPLAYED"));
     assert!(r.popup.is_visible());
     assert!(matches!(model(&r).phase, PopupPhase::Result(_)));
@@ -528,6 +538,7 @@ async fn reshow_uses_measured_size_for_dismiss_rect() {
         r.clip
             .fail_next(FakeOp::WriteTransient, PlatformError::ClipboardBusy);
         r.orch.replace().await;
+        r.popup.view.flush();
     }
     let starts: Vec<Rect> = r
         .dismiss

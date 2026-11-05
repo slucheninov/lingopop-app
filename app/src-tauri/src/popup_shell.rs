@@ -251,24 +251,35 @@ impl Drop for ShellPopup {
 }
 impl PopupView for ShellPopup {
     fn submit(&self, cmd: PresentationCommand) -> Result<AckReceiver, PresentationQueueError> {
-        let rx = self.queue.submit(cmd)?;
-        self.sender
-            .send(WorkerMessage::Drain)
-            .map_err(|_| PresentationQueueError::Closed)?;
-        Ok(rx)
+        self.queue
+            .submit_notified(cmd, || self.sender.send(WorkerMessage::Drain).is_ok())
     }
+
     fn bind(&self, fence: Arc<PresentationFence>, sink: Arc<AckSink>) {
         if self.sink.set(sink.clone()).is_err() {
+            log::warn!("presentation worker already bound");
             return;
         }
-        let receiver = self.receiver.lock().unwrap().take().unwrap();
+        let receiver = match self.receiver.lock() {
+            Ok(mut receiver) => receiver.take(),
+            Err(_) => {
+                log::warn!("presentation worker receiver lock failed");
+                self.queue.close(sink.as_ref());
+                return;
+            }
+        };
+        let Some(receiver) = receiver else {
+            log::warn!("presentation worker receiver unavailable");
+            self.queue.close(sink.as_ref());
+            return;
+        };
         let queue = self.queue.clone();
         let native = self.native.clone();
-        std::thread::Builder::new()
+        let failed_start_sink = sink.clone();
+        let start = std::thread::Builder::new()
             .name("lingopop-presentation".into())
             .spawn(move || {
-                let mut desired: Option<(Point, (f64, f64), PopupViewModel)> = None;
-                let mut desired_sequence = 0;
+                let mut desired = DesiredPresentation::default();
                 while let Ok(message) = receiver.recv() {
                     match message {
                         WorkerMessage::Ready => native.ready(),
@@ -283,31 +294,7 @@ impl PopupView for ShellPopup {
                     while let Some(job) = queue.try_next() {
                         // Retain desired geometry/content even when a pending Show was fenced
                         // before execution; its current Resize must still be able to show it.
-                        if job.command.id.sequence > desired_sequence {
-                            desired_sequence = job.command.id.sequence;
-                            match &job.command.kind {
-                                PresentationKind::Show {
-                                    origin,
-                                    size_logical,
-                                    model,
-                                } => desired = Some((*origin, *size_logical, model.clone())),
-                                PresentationKind::Update { model } => {
-                                    if let Some((_, _, current)) = desired.as_mut() {
-                                        *current = model.clone();
-                                    }
-                                }
-                                PresentationKind::Resize {
-                                    origin,
-                                    size_logical,
-                                } => {
-                                    if let Some((p, size, _)) = desired.as_mut() {
-                                        *p = *origin;
-                                        *size = *size_logical;
-                                    }
-                                }
-                                PresentationKind::Hide => {}
-                            }
-                        }
+                        desired.record(&job.command);
                         consume_job(&fence, job, sink.as_ref(), |command| {
                             match &command.kind {
                                 PresentationKind::Show {
@@ -327,15 +314,13 @@ impl PopupView for ShellPopup {
                                     origin,
                                     size_logical,
                                 } => {
-                                    let placed = if native.is_visible() {
-                                        native.place(native.rect_for(*origin, *size_logical))
-                                    } else if let Some((p, size, model)) = &desired {
-                                        native.show_at(*p, *size, model)
-                                    } else {
-                                        Err(lingopop_platform::PlatformError::Unsupported(
-                                            "popup resize",
-                                        ))
-                                    };
+                                    let placed = desired.resize_with(|_, _, model| {
+                                        if native.is_visible() {
+                                            native.place(native.rect_for(*origin, *size_logical))
+                                        } else {
+                                            native.show_at(*origin, *size_logical, model)
+                                        }
+                                    });
                                     if let Err(error) = placed {
                                         native.hide();
                                         return Err(error);
@@ -355,8 +340,69 @@ impl PopupView for ShellPopup {
                     }
                 }
                 queue.close(sink.as_ref());
-            })
-            .expect("presentation worker");
+            });
+        finish_worker_start(start, self.queue.as_ref(), failed_start_sink.as_ref());
+    }
+}
+
+fn finish_worker_start(
+    start: std::io::Result<std::thread::JoinHandle<()>>,
+    queue: &PresentationQueue,
+    sink: &AckSink,
+) {
+    if start.is_err() {
+        log::warn!("presentation worker failed to start");
+        queue.close(sink);
+    }
+}
+
+#[derive(Default)]
+struct DesiredPresentation {
+    sequence: u64,
+    show: Option<(Point, (f64, f64), PopupViewModel)>,
+}
+impl DesiredPresentation {
+    fn record(&mut self, command: &PresentationCommand) {
+        if command.id.sequence <= self.sequence {
+            return;
+        }
+        self.sequence = command.id.sequence;
+        match &command.kind {
+            PresentationKind::Show {
+                origin,
+                size_logical,
+                model,
+            } => self.show = Some((*origin, *size_logical, model.clone())),
+            PresentationKind::Update { model } => {
+                if let Some((_, _, current)) = self.show.as_mut() {
+                    *current = model.clone();
+                }
+            }
+            PresentationKind::Resize {
+                origin,
+                size_logical,
+            } => {
+                if let Some((p, size, _)) = self.show.as_mut() {
+                    *p = *origin;
+                    *size = *size_logical;
+                }
+            }
+            PresentationKind::Hide => self.show = None,
+        }
+    }
+    fn resize_with(
+        &self,
+        effect: impl FnOnce(
+            Point,
+            (f64, f64),
+            &PopupViewModel,
+        ) -> Result<(), lingopop_platform::PlatformError>,
+    ) -> Result<(), lingopop_platform::PlatformError> {
+        if let Some((origin, size, model)) = &self.show {
+            effect(*origin, *size, model)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -420,5 +466,76 @@ mod tests {
         );
         assert!(acked.load(Ordering::SeqCst));
         worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod fix_round_one_tests {
+    use super::*;
+    #[test]
+    fn hide_clears_resize_intent_so_no_native_effect_runs() {
+        let mut desired = DesiredPresentation::default();
+        let id = |sequence| PresentationId {
+            generation: 1,
+            sequence,
+        };
+        desired.record(&PresentationCommand {
+            id: id(1),
+            kind: PresentationKind::Show {
+                origin: Point { x: 0, y: 0 },
+                size_logical: (400., 200.),
+                model: PopupViewModel::loading(
+                    lingopop_core::operation::AIOperation::Translate,
+                    "fixture",
+                ),
+            },
+        });
+        desired.record(&PresentationCommand {
+            id: id(2),
+            kind: PresentationKind::Hide,
+        });
+        desired.record(&PresentationCommand {
+            id: id(3),
+            kind: PresentationKind::Resize {
+                origin: Point { x: 10, y: 10 },
+                size_logical: (500., 300.),
+            },
+        });
+        let mut effects = 0;
+        desired
+            .resize_with(|_, _, _| {
+                effects += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(effects, 0);
+    }
+    #[tokio::test]
+    async fn worker_start_failure_closes_and_resolves_accepted_work() {
+        let queue = PresentationQueue::default();
+        let id = PresentationId {
+            generation: 1,
+            sequence: 1,
+        };
+        let receiver = queue
+            .submit(PresentationCommand {
+                id,
+                kind: PresentationKind::Hide,
+            })
+            .unwrap();
+        finish_worker_start(Err(std::io::Error::other("fixture")), &queue, &|_| {});
+        assert_eq!(
+            receiver.await.unwrap().result,
+            Ok(PresentationVisibility::Superseded)
+        );
+        assert_eq!(
+            queue
+                .submit(PresentationCommand {
+                    id,
+                    kind: PresentationKind::Hide
+                })
+                .unwrap_err(),
+            PresentationQueueError::Closed
+        );
     }
 }

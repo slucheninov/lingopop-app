@@ -59,6 +59,8 @@ impl std::fmt::Debug for Session {
 #[derive(Debug)]
 pub(crate) struct SessionState {
     pub visibility: crate::Visibility,
+    /// Pending Hide is never eligible for a webview resize.
+    pub pending_hiding: bool,
     pub sequence: u64,
     pub acked_sequence: u64,
     pub watching: bool,
@@ -79,6 +81,7 @@ impl SessionState {
     pub fn new() -> Self {
         Self {
             visibility: crate::Visibility::Hidden,
+            pending_hiding: false,
             sequence: 0,
             acked_sequence: 0,
             watching: false,

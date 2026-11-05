@@ -41,6 +41,8 @@ pub enum PresentationVisibility {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresentationAck {
+    /// True only when an executed effect returned Visible, including after supersession.
+    pub effect_left_visible: bool,
     pub id: PresentationId,
     pub result: Result<PresentationVisibility, PlatformError>,
 }
@@ -81,8 +83,10 @@ impl PresentationFence {
         id: PresentationId,
         effect: impl FnOnce() -> Result<PresentationVisibility, PlatformError>,
     ) -> Option<PresentationAck> {
+        let mut effect_left_visible = false;
         let result = if self.is_current(id) {
             let result = effect();
+            effect_left_visible = result == Ok(PresentationVisibility::Visible);
             if self.is_current(id) {
                 result
             } else {
@@ -91,7 +95,11 @@ impl PresentationFence {
         } else {
             Ok(PresentationVisibility::Superseded)
         };
-        Some(PresentationAck { id, result })
+        Some(PresentationAck {
+            id,
+            result,
+            effect_left_visible,
+        })
     }
 }
 pub struct PresentationJob {
@@ -109,6 +117,7 @@ impl PresentationJob {
             PresentationAck {
                 id,
                 result: Ok(PresentationVisibility::Superseded),
+                effect_left_visible: false,
             },
             sink,
         );
@@ -130,8 +139,42 @@ impl PresentationQueue {
         &self,
         command: PresentationCommand,
     ) -> Result<AckReceiver, PresentationQueueError> {
+        self.submit_notified(command, || true)
+    }
+
+    /// Wake a worker before acceptance, atomically with enqueue. The notifier must only
+    /// send a signal: it must never consume, dispatch native work or call the ack sink.
+    pub fn submit_notified(
+        &self,
+        command: PresentationCommand,
+        notify: impl FnOnce() -> bool,
+    ) -> Result<AckReceiver, PresentationQueueError> {
         let mut s = self.state.lock().unwrap();
         if s.closed {
+            return Err(PresentationQueueError::Closed);
+        }
+        let merges_show = s.pending.back().is_some_and(|old| {
+            old.command.id.generation == command.id.generation
+                && old.command.id.sequence < command.id.sequence
+                && matches!(old.command.kind, PresentationKind::Show { .. })
+                && matches!(
+                    command.kind,
+                    PresentationKind::Update { .. } | PresentationKind::Resize { .. }
+                )
+        });
+        if !matches!(command.kind, PresentationKind::Hide)
+            && !merges_show
+            && s.pending
+                .iter()
+                .filter(|j| !matches!(j.command.kind, PresentationKind::Hide))
+                .count()
+                >= 32
+        {
+            return Err(PresentationQueueError::Full);
+        }
+        if !notify() {
+            s.closed = true;
+            self.wake.notify_all();
             return Err(PresentationQueueError::Closed);
         }
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -181,15 +224,6 @@ impl PresentationQueue {
                     s.superseded.push(old);
                 }
             }
-        }
-        if !matches!(job.command.kind, PresentationKind::Hide)
-            && s.pending
-                .iter()
-                .filter(|j| !matches!(j.command.kind, PresentationKind::Hide))
-                .count()
-                >= 32
-        {
-            return Err(PresentationQueueError::Full);
         }
         s.pending.push_back(job);
         self.wake.notify_one();

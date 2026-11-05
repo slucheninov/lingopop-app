@@ -171,12 +171,18 @@ struct ManualPopup {
     submitted: tokio::sync::Notify,
     visible: std::sync::atomic::AtomicBool,
     effects: std::sync::atomic::AtomicUsize,
+    attempts: Mutex<Vec<PresentationCommand>>,
+    reject: Mutex<Option<PresentationQueueError>>,
 }
 impl PopupView for ManualPopup {
     fn bind(&self, fence: Arc<PresentationFence>, sink: Arc<AckSink>) {
         assert!(self.binding.set((fence, sink)).is_ok());
     }
     fn submit(&self, cmd: PresentationCommand) -> Result<AckReceiver, PresentationQueueError> {
+        self.attempts.lock().unwrap().push(cmd.clone());
+        if let Some(error) = self.reject.lock().unwrap().take() {
+            return Err(error);
+        }
         let rx = self.queue.submit(cmd)?;
         self.submitted.notify_one();
         Ok(rx)
@@ -264,6 +270,7 @@ async fn superseded_show_and_hide_ack_do_not_paste() {
     r.orch.presentation_acked(PresentationAck {
         id: stale_id,
         result: Ok(PresentationVisibility::Hidden),
+        effect_left_visible: false,
     });
     let paste_count_after_stale_hide_ack = r.keys.pasted().len();
     r.popup.view.complete(show);
@@ -342,6 +349,7 @@ async fn duplicate_visible_ack_is_inert_and_failed_hide_never_pastes() {
         PresentationAck {
             id,
             result: Err(PlatformError::Unsupported("fixture hide")),
+            effect_left_visible: false,
         },
         r.popup.view.binding.get().unwrap().1.as_ref(),
     );
@@ -371,4 +379,196 @@ async fn effect_can_reenter_orchestrator_without_session_lock() {
     let resize = r.popup.view.take().await;
     r.popup.view.complete(resize);
     assert!(matches!(r.orch.visibility(), Visibility::Visible(_)));
+}
+
+fn confirm_result(r: &Rig) {
+    while let Some(job) = r.popup.view.queue.try_next() {
+        r.popup.view.complete(job);
+    }
+    assert!(matches!(r.orch.visibility(), Visibility::Visible(_)));
+}
+
+#[tokio::test]
+async fn resize_during_pending_close_does_not_supersede_hide() {
+    let (r, _) = ready_rig();
+    r.orch.trigger(AIOperation::Translate).await;
+    confirm_result(&r);
+    r.orch.close().await;
+    let hide = r.popup.view.take_hide().await;
+    r.orch.popup_resized((700., 400.));
+    assert!(
+        r.popup.view.queue.try_next().is_none(),
+        "a pending Hide must not admit Resize"
+    );
+    r.popup.view.complete(hide);
+    assert_eq!(r.orch.visibility(), Visibility::Hidden);
+    assert!(!r.popup.is_visible());
+    assert_eq!(r.dismiss.calls().last(), Some(&DismissCall::Stop));
+}
+
+#[tokio::test]
+async fn resize_during_pending_replace_hide_does_not_abort_paste() {
+    let (r, _) = ready_rig();
+    r.orch.trigger(AIOperation::Translate).await;
+    confirm_result(&r);
+    let me = r.orch.clone();
+    let replace = tokio::spawn(async move {
+        me.replace_with_deadline(std::future::pending()).await;
+    });
+    let hide = r.popup.view.take_hide().await;
+    r.orch.popup_resized((700., 400.));
+    assert!(
+        r.popup.view.queue.try_next().is_none(),
+        "a pending Hide must not admit Resize"
+    );
+    r.popup.view.complete(hide);
+    replace.await.unwrap();
+    assert_eq!(r.keys.pasted().len(), 1);
+    assert!(!r.popup.is_visible());
+    assert_eq!(r.orch.visibility(), Visibility::Hidden);
+}
+
+#[tokio::test]
+async fn hide_failure_timeout_and_closed_keep_replace_with_notice() {
+    for cause in ["failed", "timed out", "closed", "full"] {
+        let (r, _) = ready_rig();
+        r.orch.trigger(AIOperation::Translate).await;
+        confirm_result(&r);
+        if cause == "closed" {
+            r.popup.view.queue.seal();
+        }
+        if cause == "full" {
+            *r.popup.view.reject.lock().unwrap() = Some(PresentationQueueError::Full);
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let me = r.orch.clone();
+        let replace = tokio::spawn(async move {
+            me.replace_with_deadline(async {
+                let _ = rx.await;
+            })
+            .await;
+        });
+        let mut late_hide = None;
+        if cause != "closed" && cause != "full" {
+            let hide = r.popup.view.take_hide().await;
+            if cause == "timed out" {
+                tx.send(()).unwrap();
+                late_hide = Some(hide);
+            } else {
+                let id = hide.command.id;
+                hide.complete(
+                    PresentationAck {
+                        id,
+                        result: Err(PlatformError::Unsupported("fixture hide")),
+                        effect_left_visible: false,
+                    },
+                    r.popup.view.binding.get().unwrap().1.as_ref(),
+                );
+            }
+        }
+        replace.await.unwrap();
+        let commands = r.popup.view.attempts.lock().unwrap();
+        let model = match &commands.last().unwrap().kind {
+            PresentationKind::Show { model, .. } | PresentationKind::Update { model } => model,
+            _ => panic!("result with notice expected for {cause}"),
+        };
+        assert!(model.notice.is_some(), "notice for {cause}");
+        assert!(
+            matches!(&model.phase, PopupPhase::Result(result) if result.show_replace && result.text == "DISPLAYED")
+        );
+        assert!(
+            r.logs
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line == &format!("replace hide {cause}")),
+            "cause-specific log for {cause}"
+        );
+        assert!(!r
+            .logs
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line == "popup show failed"));
+        assert!(r.keys.pasted().is_empty());
+        drop(commands);
+        if let Some(hide) = late_hide {
+            assert_eq!(
+                r.popup.view.complete(hide).result,
+                Ok(PresentationVisibility::Superseded)
+            );
+        }
+        while let Some(job) = r.popup.view.queue.try_next() {
+            r.popup.view.complete(job);
+        }
+    }
+}
+
+#[tokio::test]
+async fn rejected_resize_preserves_visible_state() {
+    for error in [PresentationQueueError::Full, PresentationQueueError::Closed] {
+        let (r, _) = ready_rig();
+        r.orch.trigger(AIOperation::Translate).await;
+        confirm_result(&r);
+        let before = r.orch.visibility();
+        *r.popup.view.reject.lock().unwrap() = Some(error);
+        r.orch.popup_resized((700., 400.));
+        assert_eq!(r.orch.visibility(), before);
+        assert!(r.popup.is_visible());
+        assert!(r
+            .logs
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|s| s.starts_with("popup presentation queue")));
+    }
+}
+
+#[tokio::test]
+async fn superseded_effect_left_visible_is_repaired_after_cancelled_pick() {
+    let (r, _) = ready_rig();
+    r.orch.trigger(AIOperation::Translate).await;
+    let mut current = r.popup.view.take().await;
+    while let Some(next) = r.popup.view.queue.try_next() {
+        r.popup.view.complete(current);
+        current = next;
+    }
+    let (fence, sink) = r.popup.view.binding.get().unwrap();
+    let (fence, sink) = (fence.clone(), sink.clone());
+    let (entered, started) = tokio::sync::oneshot::channel();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let popup = r.popup.clone();
+    let worker = std::thread::spawn(move || {
+        let ack = fence
+            .apply_if_current(current.command.id, || {
+                popup
+                    .view
+                    .visible
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                entered.send(()).unwrap();
+                blocked.recv().unwrap();
+                Ok(PresentationVisibility::Visible)
+            })
+            .unwrap();
+        current.complete(ack.clone(), sink.as_ref());
+        ack
+    });
+    started.await.unwrap();
+    r.orch.trigger(AIOperation::ScreenTranslate).await; // the fake picker cancels
+    release.send(()).unwrap();
+    assert_eq!(
+        worker.join().unwrap().result,
+        Ok(PresentationVisibility::Superseded)
+    );
+    let repair = r
+        .popup
+        .view
+        .queue
+        .try_next()
+        .expect("superseded visible effect needs Hide repair");
+    assert!(matches!(repair.command.kind, PresentationKind::Hide));
+    r.popup.view.complete(repair);
+    assert!(!r.popup.is_visible());
+    assert_eq!(r.orch.visibility(), Visibility::Hidden);
+    assert!(r.dismiss.calls().is_empty());
 }
