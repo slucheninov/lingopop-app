@@ -143,9 +143,33 @@ mkdir -p "$work/stage"
 ditto "$built" "$app"
 
 # --- 5. sign -----------------------------------------------------------------------------------
-notarize() { # notarize <file>: submit and wait; the credentials come from the environment
-  xcrun notarytool submit "$1" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
-    --team-id "$APPLE_TEAM_ID" --wait --timeout 30m
+json_field() { # json_field <key>: a top-level string of the JSON object on stdin, or nothing
+  python3 -c 'import json, sys
+try:
+    value = json.load(sys.stdin).get(sys.argv[1], "")
+except (ValueError, AttributeError):
+    value = ""
+print(value if isinstance(value, str) else "")' "$1"
+}
+notarize() { # notarize <file>: submit, wait and require status Accepted
+  # The credentials come from the environment; on an ephemeral runner passing them as arguments
+  # is acceptable (docs/RELEASING.md). notarytool's JSON carries only id, status and message.
+  local result status=0 id state
+  result=$(xcrun notarytool submit "$1" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+    --team-id "$APPLE_TEAM_ID" --wait --timeout 30m --output-format json) || status=$?
+  id=$(printf '%s' "$result" | json_field id)
+  state=$(printf '%s' "$result" | json_field status)
+  echo "notarization of $(basename "$1"): status ${state:-unknown}, id ${id:-none}, exit $status"
+  if [ "$state" != Accepted ]; then
+    if [ -n "$id" ]; then
+      echo "notarytool log $id:" >&2
+      xcrun notarytool log "$id" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+        --team-id "$APPLE_TEAM_ID" >&2 || true
+    else
+      printf 'notarytool output: %s\n' "$result" >&2
+    fi
+    die "notarization of $(basename "$1") was not accepted (status ${state:-unknown})"
+  fi
 }
 if [ "$mode" = adhoc ]; then
   codesign --force --sign - --options runtime --timestamp=none "$app"
@@ -238,6 +262,9 @@ assess() { # assess <where> <spctl args...>: the outcome must match the signing 
   local where=$1 result status=0
   shift
   result=$(spctl --assess -vvv "$@" 2>&1) || status=$?
+  if printf '%s\n' "$result" | grep -q 'override=security disabled'; then
+    die "$where: Gatekeeper assessments are disabled on this machine (spctl reports override=security disabled), so the signing result cannot be checked; re-enable them with 'sudo spctl --global-enable' or use a machine with Gatekeeper on"
+  fi
   if [ "$mode" = adhoc ]; then
     if [ "$status" -eq 0 ] || ! printf '%s\n' "$result" | grep -q 'rejected'; then
       die "$where: Gatekeeper did not reject the ad-hoc build as expected: $result"

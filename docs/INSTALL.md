@@ -1,6 +1,6 @@
 # Installing LingoPop
 
-LingoPop is published as pre-release builds on the [Releases page](https://github.com/slucheninov/lingopop-app/releases). Everything below the marker comment is also copied into the notes of every release by the release workflow (`scripts/verify-release-assets.py publish`): `<version>` becomes the release version, the Windows or macOS part is left out when the release has no assets for it, and the Gatekeeper paragraph is left out when the macOS build is notarized. Keep the `<!-- if ... -->` / `<!-- endif -->` markers balanced (the release tests check it).
+LingoPop is published as pre-release builds on the [Releases page](https://github.com/slucheninov/lingopop-app/releases). Everything below the marker comment is also copied into the notes of every release by the release workflow (`scripts/verify-release-assets.py publish`): `<version>` becomes the release version, the Windows or macOS part is left out when the release has no assets for it, and the two ad-hoc-only macOS paragraphs (opening the app past Gatekeeper, and re-granting permissions after an update) are left out when the macOS build is Developer ID signed and notarized. Keep the `<!-- if ... -->` / `<!-- endif -->` markers balanced (the release tests check it).
 
 <!-- release-notes-start -->
 ## Installation
@@ -41,7 +41,7 @@ LingoPop is published as pre-release builds on the [Releases page](https://githu
 - Requires macOS 13 Ventura or newer.
 - Open the `.dmg`, drag **LingoPop Preview** to **Applications**, then eject the disk image. (With the `.zip`: double-click it and move `LingoPop Preview.app` to Applications.) The installed app is `/Applications/LingoPop Preview.app`.
 <!-- if macos-adhoc -->
-- This build is signed ad hoc, not notarized by Apple, so Gatekeeper blocks the first launch ("Apple could not verify ..."). Click **Done**, open **System Settings > Privacy & Security**, scroll to **Security** and click **Open Anyway** next to the LingoPop Preview message, then confirm. Alternatively, in Terminal: `xattr -dr com.apple.quarantine "/Applications/LingoPop Preview.app"`, then open the app.
+- This build is signed ad hoc, not notarized by Apple, so Gatekeeper blocks the first launch: macOS says it cannot verify the app or check it for malicious software. Close the dialog, then open **System Settings > Privacy & Security** and scroll to **Security**: after one blocked attempt to open the app, an **Open Anyway** button for LingoPop Preview appears there (for about an hour). Click it, confirm with **Open**, and enter your administrator password if macOS asks. On macOS 13 and 14 you can instead Control-click the app in Applications, choose **Open** and confirm. Alternatively, in Terminal: `xattr -dr com.apple.quarantine "/Applications/LingoPop Preview.app"`, then open the app.
 <!-- endif -->
 - LingoPop Preview is a menu-bar app: it has no Dock icon and no main window. Use its menu-bar icon for Settings, History and Quit.
 - Grant the permissions when macOS asks (or from Settings > Main > Permissions):

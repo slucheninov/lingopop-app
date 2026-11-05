@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import plistlib
+import re
 import struct
 import subprocess
 import sys
@@ -144,7 +145,7 @@ def write_artifacts(root: Path, slugs=("windows-x64", "macos-arm64", "macos-x64"
         leg = root / vra.artifact_name(VERSION, slug)
         write_assets(leg, (slug,), manifest=f"SHA256SUMS-{slug}.txt")
         if slug.startswith("macos-"):
-            (leg / f"signing-{slug}.txt").write_text(mode + "\n", encoding="utf-8")
+            (leg / f"signing-{slug}.txt").write_text(mode + "\n", encoding="utf-8", newline="\n")
 
 
 class PublishDouble:
@@ -162,10 +163,10 @@ class Base(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.tmp = Path(tmp.name)
         self.dir = self.tmp / "assets"
-        (self.tmp / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8")
-        (self.tmp / "INSTALL.md").write_text(INSTALL, encoding="utf-8")
+        (self.tmp / "CHANGELOG.md").write_text(CHANGELOG, encoding="utf-8", newline="\n")
+        (self.tmp / "INSTALL.md").write_text(INSTALL, encoding="utf-8", newline="\n")
         self.platforms_file = self.tmp / "release-platforms.json"
-        self.platforms_file.write_text('{"macosPreview": true}\n', encoding="utf-8")
+        self.platforms_file.write_text('{"macosPreview": true}\n', encoding="utf-8", newline="\n")
         self.double = PublishDouble()
 
     def publish(self, artifacts=None):
@@ -230,12 +231,12 @@ class Anchors(Base):
     def test_malformed_release_platforms_fails_closed(self):
         write_artifacts(self.tmp / "artifacts")
         wrong_type = self.tmp / "wrong_type.json"
-        wrong_type.write_text('{"macosPreview": "yes"}', encoding="utf-8")
+        wrong_type.write_text('{"macosPreview": "yes"}', encoding="utf-8", newline="\n")
         missing_file = self.tmp / "missing.json"
         invalid_json = self.tmp / "invalid.json"
-        invalid_json.write_text('{"macosPreview": true', encoding="utf-8")
+        invalid_json.write_text('{"macosPreview": true', encoding="utf-8", newline="\n")
         extra_key = self.tmp / "extra.json"
-        extra_key.write_text('{"macosPreview": true, "assets": []}', encoding="utf-8")
+        extra_key.write_text('{"macosPreview": true, "assets": []}', encoding="utf-8", newline="\n")
         for variant in (wrong_type, missing_file, invalid_json, extra_key):
             self.assertIsNone(vra.read_release_platforms(variant))
             self.platforms_file = variant
@@ -247,7 +248,7 @@ class Anchors(Base):
         self.assertEqual(vra.platforms_for({"macosPreview": True}), {"windows", "macos"})
 
         write_artifacts(self.tmp / "artifacts")
-        self.platforms_file.write_text('{"macosPreview": false}\n', encoding="utf-8")
+        self.platforms_file.write_text('{"macosPreview": false}\n', encoding="utf-8", newline="\n")
         seen = {}
         real_verify = vra.verify_assets
 
@@ -311,14 +312,14 @@ class Publish(Base):
         self.assertNotIn("Gatekeeper text.", notes)
 
     def test_version_placeholder_is_replaced(self):
-        (self.tmp / "INSTALL.md").write_text(INSTALL.replace("Windows text.", "Get LingoPop-<version>.exe"))
+        (self.tmp / "INSTALL.md").write_text(INSTALL.replace("Windows text.", "Get LingoPop-<version>.exe"), encoding="utf-8", newline="\n")
         write_artifacts(self.tmp / "artifacts")
         self.assertEqual(self.publish(), [])
         notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
         self.assertIn(f"Get LingoPop-{VERSION}.exe", notes)
 
     def test_missing_changelog_section_uses_the_fallback_line(self):
-        (self.tmp / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n", encoding="utf-8")
+        (self.tmp / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n", encoding="utf-8", newline="\n")
         write_artifacts(self.tmp / "artifacts")
         self.assertEqual(self.publish(), [])
         notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
@@ -332,7 +333,7 @@ class Publish(Base):
 
     def test_disagreeing_signing_modes_block_publication(self):
         write_artifacts(self.tmp / "artifacts")
-        (self.tmp / "artifacts" / vra.artifact_name(VERSION, "macos-x64") / "signing-macos-x64.txt").write_text("developer-id\n")
+        (self.tmp / "artifacts" / vra.artifact_name(VERSION, "macos-x64") / "signing-macos-x64.txt").write_text("developer-id\n", encoding="utf-8", newline="\n")
         self.assertIn("the macOS legs disagree on the signing mode", self.publish())
         self.assertEqual(self.publish_calls, 0)
 
@@ -347,7 +348,7 @@ class Publish(Base):
         exe = f"LingoPop-{VERSION}-windows-x64-portable.exe"
         (leg / exe).write_bytes(pe_bytes())
         part = leg / "SHA256SUMS-macos-arm64.txt"
-        part.write_text(part.read_text() + vra.manifest_line(leg / exe), encoding="utf-8", newline="\n")
+        part.write_text(part.read_text(encoding="utf-8") + vra.manifest_line(leg / exe), encoding="utf-8", newline="\n")
         errors = self.publish()
         self.assertIn(f"SHA256SUMS-macos-arm64.txt: unexpected entry {exe}", errors)
         self.assertEqual(self.publish_calls, 0)
@@ -355,12 +356,12 @@ class Publish(Base):
     def test_non_empty_output_directory_blocks_publication(self):
         write_artifacts(self.tmp / "artifacts")
         (self.tmp / "release").mkdir()
-        (self.tmp / "release" / "stale.txt").write_text("x")
+        (self.tmp / "release" / "stale.txt").write_text("x", encoding="utf-8", newline="\n")
         self.assertTrue(any("output directory is not empty" in e for e in self.publish()))
         self.assertEqual(self.publish_calls, 0)
 
     def test_broken_install_template_blocks_publication(self):
-        (self.tmp / "INSTALL.md").write_text(INSTALL.replace("<!-- endif -->\n<!-- endif -->", "<!-- endif -->"))
+        (self.tmp / "INSTALL.md").write_text(INSTALL.replace("<!-- endif -->\n<!-- endif -->", "<!-- endif -->"), encoding="utf-8", newline="\n")
         write_artifacts(self.tmp / "artifacts")
         self.assertIn("install template: if without endif", self.publish())
         self.assertEqual(self.publish_calls, 0)
@@ -391,7 +392,7 @@ class Publish(Base):
             capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        argv = json.loads(marker.read_text())
+        argv = json.loads(marker.read_text(encoding="utf-8"))
         self.assertEqual(argv[0], "first")
         self.assertEqual(len(argv), 1 + 5 + 1)
 
@@ -412,7 +413,7 @@ class Verify(Base):
 
     def test_extra_file_fails(self):
         write_assets(self.dir)
-        (self.dir / "notes.md").write_text("x")
+        (self.dir / "notes.md").write_text("x", encoding="utf-8", newline="\n")
         self.assertIn("notes.md: unexpected file", vra.verify_assets(self.dir, VERSION, ALL))
 
     def test_windows_only_set_rejects_mac_assets(self):
@@ -424,15 +425,15 @@ class Verify(Base):
     def test_duplicate_manifest_entry(self):
         write_assets(self.dir)
         manifest = self.dir / vra.MANIFEST
-        first = manifest.read_text().splitlines(keepends=True)[0]
-        manifest.write_text(manifest.read_text() + first, encoding="utf-8", newline="\n")
+        first = manifest.read_text(encoding="utf-8").splitlines(keepends=True)[0]
+        manifest.write_text(manifest.read_text(encoding="utf-8") + first, encoding="utf-8", newline="\n")
         name = first.split("  ")[1].strip()
         self.assertIn(f"SHA256SUMS.txt: duplicate entry {name}", vra.verify_assets(self.dir, VERSION, ALL))
 
     def test_uppercase_checksum_is_malformed(self):
         write_assets(self.dir)
         manifest = self.dir / vra.MANIFEST
-        lines = manifest.read_text().splitlines(keepends=True)
+        lines = manifest.read_text(encoding="utf-8").splitlines(keepends=True)
         lines[0] = lines[0][:64].upper() + lines[0][64:]
         manifest.write_text("".join(lines), encoding="utf-8", newline="\n")
         errors = vra.verify_assets(self.dir, VERSION, ALL)
@@ -441,7 +442,7 @@ class Verify(Base):
     def test_malformed_manifest_variants(self):
         write_assets(self.dir)
         manifest = self.dir / vra.MANIFEST
-        good = manifest.read_text()
+        good = manifest.read_text(encoding="utf-8")
         cases = {
             good.replace("  ", " ", 1): "SHA256SUMS.txt: line 1 is malformed",
             good.rstrip("\n"): "SHA256SUMS.txt: must end with a newline",
@@ -459,7 +460,7 @@ class Verify(Base):
     def test_manifest_missing_an_asset(self):
         write_assets(self.dir)
         manifest = self.dir / vra.MANIFEST
-        manifest.write_text("".join(manifest.read_text().splitlines(keepends=True)[1:]), encoding="utf-8", newline="\n")
+        manifest.write_text("".join(manifest.read_text(encoding="utf-8").splitlines(keepends=True)[1:]), encoding="utf-8", newline="\n")
         self.assertIn(
             f"SHA256SUMS.txt: no entry for LingoPop-{VERSION}-windows-x64-portable.exe",
             vra.verify_assets(self.dir, VERSION, ALL),
@@ -537,6 +538,19 @@ class Verify(Base):
 
 
 class Repository(unittest.TestCase):
+    def test_release_workflow_publishes_a_checked_draft(self):
+        workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        create = workflow.index('gh release create "$TAG" --draft --prerelease')
+        check = workflow.index('gh release download "$TAG" --dir uploaded')
+        publish = workflow.index('gh release edit "$TAG" --draft=false --prerelease')
+        self.assertLess(create, check)
+        self.assertLess(check, publish)
+        # Every version capture strips a Windows CR.
+        captures = re.findall(r"version=\$\(python scripts/check-version.py[^)]*\)", workflow)
+        self.assertEqual(len(captures), 5)
+        for capture in captures:
+            self.assertIn("| tr -d '\\r'", capture)
+
     def test_committed_release_platforms_file_is_valid(self):
         self.assertIsNotNone(vra.read_release_platforms(REPO_ROOT / "release-platforms.json"))
 
