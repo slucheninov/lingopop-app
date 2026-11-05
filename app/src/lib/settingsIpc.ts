@@ -6,6 +6,8 @@ export const getSettings = (): Promise<SettingsView> => invoke<SettingsView>('se
 export const updateSetting = (patch: SettingsPatch): Promise<SettingsView> => invoke<SettingsView>('settings_update', { patch });
 export const updateUi = (patch: UiPatch): Promise<SettingsView> => invoke<SettingsView>('ui_update', { patch });
 export const relaunch = (): Promise<void> => invoke<void>('app_relaunch');
+/** Opens the Login Items pane of System Settings; the shell chooses the target, nothing travels. */
+export const openLoginItemsSettings = (): Promise<void> => invoke<void>('login_items_open_settings');
 export const openUrl = (url: string): Promise<void> => invoke<void>('open_url', { url });
 export const getProviderState = (provider: Provider): Promise<ProviderState> => invoke<ProviderState>('provider_state', { provider });
 /** Key-free by type: `ProviderFields` has no key. */

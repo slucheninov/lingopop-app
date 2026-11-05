@@ -100,7 +100,7 @@ pub fn native() -> Platform {
             sleeper.clone(),
         )),
         system: native_system(),
-        login_item: Arc::new(crate::macos::MacLoginItem),
+        login_item: Arc::new(crate::macos::MacLoginItem::new(crate::macos::SmMainApp)),
         // Main thread only: the shell's presenter dispatches every call (macos/presentation.rs).
         popup_window: Arc::new(crate::MacPopupWindow::new(MacMonitors::clone(&monitors))),
         // Needs `DismissWatcher::bind_main_thread` from shell setup before the first start.

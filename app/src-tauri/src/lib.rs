@@ -71,6 +71,10 @@ pub(crate) struct ShellHooks {
     serial: Arc<std::sync::Mutex<()>>,
     /// Newest requested value; an older queued job that lost the race skips its write.
     latest_login: Arc<AtomicBool>,
+    /// The outcome of the last applied update that the user must act on (cleared by a success).
+    login_issue: Arc<std::sync::Mutex<Option<settings_cmds::LoginIssue>>>,
+    /// Called after `login_issue` changed; the shell emits the `settings://changed` signal.
+    on_login_issue: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ShellHooks {
@@ -81,6 +85,8 @@ impl ShellHooks {
             spawn: Arc::new(BlockingLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
             latest_login: Arc::new(AtomicBool::new(false)),
+            login_issue: Arc::new(std::sync::Mutex::new(None)),
+            on_login_issue: None,
         }
     }
 
@@ -93,6 +99,8 @@ impl ShellHooks {
             spawn: Arc::new(InlineLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
             latest_login: Arc::new(AtomicBool::new(false)),
+            login_issue: Arc::new(std::sync::Mutex::new(None)),
+            on_login_issue: None,
         }
     }
 }
@@ -102,6 +110,8 @@ impl SettingsHooks for ShellHooks {
         let login = Arc::clone(&self.login);
         let serial = Arc::clone(&self.serial);
         let latest = Arc::clone(&self.latest_login);
+        let issue = Arc::clone(&self.login_issue);
+        let notify = self.on_login_issue.clone();
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(_) => {
@@ -117,10 +127,34 @@ impl SettingsHooks for ShellHooks {
             if latest.load(Ordering::Acquire) != enabled {
                 return;
             }
-            if let Err(error) = login.set_enabled(enabled, &exe) {
-                log::warn!("login item update failed: {error}");
+            let outcome = match login.set_enabled(enabled, &exe) {
+                Ok(()) => None,
+                Err(error) => {
+                    log::warn!("login item update failed: {error}");
+                    settings_cmds::LoginIssue::classify(&error)
+                }
+            };
+            let changed = {
+                let mut current = issue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let changed = *current != outcome;
+                *current = outcome;
+                changed
+            };
+            if changed {
+                if let Some(notify) = notify {
+                    notify();
+                }
             }
         }));
+    }
+
+    fn login_issue(&self) -> Option<settings_cmds::LoginIssue> {
+        *self
+            .login_issue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn hotkeys(
@@ -251,6 +285,10 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     hotkey_registry.observe_swift();
     let mut shell_hooks = ShellHooks::new(platform.login_item.clone());
     shell_hooks.hotkeys = Some(hotkey_registry.clone());
+    let events = app.handle().clone();
+    shell_hooks.on_login_issue = Some(Arc::new(move || {
+        let _ = events.emit("settings://changed", ());
+    }));
     let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);
     apply_startup_login(hooks.as_ref(), config.settings().launch_at_login);
     let update_state = Arc::new(updates::UpdateState::new(transport, ui.clone(), clock));
@@ -309,6 +347,7 @@ pub fn run() {
             settings_cmds::ui_update,
             settings_cmds::ui_bootstrap,
             settings_cmds::open_url,
+            settings_cmds::login_items_open_settings,
             provider_cmds::provider_reset_secrets,
             provider_cmds::provider_state,
             provider_cmds::provider_validate,

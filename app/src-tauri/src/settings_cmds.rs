@@ -19,11 +19,57 @@ use tauri::{Emitter, State};
 pub trait SettingsHooks: Send + Sync {
     fn launch_at_login(&self, enabled: bool);
     fn hotkeys(&self, hotkeys: &BTreeMap<AIOperation, Hotkey>);
+    /// What the last launch-at-login update left for the user to act on, if anything.
+    fn login_issue(&self) -> Option<LoginIssue> {
+        None
+    }
 }
 pub struct NoSettingsHooks;
 impl SettingsHooks for NoSettingsHooks {
     fn launch_at_login(&self, _: bool) {}
     fn hotkeys(&self, _: &BTreeMap<AIOperation, Hotkey>) {}
+}
+/// The outcome of the last launch-at-login update that the Main tab shows under the switch. Fixed
+/// ids only; the webview maps them to catalog sentences. macOS: the login item needs approval in
+/// System Settings, cannot work from here (not an installed bundle), or failed otherwise. A
+/// Windows Run-key failure stays a log line and is never one of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LoginIssue {
+    RequiresApproval,
+    Unavailable,
+    Failed,
+}
+impl LoginIssue {
+    /// `None` for an error the UI does not show (every Windows failure).
+    pub fn classify(error: &lingopop_platform::PlatformError) -> Option<Self> {
+        use lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM;
+        use lingopop_platform::PlatformError;
+        match error {
+            PlatformError::LoginItemRequiresApproval => Some(Self::RequiresApproval),
+            PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM => {
+                Some(Self::Unavailable)
+            }
+            _ if cfg!(target_os = "macos") => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+/// Opens the Login Items pane of System Settings. The target is chosen by the platform; the
+/// webview supplies nothing. Rejects with a catalog key in the launched language.
+pub fn open_login_items_settings(
+    login: &dyn lingopop_platform::LoginItem,
+    language: Language,
+) -> Result<(), String> {
+    login.open_settings().map_err(|_| {
+        log::warn!("login items settings could not be opened");
+        i18n::t_for(
+            CATALOG_PLATFORM,
+            language,
+            "Couldn't open System Settings.",
+            &[],
+        )
+    })
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,6 +124,10 @@ pub struct SettingsView {
     pub providers: Vec<ProviderSummary>,
     /// `macos` or `windows`: the frontend shows the Permissions section on macOS only.
     pub platform: &'static str,
+    /// Set while the last launch-at-login update needs the user (see [`LoginIssue`]); omitted
+    /// from the JSON otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_item_issue: Option<LoginIssue>,
 }
 pub fn settings_view(state: &ShellState) -> SettingsView {
     let mut view = settings_view_parts(
@@ -87,6 +137,7 @@ pub fn settings_view(state: &ShellState) -> SettingsView {
     );
     view.hotkey_status = state.hotkeys.status();
     view.swift_running = state.hotkeys.swift_blocked();
+    view.login_item_issue = state.hooks.login_issue();
     view
 }
 pub fn settings_view_parts(
@@ -155,6 +206,7 @@ pub fn settings_view_parts(
         } else {
             "windows"
         },
+        login_item_issue: None,
     }
 }
 #[derive(Deserialize)]
@@ -288,6 +340,23 @@ pub(crate) fn apply_settings_effects(
     if hotkeys {
         hooks.hotkeys(&committed.hotkeys);
     }
+}
+/// The "Open Login Items settings" button. Runs on the blocking pool, never on the main thread.
+#[tauri::command]
+pub async fn login_items_open_settings(state: State<'_, ShellState>) -> Result<(), String> {
+    let (login, language) = (state.platform.login_item.clone(), state.ui.language());
+    tauri::async_runtime::spawn_blocking(move || {
+        open_login_items_settings(login.as_ref(), language)
+    })
+    .await
+    .map_err(|_| {
+        i18n::t_for(
+            CATALOG_PLATFORM,
+            language,
+            "Couldn't open System Settings.",
+            &[],
+        )
+    })?
 }
 #[tauri::command]
 pub async fn settings_get(state: State<'_, ShellState>) -> Result<SettingsView, String> {

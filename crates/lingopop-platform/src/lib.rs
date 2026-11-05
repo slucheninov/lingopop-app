@@ -25,6 +25,8 @@ mod macos;
 pub mod macos_dismiss;
 #[path = "macos/geometry.rs"]
 pub mod macos_geometry;
+#[path = "macos/login_service.rs"]
+pub mod macos_login;
 #[path = "macos/overlay.rs"]
 pub mod macos_overlay;
 #[path = "macos/presentation.rs"]
@@ -51,7 +53,7 @@ mod windows;
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
     MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPermissions, MacPopupWindow, MacProtector,
-    NsPasteboard,
+    NsPasteboard, SmMainApp,
 };
 #[cfg(windows)]
 pub use crate::windows::{

@@ -68,6 +68,10 @@ const MACOS_ONLY_LITERALS = [
   'Open Settings',
   'Re-check',
   'After granting access, fully quit and relaunch LingoPop.',
+  'Allow LingoPop in System Settings > Login Items to start it at login.',
+  'Open Login Items settings',
+  "Launch at login isn't available until LingoPop runs from the Applications folder. Move it there and open it again.",
+  "Couldn't change Launch at login. Try again.",
 ];
 
 function literalsInSrc(): Set<string> {

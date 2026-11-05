@@ -104,9 +104,11 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSValue",
     "block2",
     "NSArray",
+    "NSBundle",
     "NSData",
     "NSDate",
     "NSEnumerator",
+    "NSError",
     "NSObject",
     "NSString",
 ] }
@@ -122,6 +124,17 @@ objc2-vision = { version = "=0.3.2", default-features = false, features = [
     "VNRequestHandler",
     "objc2-core-foundation",
     "objc2-core-graphics",
+] }
+
+# Launch at login (macos/service_management.rs): `SMAppService.mainApp`, macOS 13+. Exact pin,
+# verified in the registry: bindings for SMAppService (`mainAppService`, `status`,
+# `registerAndReturnError:`, `unregisterAndReturnError:`, `openSystemSettingsLoginItems`) over
+# objc2 0.6; the crate links the ServiceManagement framework itself.
+objc2-service-management = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "SMAppService",
+    "objc2",
+    "objc2-foundation",
 ] }
 
 [dev-dependencies]

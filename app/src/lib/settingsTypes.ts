@@ -38,6 +38,8 @@ export interface Hotkey { key: string; modifiers: Modifier[] }
 export interface HotkeyView { key: string; modifiers: Modifier[]; display: string }
 export interface ProviderSummary { provider: Provider; name: string; hasKey: boolean; requiresKey: boolean; fallback: Provider | null }
 
+export type LoginItemIssue = 'requiresApproval' | 'unavailable' | 'failed';
+
 export interface SettingsView {
   activeProvider: Provider;
   fallbacks: Partial<Record<Provider, Provider>>;
@@ -64,6 +66,8 @@ export interface SettingsView {
   providers: ProviderSummary[];
   /** Which OS build this is: the Permissions section is shown on macOS only. */
   platform: 'macos' | 'windows';
+  /** macOS: what the last launch-at-login update left for the user to act on. Omitted otherwise. */
+  loginItemIssue?: LoginItemIssue;
 }
 
 /** Mirrors `permissions_cmds.rs`: fixed ids only. */

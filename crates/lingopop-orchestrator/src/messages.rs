@@ -4,6 +4,7 @@
 
 use lingopop_core::errors::TranslationError;
 use lingopop_core::provider::ProviderType;
+use lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM;
 use lingopop_platform::pasteboard::UNSUPPORTED_SNAPSHOT;
 use lingopop_platform::{PermissionKind, PlatformError};
 
@@ -63,6 +64,18 @@ pub const KEY_PERMISSION_SCREEN_RECORDING: &str = "LingoPop needs Screen Recordi
 /// clipboard.
 pub const KEY_PASTEBOARD_UNSUPPORTED: &str =
     "Clipboard content can't be preserved. Nothing was changed.";
+/// NEW (macOS only, `i18n/macos.json`): the login item is registered but the user still has to
+/// allow it in System Settings, so it will not start at login yet (never a silent success). The
+/// Main tab shows it under the Launch at login switch with an `Open Login Items settings` button.
+pub const KEY_LOGIN_REQUIRES_APPROVAL: &str =
+    "Allow LingoPop in System Settings > Login Items to start it at login.";
+/// NEW (macOS only): launch at login cannot work from here: LingoPop is not an installed `.app`
+/// (a plain binary, a Gatekeeper-translocated copy) or the system cannot find the service.
+pub const KEY_LOGIN_UNAVAILABLE: &str = "Launch at login isn't available until LingoPop runs from the Applications folder. Move it there and open it again.";
+/// NEW (macOS only): registering or unregistering the login item failed for another reason.
+pub const KEY_LOGIN_FAILED: &str = "Couldn't change Launch at login. Try again.";
+/// NEW (macOS only): the button that opens the Login Items pane of System Settings.
+pub const KEY_OPEN_LOGIN_ITEMS_SETTINGS: &str = "Open Login Items settings";
 /// Mac catalog key (`MainSettingsTab.swift`). Conditional wording, never a claim that access was
 /// granted: macOS reads a new Screen Recording grant only after a relaunch, so this process cannot
 /// tell. Detail line of the denied message on a retry after `request` already ran, and the line
@@ -118,6 +131,10 @@ pub fn platform_message(e: &PlatformError) -> UserMessageView {
         PlatformError::Unsupported(what) if *what == UNSUPPORTED_SNAPSHOT => {
             plain(KEY_PASTEBOARD_UNSUPPORTED)
         }
+        PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM => {
+            plain(KEY_LOGIN_UNAVAILABLE)
+        }
+        PlatformError::LoginItemRequiresApproval => plain(KEY_LOGIN_REQUIRES_APPROVAL),
         PlatformError::Unsupported(_)
         | PlatformError::HotkeyConflict
         | PlatformError::InvalidHotkey
@@ -219,6 +236,23 @@ mod tests {
                 UNSUPPORTED_SNAPSHOT
             ))),
             plain(KEY_PASTEBOARD_UNSUPPORTED)
+        );
+    }
+
+    #[test]
+    fn platform_message_login_item_has_its_own_keys() {
+        assert_eq!(
+            platform_message(&PlatformError::LoginItemRequiresApproval),
+            plain(KEY_LOGIN_REQUIRES_APPROVAL)
+        );
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported(UNSUPPORTED_LOGIN_ITEM)),
+            plain(KEY_LOGIN_UNAVAILABLE)
+        );
+        // Any other Unsupported keeps the generic key.
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported("ocr")).key,
+            KEY_PLATFORM_GENERIC
         );
     }
 

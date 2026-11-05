@@ -168,5 +168,25 @@
     "pl": "Kliknij pole skrótu i naciśnij kombinację klawiszy. Użyj ⌘, Option, Control lub Shift z klawiszem. Esc anuluje nagrywanie. ✕ usuwa skrót.",
     "uk": "Натисніть поле скорочення, а потім комбінацію клавіш. Використовуйте ⌘, Option, Control або Shift із клавішею. Esc скасовує запис. ✕ видаляє скорочення.",
     "de": "Klicke auf ein Kurzbefehlfeld und drücke eine Tastenkombination. Verwende ⌘, Option, Control oder Shift mit einer Taste. Esc bricht die Aufnahme ab. ✕ entfernt den Kurzbefehl."
+  },
+  "Allow LingoPop in System Settings > Login Items to start it at login.": {
+    "de": "Erlaube LingoPop in den Systemeinstellungen > Anmeldeobjekte, damit es bei der Anmeldung startet.",
+    "pl": "Zezwól LingoPop w Ustawieniach systemowych > Elementy logowania, aby uruchamiał się przy logowaniu.",
+    "uk": "Дозвольте LingoPop у Системних налаштуваннях > Елементи входу, щоб він запускався під час входу."
+  },
+  "Open Login Items settings": {
+    "de": "Anmeldeobjekte-Einstellungen öffnen",
+    "pl": "Otwórz ustawienia elementów logowania",
+    "uk": "Відкрити налаштування елементів входу"
+  },
+  "Launch at login isn't available until LingoPop runs from the Applications folder. Move it there and open it again.": {
+    "de": "Beim Anmelden starten ist erst verfügbar, wenn LingoPop aus dem Ordner „Programme“ läuft. Verschiebe die App dorthin und öffne sie erneut.",
+    "pl": "Uruchamianie przy logowaniu będzie dostępne dopiero, gdy LingoPop działa z folderu Programy. Przenieś go tam i otwórz ponownie.",
+    "uk": "Запуск під час входу буде доступний, лише коли LingoPop працює з теки «Програми». Перемістіть його туди й відкрийте знову."
+  },
+  "Couldn't change Launch at login. Try again.": {
+    "de": "„Beim Anmelden starten“ konnte nicht geändert werden. Versuche es erneut.",
+    "pl": "Nie udało się zmienić ustawienia uruchamiania przy logowaniu. Spróbuj ponownie.",
+    "uk": "Не вдалося змінити запуск під час входу. Спробуйте ще раз."
   }
 }
