@@ -47,6 +47,8 @@ pub const ESCAPE_KEY_CODE: u16 = 53;
 ///
 /// Ownership is per pick, not a single boolean: a cleanup that timed out stays queued on the
 /// main thread and may run after the next pick started, and it must only give back ITS lease.
+/// A lease also releases when its last owner is dropped, so no abandoned teardown can leave
+/// dismissal suppressed.
 #[derive(Debug, Clone, Default)]
 pub struct OverlayActive(Arc<AtomicUsize>);
 
@@ -57,31 +59,47 @@ impl OverlayActive {
     /// Takes a lease for one pick; the flag reads set until every lease was released.
     pub fn begin(&self) -> OverlayLease {
         self.0.fetch_add(1, Ordering::SeqCst);
-        OverlayLease {
+        OverlayLease(Arc::new(LeaseInner {
             count: self.0.clone(),
-            released: Arc::new(AtomicBool::new(false)),
-        }
+            released: AtomicBool::new(false),
+        }))
     }
     pub fn is_set(&self) -> bool {
         self.0.load(Ordering::SeqCst) > 0
     }
 }
 
-/// One pick's claim on [`OverlayActive`]. Clones share the claim and [`release`](Self::release)
-/// is idempotent across all of them, so every exit path of a pick may release without
-/// counting; dropping a lease does NOT release it (a posted job that never ran is released
-/// explicitly by the code that knows it never will).
+/// One pick's claim on [`OverlayActive`]. Clones share the claim; it is released exactly once,
+/// by an explicit [`release`](Self::release) from any clone or, at the latest, when the LAST
+/// clone is dropped. That last-owner drop is what recovers dismissal when a teardown that the
+/// waiter already gave up on (cleanup timeout) is later dropped unrun by the main loop or
+/// unwinds before it reaches its explicit release.
 #[derive(Debug, Clone)]
-pub struct OverlayLease {
+pub struct OverlayLease(Arc<LeaseInner>);
+
+#[derive(Debug)]
+struct LeaseInner {
     count: Arc<AtomicUsize>,
-    released: Arc<AtomicBool>,
+    released: AtomicBool,
+}
+
+impl LeaseInner {
+    fn release(&self) {
+        if !self.released.swap(true, Ordering::SeqCst) {
+            self.count.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for LeaseInner {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 impl OverlayLease {
     pub fn release(&self) {
-        if !self.released.swap(true, Ordering::SeqCst) {
-            self.count.fetch_sub(1, Ordering::SeqCst);
-        }
+        self.0.release();
     }
 }
 

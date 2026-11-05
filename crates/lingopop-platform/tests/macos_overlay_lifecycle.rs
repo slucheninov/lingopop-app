@@ -901,3 +901,61 @@ fn an_older_cleanup_that_runs_late_never_clears_the_flag_of_a_newer_pick() {
     assert_eq!(join2.join().unwrap(), Ok(None));
     assert!(!h.active.is_set(), "cleared after the newer pick's cleanup");
 }
+
+/// Starts a pick, lets it create, ends it, and waits out the cleanup timeout while the main
+/// loop leaves the queued teardown unrun. Returns with the pick finished and its lease still
+/// held by that queued teardown.
+fn abandon_a_timed_out_pick(h: &Harness) {
+    let (tx, join) = h.pick();
+    h.main.wait_for_pending(1);
+    h.main.run_pending(); // create
+    tx.send(()).unwrap();
+    h.main.wait_for_pending(1); // the teardown is queued and never runs
+    assert_eq!(
+        join.join().unwrap(),
+        Err(PlatformError::Os {
+            api: "region overlay cleanup",
+            code: 0
+        })
+    );
+    assert!(
+        h.active.is_set(),
+        "the queued teardown still owns the lease"
+    );
+}
+
+#[test]
+fn a_teardown_dropped_after_the_waiter_timed_out_gives_dismissal_back() {
+    let h = Harness::manual(one_display(1.0));
+    abandon_a_timed_out_pick(&h);
+    h.main.close(); // the loop drops the queued teardown unrun
+    assert!(
+        !h.active.is_set(),
+        "a dropped teardown must not leave dismissal suppressed for good"
+    );
+}
+
+#[test]
+fn a_teardown_that_unwinds_before_releasing_gives_dismissal_back() {
+    let h = Harness::manual(one_display(1.0));
+    abandon_a_timed_out_pick(&h);
+    h.backend.panic_next_cleanup();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| h.main.run_pending()));
+    assert!(unwound.is_err(), "the teardown panicked");
+    assert!(
+        !h.active.is_set(),
+        "unwinding drops the job and its lease: dismissal is enabled again"
+    );
+}
+
+#[test]
+fn later_picks_after_an_abandoned_lease_leave_dismissal_enabled() {
+    let h = Harness::manual(one_display(1.0));
+    abandon_a_timed_out_pick(&h);
+    h.main.close();
+    assert!(!h.active.is_set());
+    // The loop is gone, so a new pick fails at create; it must not re-leak either.
+    let (_tx, rx) = bounded::<()>(1);
+    assert!(h.overlay.pick(rx).is_err());
+    assert!(!h.active.is_set());
+}

@@ -35,6 +35,7 @@ struct State {
     live: usize,
     max_live: usize,
     hold_cleanup: bool,
+    panic_cleanup: bool,
     fail_create: Option<PlatformError>,
     watched: Option<OverlayActive>,
     flag_log: Vec<(&'static str, bool)>,
@@ -143,6 +144,10 @@ impl FakeOverlayBackend {
         self.state().hold_cleanup = hold;
         self.changed.notify_all();
     }
+    /// The next cleanup panics before it removes anything (a teardown that unwinds).
+    pub fn panic_next_cleanup(&self) {
+        self.state().panic_cleanup = true;
+    }
     /// The next create fails with `error`.
     pub fn fail_next_create(&self, error: PlatformError) {
         self.state().fail_create = Some(error);
@@ -227,6 +232,10 @@ impl OverlayBackend for FakeOverlayBackend {
 
     fn cleanup(&self) {
         let mut s = self.state();
+        if std::mem::take(&mut s.panic_cleanup) {
+            drop(s);
+            panic!("fake overlay cleanup panicked");
+        }
         s.seq += 1;
         let seq = s.seq;
         s.calls.push(OverlayCall::CleanupStarted { seq });
