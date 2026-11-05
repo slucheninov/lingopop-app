@@ -119,8 +119,9 @@ fi
 # (6) A release or packaging build never turns on every cargo feature: that would also enable
 # `dev-plaintext` (and any future dev-only feature) in the shipped binary. Discovery is by what
 # a file DOES, not by its name (`packaging.yml` is not `*package*`): every workflow and script is
-# scanned command by command. Before splitting, a workflow `run:` is unfolded the way YAML reads
-# it (`run: >` and a plain multi-line value fold their lines into ONE command; `run: |` keeps
+# scanned command by command. Before splitting, a workflow `run:` is unfolded: `run: >` and a plain
+# multi-line value are scanned BOTH joined into one command and line by line (YAML keeps a newline
+# at blank and more-indented lines, so either reading may be the real one: fail closed); `run: |` keeps
 # its lines), backslash continuations are joined and `#` comments (outside quotes) are dropped;
 # `&&`, `||`, `;` and `|` then start a new command. A command fails the gate only when it is a
 # build invocation carrying `--all-features`: `cargo [+toolchain] [global options] build|test|
@@ -160,6 +161,12 @@ def indent_of(line):
     return len(line) - len(line.lstrip())
 
 
+def both_views(number, stripped, physical):
+    """The joined scalar and then each physical line, separated so they never run together."""
+    joined = [(number, " ".join(stripped)), (0, "")]
+    return joined + [(number + k, line) for k, line in enumerate(physical)] + [(0, "")]
+
+
 def logical_lines(text):
     """(first line number, line) with YAML `run:` scalars unfolded and `\\` continuations joined."""
     lines = text.split("\n")
@@ -186,16 +193,20 @@ def logical_lines(text):
             out.append((i + 1, ""))
             out.extend((i + 2 + k, b) for k, b in enumerate(body))
         elif block:
-            # Folded: the lines are ONE command (a more-indented line is kept apart in YAML,
-            # which for a shell command only means a line break: treated as a separator).
-            folded, number = [], i + 2
-            for b in body:
-                if b.strip():
-                    folded.append(b.strip())
-            out.append((number, " ".join(folded)))
+            # Folded (`>`): YAML joins consecutive lines with a space but keeps a newline at a
+            # blank line and around a more-indented line, so what the shell runs depends on
+            # details a hand decoder can get wrong. Fail closed: BOTH views are scanned, the
+            # lines joined (one command) and every physical line on its own.
+            out.extend(both_views(i + 2, [b.strip() for b in body if b.strip()], body))
         elif value and not value.startswith(("'", '"')) and body:
-            # A plain multi-line scalar also folds into one line.
-            out.append((i + 1, " ".join([value] + [b.strip() for b in body if b.strip()])))
+            # A plain multi-line scalar folds the same way: both views again.
+            out.extend(
+                both_views(
+                    i + 1,
+                    [value] + [b.strip() for b in body if b.strip()],
+                    [value] + body,
+                )
+            )
         else:
             out.append((i + 1, line))
             out.extend((i + 2 + k, b) for k, b in enumerate(body))

@@ -236,6 +236,19 @@ class MacosProductionGate(unittest.TestCase):
                 path.write_text("jobs:\n  b:\n    steps:\n" + body)
                 self.assert_fails("nightly.yml builds with --all-features")
 
+    def test_a_blank_line_in_a_folded_scalar_is_a_real_command_boundary(self):
+        path = self.root / ".github/workflows/nightly.yml"
+        for body in [
+            # YAML decodes this to "cargo tree --edges normal\ncargo build --release --all-features".
+            "      - run: >\n          cargo tree --edges normal\n\n          cargo build --release --all-features\n",
+            # A more-indented line also keeps its newline.
+            "      - run: >\n          cargo tree\n            --edges normal\n          cargo build --all-features\n",
+            "      - run: >-\n          cargo tree --all-features\n\n          cargo test --all-features\n",
+        ]:
+            with self.subTest(body=body):
+                path.write_text("jobs:\n  b:\n    steps:\n" + body)
+                self.assert_fails("nightly.yml builds with --all-features")
+
     def test_cargo_global_options_before_the_subcommand_do_not_hide_a_build(self):
         path = self.root / ".github/workflows/nightly.yml"
         for command in [

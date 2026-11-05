@@ -5,7 +5,7 @@
 use lingopop_platform::fake::FakePermissions;
 use lingopop_platform::macos_geometry::{MacDisplay, MacGeometry, NativeRect, TopologyCache};
 use lingopop_platform::macos_screen::{
-    NativeBitmap, NativeScreen, PixelFormat, ScreenCaptureAdapter,
+    GeometrySource, NativeBitmap, NativeScreen, PixelFormat, ScreenCaptureAdapter,
 };
 use lingopop_platform::{
     PermissionKind, PermissionState, Permissions, PlatformError, Rect, ScreenCapture,
@@ -493,4 +493,97 @@ fn a_region_picked_against_another_topology_revision_is_not_captured() {
     assert_eq!(screen.calls(), 1, "the stale region never reached the OS");
     // No revision (plain `capture_region`, Windows) is not compared.
     assert!(capture.capture_region(region).is_ok());
+}
+
+/// Plays the topology observer: each `snapshot()` returns the next scripted layout (the last one
+/// repeats), so a test fixes exactly which read sees which revision.
+struct ScriptedGeometry {
+    script: Mutex<Vec<MacGeometry>>,
+    reads: Mutex<usize>,
+}
+
+impl GeometrySource for ScriptedGeometry {
+    fn snapshot(&self) -> MacGeometry {
+        let mut reads = self.reads.lock().unwrap();
+        let script = self.script.lock().unwrap();
+        let at = (*reads).min(script.len() - 1);
+        *reads += 1;
+        script[at].clone()
+    }
+}
+
+/// The preliminary check (`ensure_topology`) sees revision R; by the time `capture_region_at`
+/// reads its own snapshot to clip and plan, the layout is R+1 with geometry that still overlaps
+/// the picked rect. The pick is stale: refused before any native call, never planned on R+1.
+#[test]
+fn a_topology_published_after_the_preliminary_check_is_still_refused_before_planning() {
+    let layout = |revision| {
+        MacGeometry::new(
+            revision,
+            900.0,
+            vec![display(1, 0.0, 0.0, 1440.0, 900.0, 2.0)],
+        )
+        .unwrap()
+    };
+    let screen = FakeScreen::new(&[(1, 2.0)], &[(1, [10, 20, 30, 255])]);
+    let permissions = FakePermissions::new();
+    let source = Arc::new(ScriptedGeometry {
+        script: Mutex::new(vec![layout(5), layout(6)]),
+        reads: Mutex::new(0),
+    });
+    let p: Arc<dyn Permissions> = permissions.clone();
+    let capture = ScreenCaptureAdapter::new(Shared(screen.clone()), source.clone(), p);
+    let region = Rect::new(10, 20, 100, 50); // valid and overlapping in both layouts
+
+    // First read (R = 5): the orchestrator's early check passes.
+    assert_eq!(capture.ensure_topology(Some(5)), Ok(()));
+    // Second read (R+1 = 6) is the one that would clip and plan: it must be compared too.
+    assert_eq!(
+        capture.capture_region_at(region, Some(5)),
+        Err(PlatformError::Os {
+            api: "display topology changed",
+            code: 0
+        })
+    );
+    assert_eq!(screen.calls(), 0, "no native call for a stale pick");
+    assert_eq!(*source.reads.lock().unwrap(), 2, "one read per call");
+}
+
+/// One call, one snapshot: `capture_region_at` compares the pick's revision with the very
+/// snapshot it plans from (read 0 = revision 5, a 2x layout). The observer then publishes
+/// revision 6 (1x); the per-tile guard sees it and refuses before any native call. Before the
+/// fix the revision was compared with a separate EARLIER read while the plan came from a later
+/// one, so a pick made at 5 was planned on revision 6 and captured without any error.
+#[test]
+fn a_pick_is_compared_with_the_snapshot_it_is_planned_from() {
+    let layout = |revision, scale| {
+        MacGeometry::new(
+            revision,
+            900.0,
+            vec![display(1, 0.0, 0.0, 1440.0, 900.0, scale)],
+        )
+        .unwrap()
+    };
+    let screen = FakeScreen::new(&[(1, 2.0)], &[(1, [10, 20, 30, 255])]);
+    let permissions = FakePermissions::new();
+    let source = Arc::new(ScriptedGeometry {
+        script: Mutex::new(vec![layout(5, 2.0), layout(6, 1.0)]),
+        reads: Mutex::new(0),
+    });
+    let p: Arc<dyn Permissions> = permissions.clone();
+    let capture = ScreenCaptureAdapter::new(Shared(screen.clone()), source.clone(), p);
+    let result = capture.capture_region_at(Rect::new(10, 20, 100, 50), Some(5));
+    assert_eq!(
+        result,
+        Err(PlatformError::Os {
+            api: "display topology changed",
+            code: 0
+        })
+    );
+    assert_eq!(
+        screen.calls(),
+        0,
+        "refused by the guard before the native call"
+    );
+    assert!(*source.reads.lock().unwrap() >= 2);
 }

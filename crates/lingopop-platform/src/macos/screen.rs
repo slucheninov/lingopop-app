@@ -198,20 +198,25 @@ fn crop_to_plan(
     })
 }
 
+/// The region was picked against another layout: its coordinates are not ours any more.
+/// `None` (Windows, a plain `capture_region`) is not compared.
+fn check_revision(geometry: &MacGeometry, revision: Option<u64>) -> Result<(), PlatformError> {
+    if revision.is_some_and(|r| r != geometry.topology_revision()) {
+        return Err(PlatformError::Os {
+            api: TOPOLOGY_CHANGED_API,
+            code: 0,
+        });
+    }
+    Ok(())
+}
+
 impl<N: NativeScreen> ScreenCapture for ScreenCaptureAdapter<N> {
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError> {
         self.capture_region_at(region, None)
     }
 
     fn ensure_topology(&self, revision: Option<u64>) -> Result<(), PlatformError> {
-        // The region was picked against another layout: its coordinates are not ours any more.
-        if revision.is_some_and(|r| r != self.geometry.snapshot().topology_revision()) {
-            return Err(PlatformError::Os {
-                api: TOPOLOGY_CHANGED_API,
-                code: 0,
-            });
-        }
-        Ok(())
+        check_revision(&self.geometry.snapshot(), revision)
     }
 
     fn capture_region_at(
@@ -221,8 +226,11 @@ impl<N: NativeScreen> ScreenCapture for ScreenCaptureAdapter<N> {
     ) -> Result<CapturedImage, PlatformError> {
         // Never reach the native API unpermitted (it would return a wallpaper-only image).
         self.require_permission()?;
-        self.ensure_topology(revision)?;
+        // The revision is compared with the SAME snapshot that clips and plans below (a
+        // separate earlier read could see an older layout than the one the plan is built from,
+        // and every later guard only compares the plan with its own live snapshot).
         let geometry = self.geometry.snapshot();
+        check_revision(&geometry, revision)?;
         let clipped = validate_region(region, &geometry.monitors())?;
         let plan = geometry.capture_plan(clipped)?;
         let (width, height) = plan.output_size;
