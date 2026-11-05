@@ -8,6 +8,8 @@ export const updateUi = (patch: UiPatch): Promise<SettingsView> => invoke<Settin
 export const relaunch = (): Promise<void> => invoke<void>('app_relaunch');
 /** Opens the Login Items pane of System Settings; the shell chooses the target, nothing travels. */
 export const openLoginItemsSettings = (): Promise<void> => invoke<void>('login_items_open_settings');
+/** Settings regained focus: re-read the login item state (read only; the shell emits `settings://changed` when the approval notice should go). */
+export const recheckLoginItem = (): Promise<void> => invoke<void>('login_item_recheck');
 export const openUrl = (url: string): Promise<void> => invoke<void>('open_url', { url });
 export const getProviderState = (provider: Provider): Promise<ProviderState> => invoke<ProviderState>('provider_state', { provider });
 /** Key-free by type: `ProviderFields` has no key. */

@@ -3,6 +3,7 @@
 //! the main thread is a `FakeMainThread` (a pump thread, or driven by hand).
 use crossbeam_channel::{bounded, Sender};
 use lingopop_platform::fake::{FakeMainThread, FakeOverlayBackend, FakeSleeper};
+use lingopop_platform::macos_dismiss::OverlayActive;
 use lingopop_platform::macos_geometry::{MacDisplay, MacGeometry, NativeRect, TopologyCache};
 use lingopop_platform::macos_overlay::{
     selection_in_display, MacOverlay, TopologySource, COMPOSITOR_SETTLE,
@@ -38,6 +39,7 @@ struct Harness {
     sleeper: Arc<FakeSleeper>,
     overlay: Arc<MacOverlay<FakeOverlayBackend>>,
     pump: Option<JoinHandle<()>>,
+    active: OverlayActive,
     drags: std::sync::atomic::AtomicUsize,
 }
 impl Harness {
@@ -49,8 +51,11 @@ impl Harness {
         let backend = FakeOverlayBackend::new();
         let cache = TopologyCache::new(MacGeometry::new(1, 900.0, displays).unwrap());
         let sleeper = Arc::new(FakeSleeper::new());
+        let active = OverlayActive::new();
+        backend.watch_overlay_active(active.clone());
         let overlay = Arc::new(
             MacOverlay::new(backend.clone(), Arc::new(cache.clone()), sleeper.clone())
+                .with_overlay_active(active.clone())
                 .with_topology_poll(poll),
         );
         overlay.bind_main_thread(main.clone());
@@ -65,6 +70,7 @@ impl Harness {
             sleeper,
             overlay,
             pump,
+            active,
             drags: 0.into(),
         }
     }
@@ -671,4 +677,177 @@ fn every_exit_path_restores_the_previous_app_once() {
     let (_tx, rx) = bounded(1);
     assert!(h.overlay.pick(rx).is_err());
     assert_eq!(h.backend.restores(), 1, "failed create");
+}
+
+/// The flag the dismiss watcher reads: set before the native overlay exists, still set inside
+/// `create`, `cleanup` and the focus restore, cleared once the pick returned.
+fn assert_flag_bracketed_the_overlay(h: &Harness, what: &str) {
+    assert_eq!(
+        h.backend.flag_log(),
+        vec![("create", true), ("cleanup", true), ("restore", true)],
+        "{what}: the flag must be set from before create until after the restore"
+    );
+    assert!(
+        !h.active.is_set(),
+        "{what}: cleared after the pick returned"
+    );
+}
+
+#[test]
+fn the_overlay_flag_brackets_a_selection() {
+    let h = Harness::new(one_display(1.0));
+    assert!(!h.active.is_set());
+    let result = h.drag(&[
+        OverlayInput::Down(p(10, 10)),
+        OverlayInput::Move(p(200, 200)),
+        OverlayInput::Up(p(200, 200)),
+    ]);
+    assert_eq!(result, Ok(Some(Rect::new(10, 10, 190, 190))));
+    assert_flag_bracketed_the_overlay(&h, "selection");
+}
+
+#[test]
+fn the_overlay_flag_brackets_escape_and_cancel() {
+    let h = Harness::new(one_display(1.0));
+    assert_eq!(h.drag(&[OverlayInput::Escape]), Ok(None));
+    assert_flag_bracketed_the_overlay(&h, "escape");
+
+    let h = Harness::new(one_display(1.0));
+    let (tx, join) = h.pick_created(1);
+    assert!(h.active.is_set(), "set while the overlay is up");
+    drop(tx);
+    assert_eq!(join.join().unwrap(), Ok(None));
+    assert_flag_bracketed_the_overlay(&h, "cancel");
+}
+
+#[test]
+fn the_overlay_flag_stays_set_until_a_slow_cleanup_finished() {
+    let h = Harness::new(one_display(1.0));
+    h.backend.hold_cleanup(true);
+    let (_tx, join) = h.pick_created(1);
+    assert!(h.backend.fire(OverlayInput::Escape));
+    h.backend.wait_for_cleanups_started(1);
+    assert!(h.active.is_set(), "the windows are still being removed");
+    h.backend.hold_cleanup(false);
+    assert_eq!(join.join().unwrap(), Ok(None));
+    assert!(!h.active.is_set());
+}
+
+#[test]
+fn the_overlay_flag_is_cleared_after_a_failed_create_and_a_topology_change() {
+    let h = Harness::new(one_display(1.0));
+    h.backend.fail_next_create(PlatformError::Os {
+        api: "create",
+        code: 1,
+    });
+    let (_tx, rx) = bounded(1);
+    assert!(h.overlay.pick(rx).is_err());
+    assert_flag_bracketed_the_overlay(&h, "failed create");
+
+    let h = Harness::new(one_display(1.0));
+    let (_tx, join) = h.pick_created(1);
+    h.cache.publish(900.0, one_display(2.0)).unwrap();
+    join.join().unwrap().unwrap();
+    assert_flag_bracketed_the_overlay(&h, "topology change");
+}
+
+#[test]
+fn the_overlay_flag_is_never_set_when_no_overlay_is_created() {
+    let h = Harness::new(vec![]);
+    let (_tx, rx) = bounded::<()>(1);
+    assert!(h.overlay.pick(rx).is_err());
+    assert!(!h.active.is_set());
+    let (tx, rx) = bounded::<()>(1);
+    drop(tx);
+    assert_eq!(h.overlay.pick(rx), Ok(None));
+    assert!(h.backend.flag_log().is_empty());
+    assert!(!h.active.is_set());
+}
+
+#[test]
+fn the_overlay_flag_is_cleared_when_the_main_loop_dropped_the_cleanup() {
+    let h = Harness::manual(one_display(1.0));
+    let (tx, join) = h.pick();
+    h.main.wait_for_pending(1);
+    h.main.run_pending(); // create
+    assert!(h.active.is_set());
+    drop(tx);
+    h.main.wait_for_pending(1);
+    h.main.close(); // drops the queued cleanup unrun
+    assert!(join.join().unwrap().is_err());
+    assert!(!h.active.is_set(), "no native overlay can exist any more");
+}
+
+#[test]
+fn a_panic_in_the_pick_clears_the_overlay_flag_after_the_posted_cleanup() {
+    let main = FakeMainThread::new();
+    let pump = {
+        let m = main.clone();
+        std::thread::spawn(move || m.pump())
+    };
+    let backend = FakeOverlayBackend::new();
+    let active = OverlayActive::new();
+    backend.watch_overlay_active(active.clone());
+    let topology = Arc::new(PanickingTopology {
+        cache: TopologyCache::new(MacGeometry::new(1, 900.0, one_display(1.0)).unwrap()),
+        armed: false.into(),
+    });
+    let overlay = Arc::new(
+        MacOverlay::new(
+            backend.clone(),
+            topology.clone(),
+            Arc::new(FakeSleeper::new()),
+        )
+        .with_overlay_active(active.clone())
+        .with_topology_poll(Duration::from_millis(5)),
+    );
+    overlay.bind_main_thread(main.clone());
+    let (_tx, rx) = bounded::<()>(1);
+    let o = overlay.clone();
+    let join = std::thread::spawn(move || o.pick(rx));
+    backend.wait_for_creates(1);
+    assert!(active.is_set());
+    topology
+        .armed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(join.join().is_err(), "the pick thread panicked");
+    backend.wait_for_cleanups(1);
+    // The flag is cleared by the posted teardown itself, after cleanup and restore.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while active.is_set() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!active.is_set());
+    assert_eq!(
+        backend.flag_log(),
+        vec![("create", true), ("cleanup", true), ("restore", true)]
+    );
+    main.close();
+    pump.join().unwrap();
+}
+
+#[test]
+fn a_main_thread_pick_is_refused_before_it_waits_for_a_running_pick() {
+    // `serial` is held for a whole pick: a main-thread caller must be refused first, never
+    // blocked behind it (it would deadlock the main loop the running pick needs).
+    let h = Harness::new(one_display(1.0));
+    let (tx, join) = h.pick_created(1);
+    let (done, refused) = bounded(1);
+    let overlay = h.overlay.clone();
+    let main = h.main.clone();
+    std::thread::spawn(move || {
+        let (_tx, rx) = bounded::<()>(1);
+        let _ = done.send(main.enter_main(|| overlay.pick(rx)));
+    });
+    let outcome = refused
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the main-thread pick blocked behind the running pick");
+    assert_eq!(
+        outcome,
+        Err(PlatformError::Unsupported(
+            "region overlay on the main thread"
+        ))
+    );
+    drop(tx);
+    assert_eq!(join.join().unwrap(), Ok(None));
 }

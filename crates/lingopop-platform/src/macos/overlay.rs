@@ -12,8 +12,15 @@
 //!    (bounded), then give the compositor [`COMPOSITOR_SETTLE`] (150 ms, Swift parity), so the capture that follows can never
 //!    contain the tint. A panic in between still posts the cleanup (`CleanupGuard`).
 //!
+//! While a pick is active the shared [`OverlayActive`] flag is set (before the native overlay
+//! is created, cleared only after its cleanup ran, on every exit path); the macOS dismiss
+//! watcher ignores all events meanwhile, so the overlay's own drag-start click cannot close the
+//! popup that was open and abort the flow, whatever order AppKit runs local monitors in.
+//!
 //! Native input reaches [`OverlaySink::push`] in arrival order. The sink queues it and posts at
-//! most ONE drain job to the main thread, so a backlog of drag events is one batch: the shared
+//! most ONE drain job to the main thread, so a backlog of drag events is one batch (a
+//! `MainThread::post` that runs inline, like Tauri's on the main thread in production, drains
+//! each event at once, so batching only happens where the post is really deferred): the shared
 //! reducer [`fold_input_batch_with`] folds it in order (Down resets the anchor, Up and Escape
 //! end it) and the backend draws only the final selection. The acceptance rule of a finishing
 //! `Up` is ten BACKING pixels on the display where the drag started
@@ -23,6 +30,7 @@
 //! drag is returned, cancels the pick
 //! (`Ok(None)`, fixed log line) instead of capturing a region of another layout.
 use crate::error::platform_log;
+use crate::macos_dismiss::OverlayActive;
 use crate::macos_geometry::{MacGeometry, TopologyCache};
 use crate::main_thread::{dispatch_error, run_on_main, MainThread};
 use crate::overlay::{fold_input_batch_with, InputBatch, OverlayInput};
@@ -72,10 +80,12 @@ pub trait OverlayBackend: Send + Sync + 'static {
 }
 
 /// Native teardown of one overlay: windows and monitors first, then focus back to the app
-/// the user came from (Swift `ScreenTranslateFlow` re-activates `previousApp`).
-fn teardown(backend: &dyn OverlayBackend) {
+/// the user came from (Swift `ScreenTranslateFlow` re-activates `previousApp`), and only then
+/// the dismiss watcher is let through again.
+fn teardown(backend: &dyn OverlayBackend, active: &OverlayActive) {
     backend.cleanup();
     backend.restore_previous_app();
+    active.clear();
 }
 
 /// The part of the selection that falls on a display, in display-local top-left coordinates
@@ -130,7 +140,7 @@ impl OverlaySink {
         };
         if post {
             let sink = self.clone();
-            // Never inline: events that arrive before the drain job runs form one batch.
+            // Events that arrive before a deferred drain job runs form one batch.
             if self.main.post(Box::new(move || sink.drain())).is_err() {
                 self.queue().drain_posted = false;
                 if let Some(handler) = self.handler.get() {
@@ -240,6 +250,7 @@ struct CleanupGuard {
     main: Arc<dyn MainThread>,
     backend: Arc<dyn OverlayBackend>,
     sink: Arc<OverlaySink>,
+    active: OverlayActive,
     armed: bool,
 }
 impl Drop for CleanupGuard {
@@ -249,12 +260,15 @@ impl Drop for CleanupGuard {
         }
         self.sink.deactivate();
         let backend = self.backend.clone();
+        let active = self.active.clone();
         if self
             .main
-            .post(Box::new(move || teardown(&*backend)))
+            .post(Box::new(move || teardown(&*backend, &active)))
             .is_err()
         {
+            // The main loop is gone: no native overlay can outlive it, nothing to wait for.
             platform_log("region overlay cleanup could not be posted");
+            self.active.clear();
         }
     }
 }
@@ -265,6 +279,8 @@ pub struct MacOverlay<B: OverlayBackend> {
     topology: Arc<dyn TopologySource>,
     sleeper: Arc<dyn Sleeper>,
     main: OnceLock<Arc<dyn MainThread>>,
+    /// Set for the whole life of the native overlay; read by the dismiss watcher.
+    overlay_active: OverlayActive,
     /// Held for a whole pick, cleanup included: the serialization of native overlays.
     serial: Mutex<()>,
     poll: Duration,
@@ -285,9 +301,16 @@ impl<B: OverlayBackend> MacOverlay<B> {
             topology,
             sleeper,
             main: OnceLock::new(),
+            overlay_active: OverlayActive::new(),
             serial: Mutex::new(()),
             poll: TOPOLOGY_POLL,
         }
+    }
+
+    /// Shares the flag the dismiss watcher reads (`native()` wires one into both).
+    pub fn with_overlay_active(mut self, active: OverlayActive) -> Self {
+        self.overlay_active = active;
+        self
     }
 
     /// Tests shorten the topology poll; production uses [`TOPOLOGY_POLL`].
@@ -303,10 +326,15 @@ impl<B: OverlayBackend> MacOverlay<B> {
         guard.sink.deactivate();
         let (ack, acked) = bounded::<()>(1);
         let backend = self.backend.clone();
-        guard.main.post(Box::new(move || {
-            teardown(&*backend);
+        let active = self.overlay_active.clone();
+        if let Err(error) = guard.main.post(Box::new(move || {
+            teardown(&*backend, &active);
             let _ = ack.send(());
-        }))?;
+        })) {
+            // The job never ran and never will (the loop is gone): nothing is left to wait for.
+            self.overlay_active.clear();
+            return Err(error);
+        }
         match acked.recv_timeout(CLEANUP_TIMEOUT) {
             Ok(()) => {
                 self.sleeper.sleep(COMPOSITOR_SETTLE);
@@ -314,9 +342,13 @@ impl<B: OverlayBackend> MacOverlay<B> {
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 platform_log("region overlay cleanup dropped by the main loop");
+                // Dropped unrun: no native overlay exists any more.
+                self.overlay_active.clear();
                 Err(dispatch_error())
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // The flag stays set: the queued cleanup clears it when the main thread gets
+                // to it, and until then the overlay may still be on screen.
                 platform_log("region overlay cleanup timed out");
                 Err(PlatformError::Os {
                     api: "region overlay cleanup",
@@ -335,16 +367,17 @@ enum Wait {
 
 impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
     fn pick(&self, cancel: Receiver<()>) -> Outcome {
-        let _serial = self.serial.lock().unwrap_or_else(|p| p.into_inner());
         let main = self.main.get().cloned().ok_or(PlatformError::Unsupported(
             "region overlay without main thread",
         ))?;
         if main.is_main_thread() {
-            // Waiting for the main thread on the main thread would deadlock the very work.
+            // Waiting for the main thread on the main thread would deadlock the very work; and
+            // locking `serial` first would block the main thread behind a running pick.
             return Err(PlatformError::Unsupported(
                 "region overlay on the main thread",
             ));
         }
+        let _serial = self.serial.lock().unwrap_or_else(|p| p.into_inner());
         if cancelled(&cancel) {
             return Ok(None);
         }
@@ -375,16 +408,21 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             main: main.clone(),
             backend: self.backend.clone(),
             sink: sink.clone(),
+            active: self.overlay_active.clone(),
             armed: true,
         };
+        // Before the native overlay exists; cleared by `teardown` (or below when no teardown
+        // job will ever run).
+        self.overlay_active.set();
 
         let created = run_on_main(main.as_ref(), {
             let backend = self.backend.clone();
             let sink = sink.clone();
+            let active = self.overlay_active.clone();
             move || {
                 let created = backend.create(&geometry, sink);
                 if created.is_err() {
-                    teardown(&*backend);
+                    teardown(&*backend, &active);
                 }
                 created
             }
@@ -400,6 +438,7 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             Err(error) => {
                 // The job never ran (the loop is gone): nothing exists to clean up.
                 guard.armed = false;
+                self.overlay_active.clear();
                 return Err(error);
             }
         }

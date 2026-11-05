@@ -121,7 +121,7 @@ impl SettingsHooks for ShellHooks {
         };
         self.latest_login.store(enabled, Ordering::Release);
         self.spawn.spawn_login(Box::new(move || {
-            let _guard = serial
+            let guard = serial
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if latest.load(Ordering::Acquire) != enabled {
@@ -142,6 +142,8 @@ impl SettingsHooks for ShellHooks {
                 *current = outcome;
                 changed
             };
+            // The remembered issue is committed; the signal (an event emit) needs no lock.
+            drop(guard);
             if changed {
                 if let Some(notify) = notify {
                     notify();
@@ -155,6 +157,50 @@ impl SettingsHooks for ShellHooks {
             .login_issue
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn recheck_login_issue(&self) {
+        let current = || {
+            *self
+                .login_issue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        // Cheap exits without touching the platform: only a pending approval can clear here,
+        // and only while launch at login is on.
+        if !self.latest_login.load(Ordering::Acquire)
+            || current() != Some(settings_cmds::LoginIssue::RequiresApproval)
+        {
+            return;
+        }
+        // The same `serial` lock the update jobs hold for their whole run: the read happens
+        // after any earlier `set_enabled` finished and before any later one starts, so a stale
+        // read can never override a newer update's result.
+        let cleared = {
+            let _guard = self
+                .serial
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Re-evaluated under the lock: a toggle or a job may have changed either.
+            if !self.latest_login.load(Ordering::Acquire)
+                || current() != Some(settings_cmds::LoginIssue::RequiresApproval)
+                || self.login.status() != lingopop_platform::LoginItemStatus::Enabled
+            {
+                false
+            } else {
+                *self
+                    .login_issue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                true
+            }
+        };
+        // Outside `serial`, so the callback (an event emit) can never wait on an update job.
+        if cleared {
+            if let Some(notify) = &self.on_login_issue {
+                notify();
+            }
+        }
     }
 
     fn hotkeys(
@@ -348,6 +394,7 @@ pub fn run() {
             settings_cmds::ui_bootstrap,
             settings_cmds::open_url,
             settings_cmds::login_items_open_settings,
+            settings_cmds::login_item_recheck,
             provider_cmds::provider_reset_secrets,
             provider_cmds::provider_state,
             provider_cmds::provider_validate,

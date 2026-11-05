@@ -73,7 +73,7 @@ pub use hotkey::{to_global_hotkey, GlobalHotkeyService};
 pub use inject::{bring_to_front, replace_selection, ReplaceOptions, ReplaceOutcome};
 pub use keys::KeySynth;
 pub use last_foreground::{LastForeground, NoLastForeground};
-pub use login_item::{run_value, LoginItem};
+pub use login_item::{run_value, LoginItem, LoginItemStatus};
 pub use monitors::{
     clamp_to_work_area, monitor_at, physical_size, validate_region, virtual_screen, MonitorInfo,
     Monitors, Point, Rect, Size,

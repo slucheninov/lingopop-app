@@ -4,7 +4,7 @@
 
 use lingopop_core::errors::TranslationError;
 use lingopop_core::provider::ProviderType;
-use lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM;
+use lingopop_platform::login_item::{UNSUPPORTED_LOGIN_ITEM, UNSUPPORTED_LOGIN_ITEM_NOT_FOUND};
 use lingopop_platform::pasteboard::UNSUPPORTED_SNAPSHOT;
 use lingopop_platform::{PermissionKind, PlatformError};
 
@@ -70,12 +70,13 @@ pub const KEY_PASTEBOARD_UNSUPPORTED: &str =
 pub const KEY_LOGIN_REQUIRES_APPROVAL: &str =
     "Allow LingoPop in System Settings > Login Items to start it at login.";
 /// NEW (macOS only): launch at login cannot work from here: LingoPop is not an installed `.app`
-/// (a plain binary, a Gatekeeper-translocated copy) or the system cannot find the service.
+/// (a plain binary, a Gatekeeper-translocated copy, an app run from a mounted disk image), so
+/// moving it to Applications is the right advice.
 pub const KEY_LOGIN_UNAVAILABLE: &str = "Launch at login isn't available until LingoPop runs from the Applications folder. Move it there and open it again.";
-/// NEW (macOS only): registering or unregistering the login item failed for another reason.
-pub const KEY_LOGIN_FAILED: &str = "Couldn't change Launch at login. Try again.";
-/// NEW (macOS only): the button that opens the Login Items pane of System Settings.
-pub const KEY_OPEN_LOGIN_ITEMS_SETTINGS: &str = "Open Login Items settings";
+/// NEW (macOS only): the system cannot find the login item service of an app that is already in
+/// an installed bundle; moving the app would not help, so the advice is another one.
+pub const KEY_LOGIN_SERVICE_NOT_FOUND: &str =
+    "Launch at login isn't available for this copy of LingoPop. Reinstall it in the Applications folder and open it again.";
 /// Mac catalog key (`MainSettingsTab.swift`). Conditional wording, never a claim that access was
 /// granted: macOS reads a new Screen Recording grant only after a relaunch, so this process cannot
 /// tell. Detail line of the denied message on a retry after `request` already ran, and the line
@@ -133,6 +134,9 @@ pub fn platform_message(e: &PlatformError) -> UserMessageView {
         }
         PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM => {
             plain(KEY_LOGIN_UNAVAILABLE)
+        }
+        PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM_NOT_FOUND => {
+            plain(KEY_LOGIN_SERVICE_NOT_FOUND)
         }
         PlatformError::LoginItemRequiresApproval => plain(KEY_LOGIN_REQUIRES_APPROVAL),
         PlatformError::Unsupported(_)
@@ -249,6 +253,13 @@ mod tests {
             platform_message(&PlatformError::Unsupported(UNSUPPORTED_LOGIN_ITEM)),
             plain(KEY_LOGIN_UNAVAILABLE)
         );
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported(
+                UNSUPPORTED_LOGIN_ITEM_NOT_FOUND
+            )),
+            plain(KEY_LOGIN_SERVICE_NOT_FOUND)
+        );
+        assert!(!KEY_LOGIN_SERVICE_NOT_FOUND.contains("Move it"));
         // Any other Unsupported keeps the generic key.
         assert_eq!(
             platform_message(&PlatformError::Unsupported("ocr")).key,

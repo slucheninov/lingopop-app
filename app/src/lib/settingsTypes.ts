@@ -38,7 +38,7 @@ export interface Hotkey { key: string; modifiers: Modifier[] }
 export interface HotkeyView { key: string; modifiers: Modifier[]; display: string }
 export interface ProviderSummary { provider: Provider; name: string; hasKey: boolean; requiresKey: boolean; fallback: Provider | null }
 
-export type LoginItemIssue = 'requiresApproval' | 'unavailable' | 'failed';
+export type LoginItemIssue = 'requiresApproval' | 'unavailable' | 'serviceNotFound' | 'failed';
 
 export interface SettingsView {
   activeProvider: Provider;

@@ -23,6 +23,10 @@ pub trait SettingsHooks: Send + Sync {
     fn login_issue(&self) -> Option<LoginIssue> {
         None
     }
+    /// Re-reads the login item's state (read only, never registers) and drops a pending
+    /// "needs approval" issue once the system reports it enabled. Blocking: call it off the
+    /// main thread. Signals through the same callback as `launch_at_login` when it changed.
+    fn recheck_login_issue(&self) {}
 }
 pub struct NoSettingsHooks;
 impl SettingsHooks for NoSettingsHooks {
@@ -38,17 +42,24 @@ impl SettingsHooks for NoSettingsHooks {
 pub enum LoginIssue {
     RequiresApproval,
     Unavailable,
+    /// The app is in an installed bundle but the system cannot find its login item service.
+    ServiceNotFound,
     Failed,
 }
 impl LoginIssue {
     /// `None` for an error the UI does not show (every Windows failure).
     pub fn classify(error: &lingopop_platform::PlatformError) -> Option<Self> {
-        use lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM;
+        use lingopop_platform::login_item::{
+            UNSUPPORTED_LOGIN_ITEM, UNSUPPORTED_LOGIN_ITEM_NOT_FOUND,
+        };
         use lingopop_platform::PlatformError;
         match error {
             PlatformError::LoginItemRequiresApproval => Some(Self::RequiresApproval),
             PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM => {
                 Some(Self::Unavailable)
+            }
+            PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM_NOT_FOUND => {
+                Some(Self::ServiceNotFound)
             }
             _ if cfg!(target_os = "macos") => Some(Self::Failed),
             _ => None,
@@ -357,6 +368,15 @@ pub async fn login_items_open_settings(state: State<'_, ShellState>) -> Result<(
             &[],
         )
     })?
+}
+/// Settings regained focus: the user may have approved the login item in System Settings. Runs on
+/// the blocking pool; takes no argument and changes nothing but the remembered issue.
+#[tauri::command]
+pub async fn login_item_recheck(state: State<'_, ShellState>) -> Result<(), String> {
+    let hooks = state.hooks.clone();
+    // A join failure only means no re-check happened; the next focus tries again.
+    let _ = tauri::async_runtime::spawn_blocking(move || hooks.recheck_login_issue()).await;
+    Ok(())
 }
 #[tauri::command]
 pub async fn settings_get(state: State<'_, ShellState>) -> Result<SettingsView, String> {

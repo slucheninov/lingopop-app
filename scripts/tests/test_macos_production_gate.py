@@ -128,6 +128,45 @@ class MacosProductionGate(unittest.TestCase):
         self.edit("app/src-tauri/tauri.macos.conf.json", '"productName"', '"version": "9.9.9",\n  "productName"')
         self.assert_fails("version")
 
+    def test_a_misplaced_minimum_os_key_fails(self):
+        # The key exists, but at the top level instead of under bundle.macOS: grep would pass it.
+        path = self.root / "app/src-tauri/tauri.macos.conf.json"
+        config = json.loads(path.read_text())
+        config["minimumSystemVersion"] = config["bundle"]["macOS"].pop("minimumSystemVersion")
+        path.write_text(json.dumps(config, indent=2))
+        self.assert_fails("bundle.macOS.minimumSystemVersion must be 13.0")
+
+    def test_a_minimum_os_inside_a_string_fails(self):
+        path = self.root / "app/src-tauri/tauri.macos.conf.json"
+        config = json.loads(path.read_text())
+        config["bundle"]["macOS"] = {"note": '"minimumSystemVersion": "13.0"'}
+        path.write_text(json.dumps(config, indent=2))
+        self.assert_fails("bundle.macOS.minimumSystemVersion must be 13.0")
+
+    def test_an_invalid_macos_config_fails(self):
+        (self.root / "app/src-tauri/tauri.macos.conf.json").write_text("{ not json")
+        self.assert_fails("not valid JSON")
+
+    def test_all_features_in_the_release_workflow_fails(self):
+        path = self.root / ".github/workflows/release.yml"
+        path.write_text(path.read_text() + "\n      - run: cargo build --release --all-features\n")
+        self.assert_fails("release.yml builds with --all-features")
+
+    def test_all_features_in_a_packaging_script_fails(self):
+        script = self.root / "scripts" / "package-macos.sh"
+        script.parent.mkdir(exist_ok=True)
+        script.write_text("#!/usr/bin/env bash\ncargo tauri build -- --all-features\n")
+        self.assert_fails("package-macos.sh builds with --all-features")
+
+    def test_all_features_in_a_comment_or_a_dependency_check_is_fine(self):
+        script = self.root / "scripts" / "package-macos.sh"
+        script.parent.mkdir(exist_ok=True)
+        script.write_text("#!/usr/bin/env bash\n# never use --all-features here\ncargo build --release\n")
+        # A dependency listing (not a build) in a script that does not package stays allowed.
+        (self.root / "scripts" / "check-core-deps.sh").write_text("cargo tree --all-features\n")
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -458,6 +458,30 @@ async fn ocr_native_failure_names_the_recognition_stage_on_macos() {
 }
 
 #[tokio::test]
+async fn capture_native_failure_names_the_capture_stage_on_macos() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    // A display layout that changed during the capture (macOS adapter) or any native failure.
+    r.capture.fail_next(PlatformError::Os {
+        api: "display topology changed",
+        code: 0,
+    });
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_SCREEN_CAPTURE_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    assert_ne!(
+        error_key(&m),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL,
+        "a failed capture is not a too-small selection"
+    );
+    assert_eq!(r.capture.regions().len(), 1, "the capture was attempted");
+}
+
+#[tokio::test]
 async fn ocr_gate_timeout_uses_the_screen_message() {
     let r = rig_gated(
         Ok(Some(REGION)),

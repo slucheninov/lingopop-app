@@ -71,6 +71,7 @@ const MACOS_ONLY_LITERALS = [
   'Allow LingoPop in System Settings > Login Items to start it at login.',
   'Open Login Items settings',
   "Launch at login isn't available until LingoPop runs from the Applications folder. Move it there and open it again.",
+  "Launch at login isn't available for this copy of LingoPop. Reinstall it in the Applications folder and open it again.",
   "Couldn't change Launch at login. Try again.",
 ];
 

@@ -165,6 +165,11 @@ fn an_unsupported_login_item_is_unavailable_and_other_errors_are_macos_only_fail
     ));
     hooks.launch_at_login(true);
     assert_eq!(hooks.login_issue(), Some(LoginIssue::Unavailable));
+    item.fail_next_with(PlatformError::Unsupported(
+        lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM_NOT_FOUND,
+    ));
+    hooks.launch_at_login(true);
+    assert_eq!(hooks.login_issue(), Some(LoginIssue::ServiceNotFound));
     item.fail_next();
     hooks.launch_at_login(true);
     // Windows keeps its log-only behaviour: the Run-key failure is not a UI state.
@@ -174,6 +179,96 @@ fn an_unsupported_login_item_is_unavailable_and_other_errors_are_macos_only_fail
         None
     };
     assert_eq!(hooks.login_issue(), expected);
+}
+
+#[test]
+fn a_recheck_clears_a_pending_approval_once_the_system_reports_it_enabled() {
+    use crate::settings_cmds::{LoginIssue, SettingsHooks};
+    use lingopop_platform::LoginItemStatus;
+    let (item, hooks, changes) = issue_rig();
+    item.fail_next_with(PlatformError::LoginItemRequiresApproval);
+    hooks.launch_at_login(true);
+    assert_eq!(hooks.login_issue(), Some(LoginIssue::RequiresApproval));
+    let exe = std::env::current_exe().expect("current exe");
+    let after_enable = item.calls();
+    assert_eq!(after_enable, vec![(true, exe)]);
+
+    // Still waiting for the user: nothing changes, no signal.
+    item.set_status(LoginItemStatus::RequiresApproval);
+    hooks.recheck_login_issue();
+    assert_eq!(hooks.login_issue(), Some(LoginIssue::RequiresApproval));
+    assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // Approved in System Settings: the notice goes away and the UI is signalled once.
+    item.set_status(LoginItemStatus::Enabled);
+    hooks.recheck_login_issue();
+    assert_eq!(hooks.login_issue(), None);
+    assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // Another focus with nothing left to clear does not signal again.
+    let reads = item.status_reads();
+    hooks.recheck_login_issue();
+    assert_eq!(changes.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(item.status_reads(), reads, "no issue, no platform read");
+    // A read-only check: no register / unregister call was ever made by it.
+    assert_eq!(item.calls(), after_enable);
+}
+
+#[test]
+fn a_recheck_does_nothing_while_launch_at_login_is_off_or_other_issues_stand() {
+    use crate::settings_cmds::{LoginIssue, SettingsHooks};
+    use lingopop_platform::LoginItemStatus;
+    let (item, hooks, changes) = issue_rig();
+    item.set_status(LoginItemStatus::Enabled);
+    // Off: the toggle never turned on, nothing to re-check.
+    hooks.recheck_login_issue();
+    assert_eq!(item.status_reads(), 0);
+    // An issue that is not an approval is never cleared by the state of the service.
+    item.fail_next_with(PlatformError::Unsupported(
+        lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM,
+    ));
+    hooks.launch_at_login(true);
+    assert_eq!(hooks.login_issue(), Some(LoginIssue::Unavailable));
+    hooks.recheck_login_issue();
+    assert_eq!(hooks.login_issue(), Some(LoginIssue::Unavailable));
+    assert_eq!(item.status_reads(), 0);
+    let before = changes.load(std::sync::atomic::Ordering::SeqCst);
+    // Turned off again after an approval issue: the toggle already cleared it, no read.
+    item.fail_next_with(PlatformError::LoginItemRequiresApproval);
+    hooks.launch_at_login(true);
+    hooks.launch_at_login(false);
+    hooks.recheck_login_issue();
+    assert_eq!(item.status_reads(), 0);
+    assert!(changes.load(std::sync::atomic::Ordering::SeqCst) >= before);
+}
+
+#[test]
+fn a_recheck_waits_for_a_running_update_and_never_overrides_its_newer_result() {
+    use crate::settings_cmds::{LoginIssue, SettingsHooks};
+    use lingopop_platform::LoginItemStatus;
+    // A queued update has not run yet: the recheck sees the issue of the state BEFORE it and
+    // reads under the update lock; the later job's outcome is committed after and wins.
+    let item = Arc::new(FakeLoginItem::new());
+    let queue = Arc::new(QueuedLogin(std::sync::Mutex::new(Vec::new())));
+    let mut hooks = ShellHooks::synchronous(item.clone());
+    hooks.spawn = queue.clone();
+    hooks.launch_at_login(true);
+    item.fail_next_with(PlatformError::LoginItemRequiresApproval);
+    for job in queue.0.lock().unwrap().drain(..) {
+        job();
+    }
+    assert_eq!(hooks.login_issue(), Some(LoginIssue::RequiresApproval));
+    // The user toggles again (a new job is queued, not yet run) ...
+    item.fail_next_with(PlatformError::LoginItemRequiresApproval);
+    hooks.launch_at_login(true);
+    // ... and a focus re-check reads "enabled" from before that job.
+    item.set_status(LoginItemStatus::Enabled);
+    hooks.recheck_login_issue();
+    assert_eq!(hooks.login_issue(), None);
+    // The queued update then reports approval needed again: its result stands.
+    for job in queue.0.lock().unwrap().drain(..) {
+        job();
+    }
+    assert_eq!(hooks.login_issue(), Some(LoginIssue::RequiresApproval));
 }
 
 #[test]
@@ -214,6 +309,11 @@ fn settings_view_carries_the_login_issue_only_when_there_is_one() {
     assert_eq!(
         serde_json::to_value(&view).unwrap()["loginItemIssue"],
         "unavailable"
+    );
+    view.login_item_issue = Some(LoginIssue::ServiceNotFound);
+    assert_eq!(
+        serde_json::to_value(&view).unwrap()["loginItemIssue"],
+        "serviceNotFound"
     );
 }
 

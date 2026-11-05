@@ -90,18 +90,48 @@ done < <(
 )
 
 # (5) The macOS release configuration: approved identity, minimum OS, and never a `version` key
-# (the shared version stays in Cargo.toml / tauri.conf.json).
+# (the shared version stays in Cargo.toml / tauri.conf.json). The values are read by JSON path
+# (python3, standard library), so a key in the wrong place (a top-level `minimumSystemVersion`,
+# or one inside a string) cannot satisfy the check.
+json_value() { # json_value <file> <dotted.path>: the string at the path, empty when absent
+  python3 -c '
+import json, sys
+node = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split("."):
+    node = node.get(key) if isinstance(node, dict) else None
+print(node if isinstance(node, str) else "")
+' "$1" "$2"
+}
 if [ ! -f "$macos_conf" ]; then
   fail "$macos_conf is missing"
+elif ! python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$macos_conf" 2>/dev/null; then
+  fail "$macos_conf is not valid JSON"
 else
-  grep -q -E '"identifier"[[:space:]]*:[[:space:]]*"app\.lingopop\.tauri\.macos"' "$macos_conf" \
+  [ "$(json_value "$macos_conf" identifier)" = "app.lingopop.tauri.macos" ] \
     || fail "$macos_conf: identifier must be app.lingopop.tauri.macos"
-  grep -q -E '"minimumSystemVersion"[[:space:]]*:[[:space:]]*"13\.0"' "$macos_conf" \
+  [ "$(json_value "$macos_conf" bundle.macOS.minimumSystemVersion)" = "13.0" ] \
     || fail "$macos_conf: bundle.macOS.minimumSystemVersion must be 13.0"
   if grep -n -E '"version"[[:space:]]*:' "$macos_conf" >&2; then
     fail "$macos_conf must not contain a version key"
   fi
 fi
+
+# (6) A release or packaging build never turns on every cargo feature: that would also enable
+# `dev-plaintext` (and any future dev-only feature) in the shipped binary. Applies to release
+# workflows and to scripts that package, bundle, sign or notarize.
+while IFS= read -r file; do
+  hits=$(grep -n -F -e '--all-features' "$file" | grep -v -E '^[0-9]+:[[:space:]]*#' || true)
+  if [ -n "$hits" ]; then
+    printf '%s: %s\n' "$file" "$hits" >&2
+    fail "$file builds with --all-features"
+  fi
+done < <(
+  {
+    find .github/workflows -type f \( -iname '*release*' -o -iname '*package*' -o -iname '*bundle*' -o -iname '*dist*' \) 2>/dev/null
+    find scripts -type f \( -iname '*release*' -o -iname '*package*' -o -iname '*bundle*' -o -iname '*dmg*' -o -iname '*notar*' -o -iname '*sign*' \) \
+      -not -name 'check-macos-production.sh' 2>/dev/null
+  } | sort -u
+)
 
 if [ "$status" -eq 0 ]; then
   echo "macOS production readiness: ok"

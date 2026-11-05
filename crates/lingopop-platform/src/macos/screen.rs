@@ -23,6 +23,8 @@ use std::sync::Arc;
 
 /// The OS call that failed, for the fixed-text `Os` errors of this module.
 const CREATE_IMAGE_API: &str = "CGDisplayCreateImageForRect";
+/// Fixed text of the error for a display layout that changed during a capture.
+const TOPOLOGY_CHANGED_API: &str = "display topology changed";
 
 /// Byte order of a native 8-bit-per-channel 4-byte pixel. The alpha byte is ignored on read
 /// and the output alpha is always 255 (screen content is opaque).
@@ -106,7 +108,16 @@ impl<N: NativeScreen> ScreenCaptureAdapter<N> {
     /// Permission first, then the topology: both must hold right before and right after a call.
     fn guard(&self, plan: &CapturePlan) -> Result<(), PlatformError> {
         self.require_permission()?;
-        self.geometry.snapshot().ensure_current(plan)
+        // A plan that is no longer current was made from a layout that is gone: that is a
+        // capture failure (retry), not a region the user drew too small, so it is not
+        // `InvalidRegion` (which the flow reports as "selection too small").
+        self.geometry
+            .snapshot()
+            .ensure_current(plan)
+            .map_err(|_| PlatformError::Os {
+                api: TOPOLOGY_CHANGED_API,
+                code: 0,
+            })
     }
 
     fn capture_tile(

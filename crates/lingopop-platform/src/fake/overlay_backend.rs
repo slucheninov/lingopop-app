@@ -1,6 +1,7 @@
 //! `FakeOverlayBackend`: a recording `OverlayBackend` for the portable macOS overlay tests.
 //! Every create / cleanup gets a global sequence number, so tests can assert that the first
 //! overlay's cleanup precedes the second one's creation.
+use crate::macos_dismiss::OverlayActive;
 use crate::macos_geometry::MacGeometry;
 use crate::macos_overlay::{OverlayBackend, OverlaySink};
 use crate::overlay::OverlayInput;
@@ -35,6 +36,8 @@ struct State {
     max_live: usize,
     hold_cleanup: bool,
     fail_create: Option<PlatformError>,
+    watched: Option<OverlayActive>,
+    flag_log: Vec<(&'static str, bool)>,
 }
 
 #[derive(Default)]
@@ -144,6 +147,15 @@ impl FakeOverlayBackend {
     pub fn fail_next_create(&self, error: PlatformError) {
         self.state().fail_create = Some(error);
     }
+    /// Records the value of `flag` at every `create`, `cleanup` (after it finished) and
+    /// `restore_previous_app` call, see [`Self::flag_log`].
+    pub fn watch_overlay_active(&self, flag: OverlayActive) {
+        self.state().watched = Some(flag);
+    }
+    /// `(call, flag value seen inside it)` in order, for the watched flag.
+    pub fn flag_log(&self) -> Vec<(&'static str, bool)> {
+        self.state().flag_log.clone()
+    }
     pub fn wait_for_creates(&self, n: usize) {
         self.wait_until(|s| {
             s.calls
@@ -179,9 +191,19 @@ impl FakeOverlayBackend {
     }
 }
 
+impl State {
+    fn note(&mut self, call: &'static str) {
+        if let Some(flag) = &self.watched {
+            let seen = flag.is_set();
+            self.flag_log.push((call, seen));
+        }
+    }
+}
+
 impl OverlayBackend for FakeOverlayBackend {
     fn create(&self, geometry: &MacGeometry, sink: Arc<OverlaySink>) -> Result<(), PlatformError> {
         let mut s = self.state();
+        s.note("create");
         s.seq += 1;
         let seq = s.seq;
         s.calls.push(OverlayCall::Create {
@@ -218,6 +240,7 @@ impl OverlayBackend for FakeOverlayBackend {
             s.live = s.live.saturating_sub(1);
         }
         s.calls.push(OverlayCall::Cleanup { seq });
+        s.note("cleanup");
         drop(s);
         self.changed.notify_all();
     }
@@ -227,6 +250,7 @@ impl OverlayBackend for FakeOverlayBackend {
         s.seq += 1;
         let seq = s.seq;
         s.calls.push(OverlayCall::RestorePreviousApp { seq });
+        s.note("restore");
         drop(s);
         self.changed.notify_all();
     }

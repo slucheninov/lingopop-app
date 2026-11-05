@@ -1,4 +1,4 @@
-use crate::{LoginItem, PlatformError};
+use crate::{LoginItem, LoginItemStatus, PlatformError};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -8,6 +8,8 @@ pub struct FakeLoginItem {
     fail: AtomicBool,
     next_error: Mutex<Option<PlatformError>>,
     settings_opened: AtomicUsize,
+    status: Mutex<LoginItemStatus>,
+    status_reads: AtomicUsize,
 }
 
 impl Default for FakeLoginItem {
@@ -23,6 +25,8 @@ impl FakeLoginItem {
             fail: AtomicBool::new(false),
             next_error: Mutex::new(None),
             settings_opened: AtomicUsize::new(0),
+            status: Mutex::new(LoginItemStatus::Unknown),
+            status_reads: AtomicUsize::new(0),
         }
     }
 
@@ -44,6 +48,19 @@ impl FakeLoginItem {
             .next_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+    }
+
+    /// What `status` reports from now on (default `Unknown`, like Windows).
+    pub fn set_status(&self, status: LoginItemStatus) {
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = status;
+    }
+
+    /// How many times the read-only `status` was called (never counted in `calls`).
+    pub fn status_reads(&self) -> usize {
+        self.status_reads.load(Ordering::SeqCst)
     }
 
     /// How many times `open_settings` was called (also the failed ones).
@@ -78,6 +95,14 @@ impl LoginItem for FakeLoginItem {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((enabled, exe.to_path_buf()));
         self.failure()
+    }
+
+    fn status(&self) -> LoginItemStatus {
+        self.status_reads.fetch_add(1, Ordering::SeqCst);
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn open_settings(&self) -> Result<(), PlatformError> {

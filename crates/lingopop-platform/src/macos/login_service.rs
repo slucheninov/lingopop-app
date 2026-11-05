@@ -8,13 +8,17 @@
 //!
 //! Status mapping (`SMAppServiceStatus`): `Enabled` after `register` = success;
 //! `RequiresApproval` = [`PlatformError::LoginItemRequiresApproval`] (the user must allow the item
-//! in System Settings, never a silent success); `NotFound`, or an executable that is not an
-//! installed `.app` bundle (a plain binary, a Gatekeeper-translocated copy), =
-//! `Unsupported(UNSUPPORTED_LOGIN_ITEM)`; `NotRegistered` after a disable = success.
+//! in System Settings, never a silent success); an executable that is not an installed `.app`
+//! bundle (a plain binary, a Gatekeeper-translocated copy, an app run from a mounted disk
+//! image) = `Unsupported(UNSUPPORTED_LOGIN_ITEM)` ("move it to Applications"); `NotFound` for a
+//! bundle that is installed = `Unsupported(UNSUPPORTED_LOGIN_ITEM_NOT_FOUND)` (another message:
+//! moving the app would not help); `NotRegistered` after a disable = success.
 
 use std::path::Path;
 
-use crate::login_item::UNSUPPORTED_LOGIN_ITEM;
+use crate::login_item::{
+    LoginItemStatus, UNSUPPORTED_LOGIN_ITEM, UNSUPPORTED_LOGIN_ITEM_NOT_FOUND,
+};
 use crate::{LoginItem, PlatformError};
 
 /// `SMAppServiceStatus` (`SMAppService.h`: notRegistered 0, enabled 1, requiresApproval 2,
@@ -45,11 +49,14 @@ pub trait MainAppService: Send + Sync {
     fn open_login_items_settings(&self);
 }
 
-/// True for the path of an installed app bundle: it ends in `.app` and is not one of Gatekeeper's
-/// randomized read-only copies (`.../AppTranslocation/...`), which vanish and cannot stay
-/// registered.
+/// True for the path of an installed app bundle: it ends in `.app`, is not one of Gatekeeper's
+/// randomized read-only copies (`.../AppTranslocation/...`) and does not run from a mounted
+/// volume (`/Volumes/...`, e.g. straight from the downloaded disk image): all of those vanish
+/// and cannot stay registered.
 pub fn is_installed_bundle_path(bundle_path: &str) -> bool {
-    bundle_path.ends_with(".app") && !bundle_path.contains("/AppTranslocation/")
+    bundle_path.ends_with(".app")
+        && !bundle_path.contains("/AppTranslocation/")
+        && !bundle_path.starts_with("/Volumes/")
 }
 
 fn os_error(api: &'static str, error: ServiceError) -> PlatformError {
@@ -80,7 +87,7 @@ impl<S: MainAppService> ServiceLoginItem<S> {
                 return Err(PlatformError::LoginItemRequiresApproval)
             }
             ServiceStatus::NotFound => {
-                return Err(PlatformError::Unsupported(UNSUPPORTED_LOGIN_ITEM))
+                return Err(PlatformError::Unsupported(UNSUPPORTED_LOGIN_ITEM_NOT_FOUND))
             }
             ServiceStatus::NotRegistered => {}
         }
@@ -96,7 +103,9 @@ impl<S: MainAppService> ServiceLoginItem<S> {
         match self.service.status() {
             ServiceStatus::Enabled => Ok(()),
             ServiceStatus::RequiresApproval => Err(PlatformError::LoginItemRequiresApproval),
-            ServiceStatus::NotFound => Err(PlatformError::Unsupported(UNSUPPORTED_LOGIN_ITEM)),
+            ServiceStatus::NotFound => {
+                Err(PlatformError::Unsupported(UNSUPPORTED_LOGIN_ITEM_NOT_FOUND))
+            }
             ServiceStatus::NotRegistered => Err(PlatformError::Os {
                 api: "SMAppService status",
                 code: 0,
@@ -130,6 +139,19 @@ impl<S: MainAppService> LoginItem for ServiceLoginItem<S> {
             self.enable()
         } else {
             self.disable()
+        }
+    }
+
+    /// Reads `SMAppService.mainApp.status` only: nothing is registered or unregistered.
+    fn status(&self) -> LoginItemStatus {
+        if !self.service.is_installed_bundle() {
+            return LoginItemStatus::Unknown;
+        }
+        match self.service.status() {
+            ServiceStatus::Enabled => LoginItemStatus::Enabled,
+            ServiceStatus::RequiresApproval => LoginItemStatus::RequiresApproval,
+            ServiceStatus::NotRegistered => LoginItemStatus::NotRegistered,
+            ServiceStatus::NotFound => LoginItemStatus::Unknown,
         }
     }
 

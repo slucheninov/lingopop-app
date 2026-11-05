@@ -147,7 +147,7 @@ fn screen_permission_denial_is_not_empty_success() {
     );
 
     // 3x2 image with 16-byte padded rows (12 meaningful bytes + 4 padding).
-    let (screen, cache, permissions) = retina();
+    let (screen, _cache, permissions) = retina();
     let padded: Vec<u8> = (0..2u8)
         .flat_map(|row| {
             (0..3u8)
@@ -164,7 +164,6 @@ fn screen_permission_denial_is_not_empty_success() {
         data: padded,
     });
     let cache1 = topology(vec![display(1, 0.0, 0.0, 200.0, 200.0, 1.0)]);
-    let _ = cache;
     let capture = adapter(&screen, &cache1, &permissions);
     let image = capture.capture_region(Rect::new(0, 0, 3, 2)).unwrap();
     let padded_rows_output = image.rgba.clone();
@@ -317,7 +316,35 @@ fn a_topology_change_during_capture_fails_closed() {
             .unwrap();
     });
     let r = adapter(&screen, &cache, &permissions).capture_region(Rect::new(0, 0, 50, 50));
-    assert_eq!(r, Err(PlatformError::InvalidRegion));
+    // Not `InvalidRegion` (the user would be told "selection too small"): a fixed-text `Os`
+    // error that the shell shows as "Screen capture failed. Try again.". The capture plan's own
+    // `InvalidRegion` contract (a region the topology cannot satisfy) is unchanged, see below.
+    assert_eq!(
+        r,
+        Err(PlatformError::Os {
+            api: "display topology changed",
+            code: 0
+        })
+    );
+}
+
+#[test]
+fn a_display_removed_during_capture_also_fails_with_the_os_error() {
+    let (screen, cache, permissions) = retina();
+    let adapter = adapter(&screen, &cache, &permissions);
+    // The display of the planned tile disappears while the native call runs.
+    let c = cache.clone();
+    screen.on_call(move |_| {
+        c.publish(900.0, vec![]).unwrap();
+    });
+    let r = adapter.capture_region(Rect::new(0, 0, 50, 50));
+    assert_eq!(
+        r,
+        Err(PlatformError::Os {
+            api: "display topology changed",
+            code: 0
+        })
+    );
 }
 
 #[test]
@@ -392,7 +419,7 @@ fn malformed_native_bitmaps_are_rejected_without_panicking() {
 
 #[test]
 fn rgba_input_passes_through_and_alpha_is_forced_opaque() {
-    let (screen, cache, permissions) = retina();
+    let (screen, _cache, permissions) = retina();
     *screen.override_bitmap.lock().unwrap() = Some(NativeBitmap {
         width: 100,
         height: 50,
@@ -401,7 +428,6 @@ fn rgba_input_passes_through_and_alpha_is_forced_opaque() {
         data: [1, 2, 3, 0].repeat(100 * 50),
     });
     let cache1 = topology(vec![display(1, 0.0, 0.0, 200.0, 200.0, 1.0)]);
-    let _ = cache;
     let image = adapter(&screen, &cache1, &permissions)
         .capture_region(Rect::new(0, 0, 100, 50))
         .unwrap();

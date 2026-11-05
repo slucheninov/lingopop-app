@@ -37,6 +37,30 @@ pub const OWN_EVENT_MARKER: i64 = 0x4C50_4F50;
 /// `kVK_Escape`.
 pub const ESCAPE_KEY_CODE: u16 = 53;
 
+/// "A region-selection overlay is up": shared between the overlay engine (sets it before the
+/// native overlay exists, clears it only after its cleanup ran) and the dismiss sink (drops
+/// every event while it is set). The overlay's own drag-start click and Escape are events to
+/// our own app, so the dismiss watcher's LOCAL monitors see them too, and AppKit does not
+/// document the order of local monitors: relying on it could make a Screen Translate started
+/// with a popup open cancel itself on its first click.
+#[derive(Debug, Clone, Default)]
+pub struct OverlayActive(Arc<AtomicBool>);
+
+impl OverlayActive {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn set(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+    pub fn clear(&self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+    pub fn is_set(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
 /// What a native monitor saw, reduced to the fields the decision needs (no characters).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObservedEvent {
@@ -95,6 +119,7 @@ pub trait MonitorBackend: Send + Sync + 'static {
 /// The callback side: filters an observed event and emits at most one dismissal per start.
 pub struct DismissSink {
     active: AtomicBool,
+    overlay: OverlayActive,
     rect: Mutex<Rect>,
     sender: crossbeam_channel::Sender<DismissEvent>,
 }
@@ -105,7 +130,9 @@ impl DismissSink {
     }
     /// Called from monitor callbacks (main thread). Never blocks beyond the rect read.
     pub fn observe(&self, event: ObservedEvent) {
-        if !self.active.load(Ordering::SeqCst) {
+        // While a region overlay is up every dismiss event (mouse and Escape, local and global)
+        // belongs to the overlay; the watcher stays armed and resumes afterwards.
+        if !self.active.load(Ordering::SeqCst) || self.overlay.is_set() {
             return;
         }
         let dismissal = match event {
@@ -204,12 +231,19 @@ pub struct MacDismissWatcher<B: MonitorBackend> {
 
 impl<B: MonitorBackend> MacDismissWatcher<B> {
     pub fn new(backend: Arc<B>) -> Self {
+        Self::with_overlay_active(backend, OverlayActive::new())
+    }
+
+    /// `overlay` is the flag the region overlay engine sets while a pick is active
+    /// (`native()` shares one between both).
+    pub fn with_overlay_active(backend: Arc<B>, overlay: OverlayActive) -> Self {
         let (sender, receiver) = crossbeam_channel::bounded(8);
         Self {
             inner: Arc::new(Inner {
                 backend,
                 sink: Arc::new(DismissSink {
                     active: AtomicBool::new(false),
+                    overlay,
                     rect: Mutex::new(Rect::new(0, 0, 0, 0)),
                     sender,
                 }),

@@ -2,7 +2,7 @@
 //! (every OS). Real NSEvent monitors are only exercised by the owner-run `macos_popup.rs`.
 use lingopop_platform::fake::{FakeMainThread, FakeMonitorBackend};
 use lingopop_platform::macos_dismiss::{
-    MacDismissWatcher, MonitorSet, ObservedEvent, ESCAPE_KEY_CODE, OWN_EVENT_MARKER,
+    MacDismissWatcher, MonitorSet, ObservedEvent, OverlayActive, ESCAPE_KEY_CODE, OWN_EVENT_MARKER,
 };
 use lingopop_platform::{DismissEvent, DismissWatcher, PlatformError, Point, Rect};
 use std::sync::Arc;
@@ -302,4 +302,50 @@ fn failed_installation_leaks_nothing() {
     watcher.start(popup()).unwrap();
     main.run_pending();
     assert_eq!(backend.native_monitors(), 0);
+}
+
+#[test]
+fn every_dismiss_event_is_ignored_while_a_region_overlay_is_up_and_resumes_after() {
+    let backend = Arc::new(FakeMonitorBackend::new(true));
+    let main = FakeMainThread::new();
+    let overlay = OverlayActive::new();
+    let watcher = MacDismissWatcher::with_overlay_active(backend.clone(), overlay.clone());
+    watcher.bind_main_thread(main.clone());
+    watcher.start(popup()).unwrap();
+    main.run_pending();
+    let events = watcher.events();
+
+    overlay.set();
+    // The overlay's own drag-start click (local monitor), a global click and Escape.
+    backend.fire(click(900, 900));
+    backend.fire(click(5, 5));
+    backend.fire(escape(false, 0));
+    assert!(events.try_recv().is_err(), "the overlay owns every event");
+
+    overlay.clear();
+    backend.fire(click(900, 900));
+    assert_eq!(
+        events.try_recv().unwrap(),
+        DismissEvent::ClickOutside,
+        "the armed watcher resumes once the overlay is gone"
+    );
+    // One event per start, as before.
+    backend.fire(escape(false, 0));
+    assert!(events.try_recv().is_err());
+}
+
+#[test]
+fn an_ignored_overlay_event_does_not_consume_the_single_dismissal() {
+    let backend = Arc::new(FakeMonitorBackend::new(true));
+    let main = FakeMainThread::new();
+    let overlay = OverlayActive::new();
+    let watcher = MacDismissWatcher::with_overlay_active(backend.clone(), overlay.clone());
+    watcher.bind_main_thread(main.clone());
+    watcher.start(popup()).unwrap();
+    main.run_pending();
+    overlay.set();
+    backend.fire(escape(false, 0));
+    overlay.clear();
+    backend.fire(escape(false, 0));
+    assert_eq!(watcher.events().try_recv().unwrap(), DismissEvent::Escape);
 }

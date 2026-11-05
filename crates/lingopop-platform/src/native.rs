@@ -91,22 +91,29 @@ pub fn native() -> Platform {
     let capture =
         MacCapture::with_services(MacMonitors::clone(&monitors), Arc::clone(&permissions));
     let sleeper: Arc<dyn Sleeper> = Arc::new(SystemSleeper::new());
+    // One flag shared by the region overlay (set while a pick is active) and the dismiss
+    // watcher (ignores every event meanwhile): the overlay's own clicks never close a popup.
+    let overlay_active = crate::macos_dismiss::OverlayActive::new();
     Platform {
         // Needs `RegionOverlay::bind_main_thread` from shell setup before the first pick; the
         // overlay shares the one topology cache with the popup and capture.
-        overlay: Arc::new(crate::MacOverlay::new(
-            Arc::new(crate::macos::AppKitOverlay::new()),
-            Arc::new(MacMonitors::clone(&monitors)),
-            sleeper.clone(),
-        )),
+        overlay: Arc::new(
+            crate::MacOverlay::new(
+                Arc::new(crate::macos::AppKitOverlay::new()),
+                Arc::new(MacMonitors::clone(&monitors)),
+                sleeper.clone(),
+            )
+            .with_overlay_active(overlay_active.clone()),
+        ),
         system: native_system(),
         login_item: Arc::new(crate::macos::MacLoginItem::new(crate::macos::SmMainApp)),
         // Main thread only: the shell's presenter dispatches every call (macos/presentation.rs).
         popup_window: Arc::new(crate::MacPopupWindow::new(MacMonitors::clone(&monitors))),
         // Needs `DismissWatcher::bind_main_thread` from shell setup before the first start.
-        dismiss: Arc::new(crate::MacDismissWatcher::new(Arc::new(
-            crate::AppKitMonitors,
-        ))),
+        dismiss: Arc::new(crate::MacDismissWatcher::with_overlay_active(
+            Arc::new(crate::AppKitMonitors),
+            overlay_active,
+        )),
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),
         foreground: Arc::new(foreground),

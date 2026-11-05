@@ -5,7 +5,7 @@ use std::path::Path;
 
 use lingopop_platform::fake::{FakeMainAppService, ServiceCall};
 use lingopop_platform::macos_login::{is_installed_bundle_path, ServiceLoginItem, ServiceStatus};
-use lingopop_platform::{LoginItem, PlatformError};
+use lingopop_platform::{LoginItem, LoginItemStatus, PlatformError};
 
 fn item(service: &FakeMainAppService) -> ServiceLoginItem<FakeMainAppService> {
     ServiceLoginItem::new(service.clone())
@@ -114,13 +114,17 @@ fn unbundled_executable_returns_unsupported_and_touches_nothing() {
 }
 
 #[test]
-fn not_found_returns_unsupported() {
+fn not_found_in_an_installed_bundle_is_its_own_unsupported_outcome() {
     let service = FakeMainAppService::new(true, ServiceStatus::NotFound);
     assert_eq!(
         item(&service).set_enabled(true, Path::new("x")),
         Err(PlatformError::Unsupported(
-            lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM
+            lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM_NOT_FOUND
         ))
+    );
+    assert_ne!(
+        lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM_NOT_FOUND,
+        lingopop_platform::login_item::UNSUPPORTED_LOGIN_ITEM
     );
     assert_eq!(service.calls(), vec![]);
 }
@@ -181,10 +185,45 @@ fn only_an_installed_app_bundle_path_counts() {
         "/Users/me/Applications/LingoPop.app"
     ));
     assert!(!is_installed_bundle_path("/Users/me/target/debug"));
+    // Run straight from the mounted disk image: the copy disappears with the volume.
+    assert!(!is_installed_bundle_path("/Volumes/LingoPop/LingoPop.app"));
+    assert!(!is_installed_bundle_path(
+        "/Volumes/Data/Applications/LingoPop.app"
+    ));
+    // The Data volume's firmlink path is not a mounted image.
+    assert!(is_installed_bundle_path(
+        "/System/Volumes/Data/Applications/LingoPop.app"
+    ));
     assert!(!is_installed_bundle_path(""));
     // Gatekeeper's randomized read-only copy: the registration would point at a path that
     // disappears.
     assert!(!is_installed_bundle_path(
         "/private/var/folders/ab/cd/T/AppTranslocation/1A2B/d/LingoPop.app"
     ));
+}
+
+#[test]
+fn status_is_read_only_and_maps_every_service_status() {
+    for (raw, expected) in [
+        (ServiceStatus::Enabled, LoginItemStatus::Enabled),
+        (
+            ServiceStatus::RequiresApproval,
+            LoginItemStatus::RequiresApproval,
+        ),
+        (ServiceStatus::NotRegistered, LoginItemStatus::NotRegistered),
+        (ServiceStatus::NotFound, LoginItemStatus::Unknown),
+    ] {
+        let service = FakeMainAppService::new(true, raw);
+        assert_eq!(item(&service).status(), expected, "{raw:?}");
+        // Reading registers and unregisters nothing, and opens nothing.
+        assert_eq!(service.calls(), vec![], "{raw:?}");
+    }
+}
+
+#[test]
+fn status_outside_an_installed_bundle_is_unknown_and_reads_nothing() {
+    let service = FakeMainAppService::new(false, ServiceStatus::Enabled);
+    assert_eq!(item(&service).status(), LoginItemStatus::Unknown);
+    assert_eq!(service.calls(), vec![]);
+    assert_eq!(service.status_reads(), 0);
 }

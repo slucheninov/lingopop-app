@@ -184,6 +184,11 @@
     "pl": "Uruchamianie przy logowaniu będzie dostępne dopiero, gdy LingoPop działa z folderu Programy. Przenieś go tam i otwórz ponownie.",
     "uk": "Запуск під час входу буде доступний, лише коли LingoPop працює з теки «Програми». Перемістіть його туди й відкрийте знову."
   },
+  "Launch at login isn't available for this copy of LingoPop. Reinstall it in the Applications folder and open it again.": {
+    "de": "Beim Anmelden starten ist für diese Kopie von LingoPop nicht verfügbar. Installiere die App erneut im Ordner „Programme“ und öffne sie erneut.",
+    "pl": "Uruchamianie przy logowaniu nie jest dostępne dla tej kopii LingoPop. Zainstaluj aplikację ponownie w folderze Programy i otwórz ją ponownie.",
+    "uk": "Запуск під час входу недоступний для цієї копії LingoPop. Встановіть застосунок знову в теку «Програми» й відкрийте його знову."
+  },
   "Couldn't change Launch at login. Try again.": {
     "de": "„Beim Anmelden starten“ konnte nicht geändert werden. Versuche es erneut.",
     "pl": "Nie udało się zmienić ustawienia uruchamiania przy logowaniu. Spróbuj ponownie.",

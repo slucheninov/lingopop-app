@@ -252,6 +252,13 @@ fn frontmost_other_app() -> Option<PreviousApp> {
     })
 }
 
+/// Whether the previous app gets focus back: only while LingoPop is still the active app (not
+/// after the user switched away), never to ourselves, an exited app or a process that reused
+/// the pid (a different launch date).
+fn should_restore(own_active: bool, terminated: bool, is_self: bool, same_launch: bool) -> bool {
+    own_active && !terminated && !is_self && same_launch
+}
+
 /// The production overlay backend.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AppKitOverlay;
@@ -427,17 +434,23 @@ impl OverlayBackend for AppKitOverlay {
         let Some(previous) = PREVIOUS.with(|p| p.take()) else {
             return;
         };
+        // The pick ended because LingoPop resigned active (the user switched to another app on
+        // purpose): pulling focus back to the app they left would undo that switch. Selection,
+        // Escape and cancel end with LingoPop still active (create activated it).
+        let own_active = MainThreadMarker::new()
+            .is_some_and(|mtm| objc2_app_kit::NSApplication::sharedApplication(mtm).isActive());
         autoreleasepool(|_| {
             let Some(app) =
                 NSRunningApplication::runningApplicationWithProcessIdentifier(previous.pid)
             else {
                 return;
             };
-            // Never ourselves, never an exited app, never a process that reused the pid.
-            if app.isTerminated()
-                || previous.pid as u32 == std::process::id()
-                || launch_seconds(&app) != previous.launch
-            {
+            if !should_restore(
+                own_active,
+                app.isTerminated(),
+                previous.pid as u32 == std::process::id(),
+                launch_seconds(&app) == previous.launch,
+            ) {
                 return;
             }
             // Swift `ScreenTranslateFlow` uses `.activateIgnoringOtherApps` here as well.
@@ -445,5 +458,20 @@ impl OverlayBackend for AppKitOverlay {
             let options = NSApplicationActivationOptions::ActivateIgnoringOtherApps;
             let _ = app.activateWithOptions(options);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_restore;
+
+    #[test]
+    fn restores_only_while_lingopop_is_still_active_and_the_app_is_the_same_live_process() {
+        assert!(should_restore(true, false, false, true));
+        // The user switched away (LingoPop resigned active): leave their choice alone.
+        assert!(!should_restore(false, false, false, true));
+        assert!(!should_restore(true, true, false, true), "exited");
+        assert!(!should_restore(true, false, true, true), "ourselves");
+        assert!(!should_restore(true, false, false, false), "pid reused");
     }
 }

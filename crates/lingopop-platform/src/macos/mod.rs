@@ -1,4 +1,4 @@
-//! macOS adapters, including Keychain secrets and the remaining dev stubs.
+//! macOS adapters, production adapters for every `Platform` entry, including Keychain secrets.
 //! Every `unsafe` block of the crate's macOS code lives under this module and
 //! carries a `// SAFETY:` comment.
 

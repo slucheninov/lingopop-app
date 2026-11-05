@@ -13,6 +13,7 @@ pub struct FakeCapture {
     colour: [u8; 4],
     regions: Mutex<Vec<Rect>>,
     permissions: Option<Arc<FakePermissions>>,
+    failure: Mutex<Option<PlatformError>>,
 }
 
 impl FakeCapture {
@@ -21,6 +22,7 @@ impl FakeCapture {
             colour,
             regions: Mutex::new(Vec::new()),
             permissions: None,
+            failure: Mutex::new(None),
         }
     }
 
@@ -29,6 +31,12 @@ impl FakeCapture {
     pub fn with_permissions(mut self, permissions: Arc<FakePermissions>) -> Self {
         self.permissions = Some(permissions);
         self
+    }
+
+    /// The next `capture_region` (after recording its region and the permission check) fails
+    /// with `error`, for example `Os { api, code }` like a failed native capture.
+    pub fn fail_next(&self, error: PlatformError) {
+        *self.failure.lock().unwrap_or_else(|p| p.into_inner()) = Some(error);
     }
 
     /// Every region passed to `capture_region`, in order (invalid ones included).
@@ -52,6 +60,14 @@ impl ScreenCapture for FakeCapture {
                     PermissionKind::ScreenRecording,
                 ));
             }
+        }
+        if let Some(error) = self
+            .failure
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take()
+        {
+            return Err(error);
         }
         if region.is_empty() {
             return Err(PlatformError::InvalidRegion);
