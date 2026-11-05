@@ -8,6 +8,7 @@ pub mod hotkeys;
 pub mod logging;
 #[cfg(target_os = "macos")]
 pub mod macos_main_thread;
+pub mod ocr_warmup;
 pub mod paths;
 pub mod permissions_cmds;
 pub mod picker;
@@ -243,6 +244,12 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     #[cfg(target_os = "macos")]
     if platform.monitors.initialize_on_main_thread().is_err() {
         log::warn!("display topology initialization failed");
+    }
+    // macOS: Vision's first recognition loads its models (tens of seconds); pay it now, off
+    // the gate, so the first Screen Translate does not hit the gate's run deadline.
+    #[cfg(target_os = "macos")]
+    if ocr_warmup::spawn(platform.ocr.clone()).is_err() {
+        log::warn!("ocr warm-up thread could not start");
     }
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let (config, stores, ui) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
