@@ -1,31 +1,115 @@
 //! `ShellPopup`: the orchestrator's `PopupView` over the hidden `popup` Tauri window.
 //!
-//! Commands are consumed on one dedicated worker, never the main thread. HWND is cached
-//! during setup. Windows uses only NoActivateWindow; Mac keeps the Tauri dev fallback.
+//! Commands are consumed on one dedicated worker ("lingopop-presentation"), never the main
+//! thread. The native handle is cached during setup. The worker's [`PresentationConsumer`]
+//! emits the model to the webview and runs the window effect through a [`PopupSurface`]:
+//! Windows calls `NoActivateWindow` directly from the worker (cross-thread `SetWindowPos`);
+//! macOS ([`MacPanelSurface`]) translates the effect into a platform `MacWindowCommand` and
+//! runs it on the main thread through `MacPresenter`, waiting for native completion on the
+//! worker, which holds no lock while it waits. The staleness check is repeated on the main
+//! thread right before AppKit is touched, so a Show superseded by a dismissal never appears.
+//! There is no Tauri `show()` / `hide()` fallback on either OS (they may activate the app).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use lingopop_orchestrator::{presentation::*, PopupView, PopupViewModel};
-use lingopop_platform::{monitor_at, physical_size, Platform, Point, Rect, WindowHandle};
+use lingopop_platform::macos_presentation::{
+    CurrentCheck, MacPresenter, MacWindowCommand, MacWindowOutcome,
+};
+use lingopop_platform::{
+    monitor_at, physical_size, MainThread, Monitors, NoActivateWindow, Platform, PlatformError,
+    Point, Rect, WindowHandle,
+};
 use std::sync::{Arc, OnceLock};
-#[cfg(not(windows))]
-use tauri::Manager;
 use tauri::{AppHandle, Emitter, WebviewWindow};
 
 pub const POPUP_LABEL: &str = "popup";
 pub const MODEL_EVENT: &str = "popup://model";
+
+/// Delivers one model JSON to the popup webview.
+pub type EmitFn = dyn Fn(&serde_json::Value) + Send + Sync;
 
 /// The newest model, kept so `ready` can re-emit one that arrived before the webview listened.
 struct Pending {
     last_model: Option<serde_json::Value>,
 }
 
-struct NativePopup {
-    app: AppHandle,
-    platform: Platform,
-    /// Native handle cached at construction (see the module docs); `None` = unavailable.
+/// Where the native window effect runs. `Ok(true)` = applied, `Ok(false)` = the command was
+/// no longer current when the effect was about to run, so nothing native happened.
+pub trait PopupSurface: Send + Sync {
+    fn place(&self, rect: Rect, current: &CurrentCheck) -> Result<bool, PlatformError>;
+    fn hide(&self, current: &CurrentCheck) -> Result<bool, PlatformError>;
+}
+
+fn missing_handle() -> PlatformError {
+    log::warn!("popup window handle is unavailable");
+    PlatformError::Unsupported("popup window")
+}
+
+/// Windows: `NoActivateWindow` straight from the worker (the fence was checked just before).
+pub struct PlatformSurface {
+    window: Arc<dyn NoActivateWindow>,
     handle: Option<WindowHandle>,
+}
+impl PlatformSurface {
+    pub fn new(window: Arc<dyn NoActivateWindow>, handle: Option<WindowHandle>) -> Self {
+        Self { window, handle }
+    }
+}
+impl PopupSurface for PlatformSurface {
+    fn place(&self, rect: Rect, _: &CurrentCheck) -> Result<bool, PlatformError> {
+        let handle = self.handle.ok_or_else(missing_handle)?;
+        self.window.show_at(handle, rect).map(|()| true)
+    }
+    fn hide(&self, _: &CurrentCheck) -> Result<bool, PlatformError> {
+        let handle = self.handle.ok_or_else(missing_handle)?;
+        self.window.hide(handle).map(|()| true)
+    }
+}
+
+/// macOS: the effect runs on the main thread (AppKit) and the worker waits for it.
+pub struct MacPanelSurface {
+    presenter: MacPresenter,
+    handle: Option<WindowHandle>,
+}
+impl MacPanelSurface {
+    pub fn new(
+        main: Arc<dyn MainThread>,
+        window: Arc<dyn NoActivateWindow>,
+        handle: Option<WindowHandle>,
+    ) -> Self {
+        Self {
+            presenter: MacPresenter::new(main, window),
+            handle,
+        }
+    }
+    fn run(
+        &self,
+        command: MacWindowCommand,
+        current: &CurrentCheck,
+    ) -> Result<bool, PlatformError> {
+        self.presenter
+            .execute(command, current.clone())
+            .map(|outcome| outcome == MacWindowOutcome::Applied)
+    }
+}
+impl PopupSurface for MacPanelSurface {
+    fn place(&self, rect: Rect, current: &CurrentCheck) -> Result<bool, PlatformError> {
+        let window = self.handle.ok_or_else(missing_handle)?;
+        self.run(MacWindowCommand::Show { window, rect }, current)
+    }
+    fn hide(&self, current: &CurrentCheck) -> Result<bool, PlatformError> {
+        let window = self.handle.ok_or_else(missing_handle)?;
+        self.run(MacWindowCommand::Hide { window }, current)
+    }
+}
+
+/// The worker-side consumer: model emission, geometry conversion and the native effect.
+pub struct PresentationConsumer {
+    emit: Arc<EmitFn>,
+    monitors: Arc<dyn Monitors>,
+    surface: Box<dyn PopupSurface>,
     visible: AtomicBool,
     pending: Mutex<Pending>,
 }
@@ -40,20 +124,59 @@ pub fn native_handle(window: &WebviewWindow) -> Option<WindowHandle> {
         .map(|hwnd| WindowHandle(hwnd.0 as usize as u64))
 }
 
-#[cfg(not(windows))]
-pub fn native_handle(_window: &WebviewWindow) -> Option<WindowHandle> {
-    Some(WindowHandle(0))
+/// macOS: converts the tao window into the non-activating panel (main thread, setup only).
+#[cfg(target_os = "macos")]
+pub fn native_handle(window: &WebviewWindow) -> Option<WindowHandle> {
+    let ns_window = window.ns_window().ok()?;
+    match lingopop_platform::configure_popup_panel(ns_window) {
+        Ok(handle) => Some(handle),
+        Err(e) => {
+            log::warn!("popup panel configuration failed: {e}");
+            None
+        }
+    }
 }
 
-impl NativePopup {
-    pub fn new(app: AppHandle, platform: Platform, handle: Option<WindowHandle>) -> Self {
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn native_handle(_window: &WebviewWindow) -> Option<WindowHandle> {
+    None
+}
+
+impl PresentationConsumer {
+    pub fn new(
+        emit: Arc<EmitFn>,
+        monitors: Arc<dyn Monitors>,
+        surface: Box<dyn PopupSurface>,
+    ) -> Self {
         Self {
-            app,
-            platform,
-            handle,
+            emit,
+            monitors,
+            surface,
             visible: AtomicBool::new(false),
             pending: Mutex::new(Pending { last_model: None }),
         }
+    }
+
+    /// The production consumer over the shell's Tauri app and platform bundle.
+    pub fn for_app(app: AppHandle, platform: &Platform, handle: Option<WindowHandle>) -> Self {
+        let emitter = app.clone();
+        let emit: Arc<EmitFn> = Arc::new(move |value: &serde_json::Value| {
+            if emitter.emit_to(POPUP_LABEL, MODEL_EVENT, value).is_err() {
+                log::warn!("popup model event failed");
+            }
+        });
+        #[cfg(target_os = "macos")]
+        let surface: Box<dyn PopupSurface> = Box::new(MacPanelSurface::new(
+            Arc::new(crate::macos_main_thread::TauriMacMainThread(app)),
+            platform.popup_window.clone(),
+            handle,
+        ));
+        #[cfg(not(target_os = "macos"))]
+        let surface: Box<dyn PopupSurface> = {
+            drop(app);
+            Box::new(PlatformSurface::new(platform.popup_window.clone(), handle))
+        };
+        Self::new(emit, platform.monitors.clone(), surface)
     }
 
     fn pending(&self) -> MutexGuard<'_, Pending> {
@@ -62,76 +185,29 @@ impl NativePopup {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    #[cfg(not(windows))]
-    fn window(&self) -> Option<WebviewWindow> {
-        let window = self.app.get_webview_window(POPUP_LABEL);
-        if window.is_none() {
-            log::warn!("popup window is missing");
-        }
-        window
-    }
-
     fn rect_for(&self, origin: Point, logical: (f64, f64)) -> Rect {
-        let monitors = self.platform.monitors.monitors().unwrap_or_default();
+        let monitors = self.monitors.monitors().unwrap_or_default();
         let scale = monitor_at(origin, &monitors).map_or(1.0, |m| m.scale_factor);
         let size = physical_size(logical.0, logical.1, scale);
         Rect::new(origin.x, origin.y, size.width, size.height)
     }
 
     fn emit_model(&self, value: &serde_json::Value) {
-        if self.app.emit_to(POPUP_LABEL, MODEL_EVENT, value).is_err() {
-            log::warn!("popup model event failed");
-        }
+        (self.emit)(value);
     }
 
     /// Shows or moves the window to `rect` without activating it.
-    fn place(&self, rect: Rect) -> Result<(), lingopop_platform::PlatformError> {
-        let Some(handle) = self.handle else {
-            log::warn!("popup window handle is unavailable");
-            return Err(lingopop_platform::PlatformError::Unsupported(
-                "popup window",
-            ));
-        };
-        match self.platform.popup_window.show_at(handle, rect) {
-            Ok(()) => Ok(()),
-            // macOS dev only: the platform has no no-activate show; Tauri `show()` may activate.
-            #[cfg(not(windows))]
-            Err(lingopop_platform::PlatformError::Unsupported(_)) => {
-                let Some(window) = self.window() else {
-                    return Err(lingopop_platform::PlatformError::Unsupported(
-                        "popup window",
-                    ));
-                };
-                // tao converts LogicalPosition directly from top-left Y-down points to
-                // AppKit. PhysicalPosition would divide Quartz points by the backing scale.
-                #[cfg(target_os = "macos")]
-                let placed = window
-                    .set_position(tauri::LogicalPosition::new(
-                        f64::from(rect.x),
-                        f64::from(rect.y),
-                    ))
-                    .and_then(|()| {
-                        window.set_size(tauri::LogicalSize::new(
-                            f64::from(rect.width.max(1)),
-                            f64::from(rect.height.max(1)),
-                        ))
-                    });
-                // The enclosing arm excludes Windows, so this is Linux-only (a non-target).
-                #[cfg(not(target_os = "macos"))]
-                let placed = window
-                    .set_position(tauri::PhysicalPosition::new(rect.x, rect.y))
-                    .and_then(|()| {
-                        window.set_size(tauri::PhysicalSize::new(
-                            rect.width.max(1) as u32,
-                            rect.height.max(1) as u32,
-                        ))
-                    });
-                placed
-                    .and_then(|()| window.show())
-                    .map_err(|_| lingopop_platform::PlatformError::Unsupported("popup placement"))
+    fn place(&self, rect: Rect, current: &CurrentCheck) -> Result<(), PlatformError> {
+        match self.surface.place(rect, current) {
+            Ok(true) => {
+                self.visible.store(true, Ordering::Release);
+                Ok(())
             }
+            // Stale on the main thread: nothing native ran, visibility is unchanged.
+            Ok(false) => Ok(()),
             Err(e) => {
                 log::warn!("popup show failed: {e}");
+                self.visible.store(false, Ordering::Release);
                 Err(e)
             }
         }
@@ -146,22 +222,19 @@ impl NativePopup {
             self.emit_model(&model);
         }
     }
-}
 
-impl NativePopup {
     fn show_at(
         &self,
         origin: Point,
         size_logical: (f64, f64),
         model: &PopupViewModel,
-    ) -> Result<(), lingopop_platform::PlatformError> {
+        current: &CurrentCheck,
+    ) -> Result<(), PlatformError> {
         if let Ok(value) = serde_json::to_value(model) {
             self.pending().last_model = Some(value.clone());
             self.emit_model(&value);
         }
-        let shown = self.place(self.rect_for(origin, size_logical));
-        self.visible.store(shown.is_ok(), Ordering::Release);
-        shown
+        self.place(self.rect_for(origin, size_logical), current)
     }
 
     fn update(&self, model: &PopupViewModel) {
@@ -172,34 +245,14 @@ impl NativePopup {
         self.emit_model(&value);
     }
 
-    fn hide(&self) {
-        let _ = self.hide_checked();
+    fn hide(&self, current: &CurrentCheck) {
+        let _ = self.hide_checked(current);
     }
-    fn hide_checked(&self) -> Result<(), lingopop_platform::PlatformError> {
-        let handle = self
-            .handle
-            .ok_or(lingopop_platform::PlatformError::Unsupported(
-                "popup handle",
-            ))?;
-        let result = match self.platform.popup_window.hide(handle) {
-            Ok(()) => Ok(()),
-            #[cfg(not(windows))]
-            Err(lingopop_platform::PlatformError::Unsupported(_)) => {
-                let window = self
-                    .window()
-                    .ok_or(lingopop_platform::PlatformError::Unsupported(
-                        "popup window",
-                    ))?;
-                window
-                    .hide()
-                    .map_err(|_| lingopop_platform::PlatformError::Unsupported("popup hide"))
-            }
-            Err(e) => Err(e),
-        };
-        if result.is_ok() {
+    fn hide_checked(&self, current: &CurrentCheck) -> Result<(), PlatformError> {
+        if self.surface.hide(current)? {
             self.visible.store(false, Ordering::Release);
         }
-        result
+        Ok(())
     }
 
     fn is_visible(&self) -> bool {
@@ -214,7 +267,7 @@ enum WorkerMessage {
 }
 /// Queue owner. Dropping it requests worker shutdown without waiting on the UI thread.
 pub struct ShellPopup {
-    native: Arc<NativePopup>,
+    native: Arc<PresentationConsumer>,
     queue: Arc<PresentationQueue>,
     sender: std::sync::mpsc::Sender<WorkerMessage>,
     receiver: Mutex<Option<std::sync::mpsc::Receiver<WorkerMessage>>>,
@@ -222,9 +275,12 @@ pub struct ShellPopup {
 }
 impl ShellPopup {
     pub fn new(app: AppHandle, platform: Platform, handle: Option<WindowHandle>) -> Self {
+        Self::from_consumer(PresentationConsumer::for_app(app, &platform, handle))
+    }
+    pub fn from_consumer(consumer: PresentationConsumer) -> Self {
         let (sender, receiver) = std::sync::mpsc::channel();
         Self {
-            native: Arc::new(NativePopup::new(app, platform, handle)),
+            native: Arc::new(consumer),
             queue: Arc::default(),
             sender,
             receiver: Mutex::new(Some(receiver)),
@@ -236,7 +292,6 @@ impl ShellPopup {
     }
     /// Explicit close rejects further submissions immediately. Completion means the worker
     /// has finished its active command and resolved all pending acknowledgments.
-    #[allow(dead_code)]
     pub fn shutdown(&self) -> tokio::sync::oneshot::Receiver<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.queue.seal();
@@ -295,6 +350,11 @@ impl PopupView for ShellPopup {
                         // Retain desired geometry/content even when a pending Show was fenced
                         // before execution; its current Resize must still be able to show it.
                         desired.record(&job.command);
+                        let current: CurrentCheck = {
+                            let fence = fence.clone();
+                            let id = job.command.id;
+                            Arc::new(move || fence.is_current(id))
+                        };
                         consume_job(&fence, job, sink.as_ref(), |command| {
                             match &command.kind {
                                 PresentationKind::Show {
@@ -303,9 +363,9 @@ impl PopupView for ShellPopup {
                                     model,
                                 } => {
                                     if let Err(error) =
-                                        native.show_at(*origin, *size_logical, model)
+                                        native.show_at(*origin, *size_logical, model, &current)
                                     {
-                                        native.hide();
+                                        native.hide(&current);
                                         return Err(error);
                                     }
                                 }
@@ -316,18 +376,21 @@ impl PopupView for ShellPopup {
                                 } => {
                                     let placed = desired.resize_with(|_, _, model| {
                                         if native.is_visible() {
-                                            native.place(native.rect_for(*origin, *size_logical))
+                                            native.place(
+                                                native.rect_for(*origin, *size_logical),
+                                                &current,
+                                            )
                                         } else {
-                                            native.show_at(*origin, *size_logical, model)
+                                            native.show_at(*origin, *size_logical, model, &current)
                                         }
                                     });
                                     if let Err(error) = placed {
-                                        native.hide();
+                                        native.hide(&current);
                                         return Err(error);
                                     }
                                 }
                                 PresentationKind::Hide => {
-                                    native.hide_checked()?;
+                                    native.hide_checked(&current)?;
                                 }
                             }
                             Ok(if native.is_visible() {
@@ -539,3 +602,7 @@ mod fix_round_one_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "popup_shell_mac_tests.rs"]
+mod mac_consumer_tests;

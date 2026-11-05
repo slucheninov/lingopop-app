@@ -186,16 +186,9 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         .inner_size(width, height)
         .build()?;
 
-    // Cached once, here on the main thread: `hwnd()` blocks on the main thread on Windows.
-    #[cfg(not(target_os = "macos"))]
+    // Cached once, here on the main thread: `hwnd()` blocks on the main thread on Windows;
+    // on macOS this converts the window into the non-activating panel (main thread only).
     let handle = popup_shell::native_handle(&window);
-    // macOS: convert the window into the non-activating panel (main thread only).
-    #[cfg(target_os = "macos")]
-    let handle = window.ns_window().ok().and_then(|ns_window| {
-        lingopop_platform::configure_popup_panel(ns_window)
-            .map_err(|e| log::warn!("popup panel configuration failed: {e}"))
-            .ok()
-    });
     let popup = Arc::new(ShellPopup::new(
         app.handle().clone(),
         platform.clone(),
@@ -338,14 +331,18 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-    app.run(|_app, event| {
+    app.run(|app, event| match event {
         // A tray app keeps running when its last window closes.
-        if let RunEvent::ExitRequested {
+        RunEvent::ExitRequested {
             code: None, api, ..
-        } = event
-        {
-            api.prevent_exit();
+        } => api.prevent_exit(),
+        // Last main-thread turn: stop the presentation worker without waiting for it.
+        RunEvent::Exit => {
+            if let Some(state) = app.try_state::<ShellState>() {
+                drop(state.popup.shutdown());
+            }
         }
+        _ => {}
     });
 }
 

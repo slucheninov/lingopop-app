@@ -105,6 +105,11 @@ tempfile = "3"
 name = "foreground_helper"
 harness = false
 
+# Owner-run real-AppKit popup check: runs on the main thread, skips unless `--ignored`.
+[[test]]
+name = "macos_popup"
+harness = false
+
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.62.2", features = [
     "Media_Ocr",
