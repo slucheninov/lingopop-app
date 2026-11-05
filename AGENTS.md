@@ -201,6 +201,8 @@ Each task appends its own modules here in the same commit.
 
 - Task 11 topology: Mac `monitors.rs` caches immutable `MacGeometry` snapshots. Shell setup initializes the service from `native()` on main through the `Monitors` lifecycle hook; it installs a main-queue screen-parameters observer before reading AppKit; cache reads require no main-thread marker/dispatch. Each refresh increments the revision, failure clears the cache to invalidate capture plans and logs fixed text without failing setup. The portable cache initialization/refresh seam tests registration-before-read, invalid/missing native metadata, and recovery using the same shared cache. Observer tokens live on the registering thread and unregister on teardown. `popup_shell.rs` uses Tauri logical position/size on Mac (Quartz points), preserving Windows placement numbers.
 
+- Task 13a: `crates/lingopop-orchestrator/src/presentation.rs` defines command IDs, atomic fence, bounded/coalescing queue, per-command oneshots and visibility; `popup.rs` exposes enqueue/bind only. `fake.rs` consumes on a separate thread; read helpers wait for acknowledgments. `tests/presentation_ordering.rs` pins stale-effect and queue ordering behavior. `lib.rs` exports the portable protocol.
+
 ## Build / test
 
 ```bash
