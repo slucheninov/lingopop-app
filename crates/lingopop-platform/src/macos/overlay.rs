@@ -12,9 +12,10 @@
 //!    (bounded), then give the compositor [`COMPOSITOR_SETTLE`] (150 ms, Swift parity), so the capture that follows can never
 //!    contain the tint. A panic in between still posts the cleanup (`CleanupGuard`).
 //!
-//! While a pick is active the shared [`OverlayActive`] flag is set (before the native overlay
-//! is created, cleared only after its cleanup ran, on every exit path); the macOS dismiss
-//! watcher ignores all events meanwhile, so the overlay's own drag-start click cannot close the
+//! Every pick takes its own [`OverlayLease`] from the shared [`OverlayActive`] (before the native
+//! overlay is created) and releases it only after ITS cleanup ran, on every exit path; a
+//! timed-out cleanup that runs late therefore never clears the lease of a newer pick. The
+//! macOS dismiss watcher ignores all events while any lease is held, so the overlay's own drag-start click cannot close the
 //! popup that was open and abort the flow, whatever order AppKit runs local monitors in.
 //!
 //! Native input reaches [`OverlaySink::push`] in arrival order. The sink queues it and posts at
@@ -30,7 +31,7 @@
 //! drag is returned, cancels the pick
 //! (`Ok(None)`, fixed log line) instead of capturing a region of another layout.
 use crate::error::platform_log;
-use crate::macos_dismiss::OverlayActive;
+use crate::macos_dismiss::{OverlayActive, OverlayLease};
 use crate::macos_geometry::{MacGeometry, TopologyCache};
 use crate::main_thread::{dispatch_error, run_on_main, MainThread};
 use crate::overlay::{fold_input_batch_with, InputBatch, OverlayInput};
@@ -81,11 +82,12 @@ pub trait OverlayBackend: Send + Sync + 'static {
 
 /// Native teardown of one overlay: windows and monitors first, then focus back to the app
 /// the user came from (Swift `ScreenTranslateFlow` re-activates `previousApp`), and only then
-/// the dismiss watcher is let through again.
-fn teardown(backend: &dyn OverlayBackend, active: &OverlayActive) {
+/// this pick's lease is released (the dismiss watcher is let through again once no pick holds
+/// one; an older, late teardown only ever releases its own pick's lease).
+fn teardown(backend: &dyn OverlayBackend, lease: &OverlayLease) {
     backend.cleanup();
     backend.restore_previous_app();
-    active.clear();
+    lease.release();
 }
 
 /// The part of the selection that falls on a display, in display-local top-left coordinates
@@ -250,7 +252,7 @@ struct CleanupGuard {
     main: Arc<dyn MainThread>,
     backend: Arc<dyn OverlayBackend>,
     sink: Arc<OverlaySink>,
-    active: OverlayActive,
+    lease: OverlayLease,
     armed: bool,
 }
 impl Drop for CleanupGuard {
@@ -260,15 +262,15 @@ impl Drop for CleanupGuard {
         }
         self.sink.deactivate();
         let backend = self.backend.clone();
-        let active = self.active.clone();
+        let lease = self.lease.clone();
         if self
             .main
-            .post(Box::new(move || teardown(&*backend, &active)))
+            .post(Box::new(move || teardown(&*backend, &lease)))
             .is_err()
         {
             // The main loop is gone: no native overlay can outlive it, nothing to wait for.
             platform_log("region overlay cleanup could not be posted");
-            self.active.clear();
+            self.lease.release();
         }
     }
 }
@@ -279,7 +281,7 @@ pub struct MacOverlay<B: OverlayBackend> {
     topology: Arc<dyn TopologySource>,
     sleeper: Arc<dyn Sleeper>,
     main: OnceLock<Arc<dyn MainThread>>,
-    /// Set for the whole life of the native overlay; read by the dismiss watcher.
+    /// Per-pick leases for the life of each native overlay; read by the dismiss watcher.
     overlay_active: OverlayActive,
     /// Held for a whole pick, cleanup included: the serialization of native overlays.
     serial: Mutex<()>,
@@ -326,13 +328,13 @@ impl<B: OverlayBackend> MacOverlay<B> {
         guard.sink.deactivate();
         let (ack, acked) = bounded::<()>(1);
         let backend = self.backend.clone();
-        let active = self.overlay_active.clone();
+        let lease = guard.lease.clone();
         if let Err(error) = guard.main.post(Box::new(move || {
-            teardown(&*backend, &active);
+            teardown(&*backend, &lease);
             let _ = ack.send(());
         })) {
             // The job never ran and never will (the loop is gone): nothing is left to wait for.
-            self.overlay_active.clear();
+            guard.lease.release();
             return Err(error);
         }
         match acked.recv_timeout(CLEANUP_TIMEOUT) {
@@ -343,12 +345,13 @@ impl<B: OverlayBackend> MacOverlay<B> {
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 platform_log("region overlay cleanup dropped by the main loop");
                 // Dropped unrun: no native overlay exists any more.
-                self.overlay_active.clear();
+                guard.lease.release();
                 Err(dispatch_error())
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                // The flag stays set: the queued cleanup clears it when the main thread gets
-                // to it, and until then the overlay may still be on screen.
+                // The lease stays held: the queued cleanup releases it when the main thread gets
+                // to it, and until then the overlay may still be on screen. A later pick holds
+                // its own lease, so this late teardown cannot clear that one.
                 platform_log("region overlay cleanup timed out");
                 Err(PlatformError::Os {
                     api: "region overlay cleanup",
@@ -404,25 +407,25 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             handler: OnceLock::new(),
         });
         let _ = sink.handler.set(session);
+        let lease = self.overlay_active.begin();
         let mut guard = CleanupGuard {
             main: main.clone(),
             backend: self.backend.clone(),
             sink: sink.clone(),
-            active: self.overlay_active.clone(),
+            lease: lease.clone(),
             armed: true,
         };
-        // Before the native overlay exists; cleared by `teardown` (or below when no teardown
-        // job will ever run).
-        self.overlay_active.set();
+        // Before the native overlay exists; released by this pick's `teardown` (or below when
+        // no teardown job will ever run).
 
         let created = run_on_main(main.as_ref(), {
             let backend = self.backend.clone();
             let sink = sink.clone();
-            let active = self.overlay_active.clone();
+            let lease = lease.clone();
             move || {
                 let created = backend.create(&geometry, sink);
                 if created.is_err() {
-                    teardown(&*backend, &active);
+                    teardown(&*backend, &lease);
                 }
                 created
             }
@@ -438,7 +441,7 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             Err(error) => {
                 // The job never ran (the loop is gone): nothing exists to clean up.
                 guard.armed = false;
-                self.overlay_active.clear();
+                lease.release();
                 return Err(error);
             }
         }

@@ -315,14 +315,14 @@ fn every_dismiss_event_is_ignored_while_a_region_overlay_is_up_and_resumes_after
     main.run_pending();
     let events = watcher.events();
 
-    overlay.set();
+    let lease = overlay.begin();
     // The overlay's own drag-start click (local monitor), a global click and Escape.
     backend.fire(click(900, 900));
     backend.fire(click(5, 5));
     backend.fire(escape(false, 0));
     assert!(events.try_recv().is_err(), "the overlay owns every event");
 
-    overlay.clear();
+    lease.release();
     backend.fire(click(900, 900));
     assert_eq!(
         events.try_recv().unwrap(),
@@ -343,9 +343,9 @@ fn an_ignored_overlay_event_does_not_consume_the_single_dismissal() {
     watcher.bind_main_thread(main.clone());
     watcher.start(popup()).unwrap();
     main.run_pending();
-    overlay.set();
+    let lease = overlay.begin();
     backend.fire(escape(false, 0));
-    overlay.clear();
+    lease.release();
     backend.fire(escape(false, 0));
     assert_eq!(watcher.events().try_recv().unwrap(), DismissEvent::Escape);
 }

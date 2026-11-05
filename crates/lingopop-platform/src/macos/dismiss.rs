@@ -23,7 +23,7 @@
 use crate::error::platform_log;
 use crate::main_thread::{post_to_main, MainThread};
 use crate::{DismissEvent, DismissWatcher, PlatformError, Point, Rect};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
@@ -37,27 +37,51 @@ pub const OWN_EVENT_MARKER: i64 = 0x4C50_4F50;
 /// `kVK_Escape`.
 pub const ESCAPE_KEY_CODE: u16 = 53;
 
-/// "A region-selection overlay is up": shared between the overlay engine (sets it before the
-/// native overlay exists, clears it only after its cleanup ran) and the dismiss sink (drops
-/// every event while it is set). The overlay's own drag-start click and Escape are events to
-/// our own app, so the dismiss watcher's LOCAL monitors see them too, and AppKit does not
-/// document the order of local monitors: relying on it could make a Screen Translate started
-/// with a popup open cancel itself on its first click.
+/// "A region-selection overlay is up": shared between the overlay engine (takes one
+/// [`OverlayLease`] per pick before the native overlay exists, releases it only after that
+/// pick's cleanup ran) and the dismiss sink (drops every event while any lease is held). The
+/// overlay's own drag-start click and Escape are events to our own app, so the dismiss
+/// watcher's LOCAL monitors see them too, and AppKit does not document the order of local
+/// monitors: relying on it could make a Screen Translate started with a popup open cancel
+/// itself on its first click.
+///
+/// Ownership is per pick, not a single boolean: a cleanup that timed out stays queued on the
+/// main thread and may run after the next pick started, and it must only give back ITS lease.
 #[derive(Debug, Clone, Default)]
-pub struct OverlayActive(Arc<AtomicBool>);
+pub struct OverlayActive(Arc<AtomicUsize>);
 
 impl OverlayActive {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn set(&self) {
-        self.0.store(true, Ordering::SeqCst);
-    }
-    pub fn clear(&self) {
-        self.0.store(false, Ordering::SeqCst);
+    /// Takes a lease for one pick; the flag reads set until every lease was released.
+    pub fn begin(&self) -> OverlayLease {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        OverlayLease {
+            count: self.0.clone(),
+            released: Arc::new(AtomicBool::new(false)),
+        }
     }
     pub fn is_set(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.0.load(Ordering::SeqCst) > 0
+    }
+}
+
+/// One pick's claim on [`OverlayActive`]. Clones share the claim and [`release`](Self::release)
+/// is idempotent across all of them, so every exit path of a pick may release without
+/// counting; dropping a lease does NOT release it (a posted job that never ran is released
+/// explicitly by the code that knows it never will).
+#[derive(Debug, Clone)]
+pub struct OverlayLease {
+    count: Arc<AtomicUsize>,
+    released: Arc<AtomicBool>,
+}
+
+impl OverlayLease {
+    pub fn release(&self) {
+        if !self.released.swap(true, Ordering::SeqCst) {
+            self.count.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 

@@ -158,6 +158,24 @@ class MacosProductionGate(unittest.TestCase):
         script.write_text("#!/usr/bin/env bash\ncargo tauri build -- --all-features\n")
         self.assert_fails("package-macos.sh builds with --all-features")
 
+    def test_all_features_in_a_packaging_workflow_fails(self):
+        # `packaging.yml` is not matched by a `*package*` name glob.
+        path = self.root / ".github/workflows/packaging.yml"
+        path.write_text("name: packaging\njobs:\n  b:\n    steps:\n      - run: cargo build --release --all-features\n")
+        self.assert_fails("packaging.yml builds with --all-features")
+
+    def test_all_features_in_packaging_macos_script_fails(self):
+        script = self.root / "scripts" / "packaging-macos.sh"
+        script.parent.mkdir(exist_ok=True)
+        script.write_text("#!/usr/bin/env bash\ncargo build --release --all-features\n")
+        self.assert_fails("packaging-macos.sh builds with --all-features")
+
+    def test_all_features_in_any_workflow_or_script_that_builds_fails(self):
+        # Discovery follows what the file does, whatever it is called.
+        path = self.root / ".github/workflows/nightly.yml"
+        path.write_text("jobs:\n  b:\n    steps:\n      - run: npm run tauri build -- -- --all-features\n")
+        self.assert_fails("nightly.yml builds with --all-features")
+
     def test_all_features_in_a_comment_or_a_dependency_check_is_fine(self):
         script = self.root / "scripts" / "package-macos.sh"
         script.parent.mkdir(exist_ok=True)

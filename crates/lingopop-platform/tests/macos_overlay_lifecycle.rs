@@ -851,3 +851,53 @@ fn a_main_thread_pick_is_refused_before_it_waits_for_a_running_pick() {
     drop(tx);
     assert_eq!(join.join().unwrap(), Ok(None));
 }
+
+#[test]
+fn an_older_cleanup_that_runs_late_never_clears_the_flag_of_a_newer_pick() {
+    // Pick 1's cleanup times out (the main loop is busy) and its `serial` lock is released; pick 2
+    // starts and queues its create BEHIND the stale teardown. When main resumes, the old teardown
+    // must not drop the protection of the overlay pick 2 creates next.
+    let h = Harness::manual(one_display(1.0));
+    let (tx1, join1) = h.pick();
+    h.main.wait_for_pending(1);
+    h.main.run_pending(); // pick 1: create
+    assert!(h.active.is_set());
+    tx1.send(()).unwrap(); // pick 1 ends; its teardown is queued and main does not run it
+    h.main.wait_for_pending(1);
+    // Real-time wait of CLEANUP_TIMEOUT: the engine gives up on the queued cleanup.
+    assert_eq!(
+        join1.join().unwrap(),
+        Err(PlatformError::Os {
+            api: "region overlay cleanup",
+            code: 0
+        })
+    );
+    assert!(h.active.is_set(), "the stale cleanup has not run yet");
+
+    let (tx2, join2) = h.pick();
+    h.main.wait_for_pending(2); // old teardown, then pick 2's create
+    h.main.run_pending(); // old teardown, then create 2
+    assert_eq!(h.backend.creates(), 2);
+    assert!(
+        h.active.is_set(),
+        "the older pick's teardown must not clear the newer pick's flag"
+    );
+    let create_flags: Vec<bool> = h
+        .backend
+        .flag_log()
+        .into_iter()
+        .filter(|(call, _)| *call == "create")
+        .map(|(_, flag)| flag)
+        .collect();
+    assert_eq!(
+        create_flags,
+        vec![true, true],
+        "set while pick 2 is created"
+    );
+
+    tx2.send(()).unwrap();
+    h.main.wait_for_pending(1);
+    h.main.run_pending(); // pick 2's teardown
+    assert_eq!(join2.join().unwrap(), Ok(None));
+    assert!(!h.active.is_set(), "cleared after the newer pick's cleanup");
+}

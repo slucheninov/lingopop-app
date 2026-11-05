@@ -117,19 +117,25 @@ else
 fi
 
 # (6) A release or packaging build never turns on every cargo feature: that would also enable
-# `dev-plaintext` (and any future dev-only feature) in the shipped binary. Applies to release
-# workflows and to scripts that package, bundle, sign or notarize.
+# `dev-plaintext` (and any future dev-only feature) in the shipped binary. Discovery is by what
+# a file DOES, not only by its name (`packaging.yml` is not `*package*`): every workflow and
+# script is checked, and `--all-features` on a non-comment line fails when the file also runs a
+# build / bundle command, or when its name says it releases, packages, bundles, signs or
+# notarizes. `cargo tree --all-features` in a pure dependency check stays fine.
+build_pattern='(cargo[[:space:]]+(build|rustc|install|bundle|tauri)|tauri[[:space:]]+(build|bundle)|npm[[:space:]]+run[[:space:]]+tauri|npx[[:space:]]+tauri)'
 while IFS= read -r file; do
   hits=$(grep -n -F -e '--all-features' "$file" | grep -v -E '^[0-9]+:[[:space:]]*#' || true)
-  if [ -n "$hits" ]; then
+  [ -n "$hits" ] || continue
+  if grep -v -E '^[[:space:]]*#' "$file" | grep -q -E "$build_pattern" \
+    || printf '%s' "$(basename "$file")" | grep -q -i -E 'release|packag|bundle|dist|dmg|notar|sign'; then
     printf '%s: %s\n' "$file" "$hits" >&2
     fail "$file builds with --all-features"
   fi
 done < <(
   {
-    find .github/workflows -type f \( -iname '*release*' -o -iname '*package*' -o -iname '*bundle*' -o -iname '*dist*' \) 2>/dev/null
-    find scripts -type f \( -iname '*release*' -o -iname '*package*' -o -iname '*bundle*' -o -iname '*dmg*' -o -iname '*notar*' -o -iname '*sign*' \) \
-      -not -name 'check-macos-production.sh' 2>/dev/null
+    find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null
+    find scripts -type f \( -name '*.sh' -o -name '*.bash' -o -name '*.zsh' -o -name '*.py' -o -name '*.swift' \) \
+      -not -path 'scripts/tests/*' -not -name 'check-macos-production.sh' 2>/dev/null
   } | sort -u
 )
 
