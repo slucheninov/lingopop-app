@@ -9,15 +9,27 @@
 //! the event unchanged, global monitors cannot consume, and Escape still reaches the app the
 //! user is typing in (a documented macOS difference from Windows).
 //!
-//! Every `DismissWatcher` method is non-blocking (the orchestrator calls it under its session
-//! mutex): geometry and the active flag are published at once and installation / removal is
-//! posted to the main thread as one idempotent reconcile job. Monitor callbacks only filter and
-//! `try_send` into a bounded channel.
+//! Every `DismissWatcher` method except `shutdown` is non-blocking (the orchestrator calls
+//! them under its session mutex): geometry and the active flag are published at once and
+//! installation / removal is posted to the main thread as one idempotent reconcile job, which
+//! installs the set the CURRENT trust allows and reinstalls when it differs from the installed
+//! one (a trust change applies on the next start). Escape availability is read from the
+//! INSTALLED set. Monitor callbacks only filter and `try_send` into a bounded channel.
+//!
+//! `shutdown` is deterministic: on the main thread it removes every monitor inline, even with
+//! a reconcile already queued; off the main thread it posts the removal and waits for it (a
+//! completion barrier, bounded by [`SHUTDOWN_CLEANUP_TIMEOUT`]), so a caller that resolves its
+//! own completion afterwards (the presentation worker) does so only after native removal.
 use crate::error::platform_log;
 use crate::main_thread::{post_to_main, MainThread};
 use crate::{DismissEvent, DismissWatcher, PlatformError, Point, Rect};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
+
+/// Upper bound for an off-main `shutdown` waiting on the main thread's monitor removal. The
+/// wait ends earlier when the job runs, or at once when the main loop drops it unrun.
+pub const SHUTDOWN_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// `kCGEventSourceUserData` value stamped on every CGEvent `MacKeys` posts ("LPOP"), so our
 /// own synthesized Cmd+C / Cmd+V never dismiss the popup. Foreign injected input still counts.
@@ -125,8 +137,10 @@ struct Control {
     sealed: bool,
     /// A reconcile job is queued on the main thread.
     posted: bool,
-    /// Monitors are installed (only the main-thread reconcile job changes it).
-    installed: bool,
+    /// The monitor set installed right now (only main-thread work changes it).
+    installed: Option<MonitorSet>,
+    /// The sealed removal ran on the main thread: nothing is installed, ever again.
+    cleaned: bool,
 }
 
 struct Inner<B: MonitorBackend> {
@@ -144,35 +158,42 @@ impl<B: MonitorBackend> Inner<B> {
 
     /// Main thread only. The control lock is never held across `install` / `remove_all`.
     fn reconcile(&self) {
-        let (desired, installed) = {
+        let (wanted, installed) = {
             let mut c = self.control();
             c.posted = false;
             (c.wanted && !c.sealed, c.installed)
         };
+        // The set the current trust allows; a trust change since the last install differs.
+        let desired = wanted.then(|| MonitorSet::for_trust(self.backend.trusted()));
         if desired == installed {
             return;
         }
-        let now_installed = if desired {
-            let trusted = self.backend.trusted();
-            if !trusted {
-                platform_log("escape dismissal unavailable: accessibility not trusted");
-            }
-            match self
-                .backend
-                .install(MonitorSet::for_trust(trusted), self.sink.clone())
-            {
-                Ok(()) => true,
-                Err(error) => {
-                    self.backend.remove_all();
-                    platform_log(&format!("dismiss monitors install failed: {error}"));
-                    false
-                }
-            }
-        } else {
+        if installed.is_some() {
             self.backend.remove_all();
-            false
+            self.control().installed = None;
+        }
+        let Some(set) = desired else {
+            return;
         };
-        self.control().installed = now_installed;
+        if !set.global_key {
+            platform_log("escape dismissal unavailable: accessibility not trusted");
+        }
+        match self.backend.install(set, self.sink.clone()) {
+            Ok(()) => self.control().installed = Some(set),
+            Err(error) => {
+                self.backend.remove_all();
+                platform_log(&format!("dismiss monitors install failed: {error}"));
+            }
+        }
+    }
+
+    /// Main thread only: the sealed teardown. Removes every monitor whatever is queued; a
+    /// reconcile job that runs later finds the watcher sealed and installs nothing.
+    fn remove_sealed(&self) {
+        self.backend.remove_all();
+        let mut c = self.control();
+        c.installed = None;
+        c.cleaned = true;
     }
 }
 
@@ -258,17 +279,56 @@ impl<B: MonitorBackend> DismissWatcher for MacDismissWatcher<B> {
         let _ = self.inner.main.set(main);
     }
 
+    /// From the INSTALLED set while monitors are installed (a trust granted later only counts
+    /// after the next start reinstalls them); with nothing installed, what the next
+    /// installation would include.
     fn escape_available(&self) -> bool {
-        self.inner.backend.trusted()
+        let installed = self.inner.control().installed;
+        match installed {
+            Some(set) => set.global_key,
+            None => self.inner.backend.trusted(),
+        }
     }
 
+    /// Seals the watcher and removes the native monitors before returning: inline on the
+    /// main thread (even with a reconcile queued), otherwise through a posted job this thread
+    /// waits for, bounded by [`SHUTDOWN_CLEANUP_TIMEOUT`]. Call it holding no lock.
     fn shutdown(&self) {
         self.inner.sink.active.store(false, Ordering::SeqCst);
         {
             let mut c = self.inner.control();
             c.sealed = true;
             c.wanted = false;
+            if c.cleaned {
+                return;
+            }
         }
-        let _ = self.schedule();
+        // Unbound: `start` never succeeded, so nothing was ever installed.
+        let Some(main) = self.inner.main.get() else {
+            return;
+        };
+        if main.is_main_thread() {
+            self.inner.remove_sealed();
+            return;
+        }
+        let (done, finished) = crossbeam_channel::bounded::<()>(1);
+        let inner = self.inner.clone();
+        let job = Box::new(move || {
+            inner.remove_sealed();
+            let _ = done.send(());
+        });
+        if main.post(job).is_err() {
+            platform_log("dismiss monitors cleanup could not be posted");
+            return;
+        }
+        match finished.recv_timeout(SHUTDOWN_CLEANUP_TIMEOUT) {
+            Ok(()) => {}
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                platform_log("dismiss monitors cleanup dropped by the main loop");
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                platform_log("dismiss monitors cleanup timed out");
+            }
+        }
     }
 }

@@ -5,8 +5,8 @@ pub enum DismissEvent {
     Escape,
     ClickOutside,
 }
-/// All methods must be non-blocking: the orchestrator invokes them while holding its
-/// session mutex. Native implementations post commands / publish geometry without waiting
+/// All methods except `shutdown` must be non-blocking: the orchestrator invokes them while
+/// holding its session mutex. Native implementations post commands / publish geometry without waiting
 /// for hooks to install or uninstall. Receivers cloned by events() share one event stream.
 pub trait DismissWatcher: Send + Sync {
     fn start(&self, popup_rect: Rect) -> Result<(), PlatformError>;
@@ -22,8 +22,9 @@ pub trait DismissWatcher: Send + Sync {
     fn escape_available(&self) -> bool {
         true
     }
-    /// Process teardown: stops and removes every native monitor; later `start` calls fail.
-    /// Non-blocking like the rest of the trait (inline only when already on the main thread).
+    /// Process teardown: stops and removes every native monitor before returning; later
+    /// `start` calls fail. May wait (bounded) for main-thread cleanup, so call it holding no
+    /// lock and never from the orchestrator; inline when already on the main thread.
     fn shutdown(&self) {
         self.stop();
     }

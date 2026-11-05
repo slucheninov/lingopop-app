@@ -58,6 +58,13 @@ fn mac_popup(
     .with_dismiss(dismiss);
     (ShellPopup::from_consumer(consumer), emitted)
 }
+/// Worker shutdown waits for the posted native monitor removal: play main once, then wait.
+fn finish(popup: &ShellPopup, main: &FakeMainThread) {
+    let done = popup.shutdown();
+    main.wait_for_pending(1);
+    main.run_pending();
+    done.blocking_recv().unwrap();
+}
 fn native_shows(window: &FakePopupWindow) -> usize {
     window
         .calls()
@@ -131,9 +138,7 @@ fn stale_show_after_dismiss_has_no_effect() {
     );
     let stale_native_show_count = native_shows(&window) - shows_before;
 
-    let done = popup.shutdown();
-    done.blocking_recv().unwrap();
-    main.run_pending();
+    finish(&popup, &main);
     let native_monitors_after_shutdown = backend.native_monitors();
 
     assert_eq!(stale_native_show_count, 0);
@@ -183,7 +188,7 @@ fn show_acks_only_after_native_completion_and_no_lock_spans_dispatch() {
         update.blocking_recv().unwrap().result,
         Ok(PresentationVisibility::Superseded)
     );
-    drop(popup.shutdown().blocking_recv());
+    finish(&popup, &main);
 }
 
 #[test]
@@ -211,7 +216,7 @@ fn ready_replays_the_newest_model() {
         .blocking_recv()
         .unwrap();
     popup.ready();
-    drop(popup.shutdown().blocking_recv());
+    finish(&popup, &main);
     let emitted = emitted.lock().unwrap();
     let last = emitted.last().unwrap();
     assert_eq!(emitted.len(), 3, "show, update, replay");
@@ -228,9 +233,14 @@ fn worker_shutdown_removes_monitors() {
     watcher.start(Rect::new(0, 0, 10, 10)).unwrap();
     main.run_pending();
     assert!(backend.native_monitors() > 0);
-    popup.shutdown().blocking_recv().unwrap();
+    let mut done = popup.shutdown();
+    // The worker posted the native removal and waits for it before resolving completion.
+    main.wait_for_pending(1);
+    assert!(done.try_recv().is_err(), "completion before native removal");
+    assert!(backend.native_monitors() > 0);
     main.run_pending();
-    assert_eq!(backend.native_monitors(), 0);
+    done.blocking_recv().unwrap();
+    assert_eq!(backend.native_monitors(), 0, "removed before completion");
 }
 
 #[test]
@@ -246,7 +256,7 @@ fn missing_accessibility_adds_the_escape_notice() {
     main.wait_for_pending(1);
     main.run_pending();
     shown.blocking_recv().unwrap();
-    drop(popup.shutdown().blocking_recv());
+    finish(&popup, &main);
     let emitted = emitted.lock().unwrap();
     assert_eq!(
         emitted[0]["notice"]["key"],
@@ -267,7 +277,7 @@ fn trusted_popup_has_no_escape_notice() {
     main.wait_for_pending(1);
     main.run_pending();
     shown.blocking_recv().unwrap();
-    drop(popup.shutdown().blocking_recv());
+    finish(&popup, &main);
     assert!(emitted.lock().unwrap()[0].get("notice").is_none());
 }
 

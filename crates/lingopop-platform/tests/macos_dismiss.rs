@@ -173,12 +173,106 @@ fn shutdown_removes_monitors_and_refuses_new_starts() {
     let (watcher, backend, main) = rig(true);
     watcher.start(popup()).unwrap();
     main.run_pending();
-    watcher.shutdown();
+    let watcher = Arc::new(watcher);
+    let (done_tx, done) = std::sync::mpsc::channel();
+    let worker = {
+        let watcher = watcher.clone();
+        std::thread::spawn(move || {
+            watcher.shutdown();
+            done_tx.send(()).unwrap();
+        })
+    };
+    // Off main, shutdown posts the removal and waits for it: a completion barrier.
+    main.wait_for_pending(1);
+    assert!(
+        done.try_recv().is_err(),
+        "shutdown returned before main ran"
+    );
+    assert_eq!(backend.native_monitors(), 4);
     main.run_pending();
-    assert_eq!(backend.native_monitors(), 0);
+    done.recv().unwrap();
+    worker.join().unwrap();
+    assert_eq!(
+        backend.native_monitors(),
+        0,
+        "removed before shutdown returned"
+    );
     assert!(watcher.start(popup()).is_err());
     main.run_pending();
     assert_eq!(backend.native_monitors(), 0);
+}
+
+#[test]
+fn shutdown_on_main_with_a_pending_reconcile_removes_inline() {
+    let (watcher, backend, main) = rig(true);
+    watcher.start(popup()).unwrap();
+    main.run_pending();
+    // stop() off main queues a removal reconcile; the loop has not run it yet.
+    watcher.stop();
+    assert_eq!(main.pending(), 1);
+    main.enter_main(|| watcher.shutdown());
+    assert_eq!(
+        backend.native_monitors(),
+        0,
+        "removed inline although a reconcile was queued"
+    );
+    // The loop then goes away without running the queued job: nothing is left behind.
+    main.close();
+    assert_eq!(backend.native_monitors(), 0);
+    assert!(watcher.start(popup()).is_err());
+}
+
+#[test]
+fn off_main_shutdown_returns_when_the_loop_drops_the_cleanup() {
+    let (watcher, backend, main) = rig(true);
+    watcher.start(popup()).unwrap();
+    main.run_pending();
+    let watcher = Arc::new(watcher);
+    let worker = {
+        let watcher = watcher.clone();
+        std::thread::spawn(move || watcher.shutdown())
+    };
+    main.wait_for_pending(1);
+    main.close();
+    worker.join().unwrap();
+    assert!(watcher.start(popup()).is_err());
+    let _ = backend;
+}
+
+#[test]
+fn escape_availability_follows_the_installed_set_across_a_trust_change() {
+    let (watcher, backend, main) = rig(false);
+    watcher.start(popup()).unwrap();
+    main.run_pending();
+    assert!(!watcher.escape_available());
+    // Accessibility granted while the popup is open: the installed set has no global key
+    // monitor yet, so Escape is still unavailable until the next start reinstalls.
+    backend.set_trusted(true);
+    assert!(
+        !watcher.escape_available(),
+        "reported from what is installed"
+    );
+    assert!(!backend.installed().unwrap().global_key);
+    // A stop / start coalesced before main runs still reinstalls with the new trust.
+    watcher.stop();
+    watcher.start(popup()).unwrap();
+    main.run_pending();
+    assert_eq!(backend.installed(), Some(MonitorSet::for_trust(true)));
+    assert!(watcher.escape_available());
+    assert_eq!(
+        backend.native_monitors(),
+        4,
+        "old set removed before reinstall"
+    );
+    // Revoked: the installed global key monitor still reports available until reinstall.
+    backend.set_trusted(false);
+    assert!(watcher.escape_available());
+    watcher.stop();
+    main.run_pending();
+    assert!(
+        !watcher.escape_available(),
+        "nothing installed: the current trust"
+    );
 }
 
 #[test]
