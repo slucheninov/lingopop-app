@@ -98,4 +98,7 @@ pub use macos::keychain::LoginKeyStore;
 #[cfg(target_os = "macos")]
 pub use macos::activate_app;
 #[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use macos::OwnerRunWindow;
+#[cfg(target_os = "macos")]
 pub use macos::{configure_popup_panel, AppKitMonitors};

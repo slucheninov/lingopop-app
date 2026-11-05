@@ -27,17 +27,13 @@ fn main() {
 fn main() {}
 
 #[cfg(target_os = "macos")]
-#[allow(unsafe_code)]
 mod owner_run {
     use lingopop_platform::{
         configure_popup_panel, AppKitMonitors, DismissWatcher, MacDismissWatcher, MacMonitors,
-        MacPopupWindow, MainThread, NoActivateWindow, PlatformError, Rect,
+        MacPopupWindow, MainThread, NoActivateWindow, OwnerRunWindow, PlatformError, Rect,
     };
-    use objc2::rc::Retained;
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{
-        NSApplication, NSApplicationActivationPolicy, NSWindow, NSWindowStyleMask, NSWorkspace,
-    };
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSWorkspace};
     use std::sync::Arc;
 
     /// This test IS the main thread: run every job inline.
@@ -63,15 +59,12 @@ mod owner_run {
         let app = NSApplication::sharedApplication(mtm);
         app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
-        // SAFETY: `new` is NSObject's `+new` on a main-thread-only class, called on the main
-        // thread; the window is kept alive (leaked by `configure_popup_panel`).
-        let window: Retained<NSWindow> = unsafe { NSWindow::new(mtm) };
-        let pointer = Retained::as_ptr(&window) as *mut std::ffi::c_void;
-        let handle = configure_popup_panel(pointer).expect("panel configuration");
+        // A plain NSWindow from the main-thread-checked platform helper, converted through
+        // the same safe `HasWindowHandle` entry the shell uses for the Tauri window.
+        let window = OwnerRunWindow::new().expect("owner-run window");
+        let handle = configure_popup_panel(&window).expect("panel configuration");
         assert!(
-            window
-                .styleMask()
-                .contains(NSWindowStyleMask::NonactivatingPanel),
+            window.is_nonactivating_panel(),
             "the class swap made it a non-activating panel"
         );
 
@@ -80,14 +73,14 @@ mod owner_run {
         popup
             .show_at(handle, Rect::new(100, 100, 360, 100))
             .expect("show");
-        assert!(window.isVisible(), "the panel is on screen");
+        assert!(window.is_visible(), "the panel is on screen");
         let foreground_after_show = frontmost_pid();
         assert_eq!(
             foreground_after_show, foreground_before_show,
             "showing the popup must not change the frontmost app"
         );
         assert!(!app.isActive(), "LingoPop must not become active");
-        assert!(!window.isKeyWindow(), "the panel does not take key status");
+        assert!(!window.is_key(), "the panel does not take key status");
 
         let watcher = MacDismissWatcher::new(Arc::new(AppKitMonitors));
         watcher.bind_main_thread(Arc::new(Inline));
@@ -100,7 +93,7 @@ mod owner_run {
         assert!(watcher.start(Rect::new(0, 0, 1, 1)).is_err());
 
         popup.hide(handle).expect("hide");
-        assert!(!window.isVisible(), "the panel is ordered out");
+        assert!(!window.is_visible(), "the panel is ordered out");
         assert_eq!(frontmost_pid(), foreground_before_show);
     }
 }

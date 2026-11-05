@@ -127,14 +127,17 @@ pub fn native_handle(window: &WebviewWindow) -> Option<WindowHandle> {
         .map(|hwnd| WindowHandle(hwnd.0 as usize as u64))
 }
 
-/// macOS: converts the tao window into the non-activating panel (main thread, setup only).
+/// macOS: converts the tao window into the non-activating panel (main thread, setup only),
+/// through the window's AppKit `HasWindowHandle`. A refused conversion leaves no handle, so
+/// every later Show is acknowledged as an error and the popup never appears as an ordinary
+/// (activating) window. After the conversion no tao API that relies on `TaoWindow` (e.g.
+/// `set_focusable`) may be called on the popup window (see `macos/popup_window.rs`).
 #[cfg(target_os = "macos")]
 pub fn native_handle(window: &WebviewWindow) -> Option<WindowHandle> {
-    let ns_window = window.ns_window().ok()?;
-    match lingopop_platform::configure_popup_panel(ns_window) {
+    match lingopop_platform::configure_popup_panel(window) {
         Ok(handle) => Some(handle),
         Err(e) => {
-            log::warn!("popup panel configuration failed: {e}");
+            log::error!("popup panel configuration failed: {e}");
             None
         }
     }

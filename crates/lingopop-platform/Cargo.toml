@@ -62,6 +62,9 @@ block2 = "0.6.2"
 # needed; objc2-app-kit already pulls libc in.
 libc = { version = "0.2.191", default-features = false }
 objc2 = "0.6.5"
+# The popup panel is derived from the Tauri window's AppKit handle (`configure_popup_panel`);
+# the same version Tauri already locks.
+raw-window-handle = "=0.6.2"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
     "libc",

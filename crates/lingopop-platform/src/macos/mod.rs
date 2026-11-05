@@ -23,6 +23,8 @@ pub use ocr::MacOcr;
 mod event_monitors;
 pub use event_monitors::AppKitMonitors;
 mod popup_window;
+#[doc(hidden)]
+pub use popup_window::OwnerRunWindow;
 pub use popup_window::{configure_popup_panel, MacPopupWindow};
 /// The production macOS dismiss watcher: passive `NSEvent` monitors.
 pub type MacDismissWatcher = crate::macos_dismiss::MacDismissWatcher<AppKitMonitors>;

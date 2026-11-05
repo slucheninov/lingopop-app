@@ -191,6 +191,32 @@ fn show_acks_only_after_native_completion_and_no_lock_spans_dispatch() {
     finish(&popup, &main);
 }
 
+/// A refused panel conversion leaves no handle: Show is acknowledged as an error and nothing
+/// native runs (the popup never appears as an ordinary, activating window).
+#[test]
+fn refused_conversion_acks_show_as_error() {
+    let main = FakeMainThread::new();
+    let window = Arc::new(FakePopupWindow::default());
+    let native: Arc<dyn NoActivateWindow> = window.clone();
+    let popup = ShellPopup::from_consumer(PresentationConsumer::new(
+        Arc::new(|_: &serde_json::Value| {}),
+        monitors(),
+        Box::new(MacPanelSurface::new(main.clone(), native, None)),
+    ));
+    let fence = Arc::new(PresentationFence::default());
+    popup.bind(fence.clone(), Arc::new(|_| {}));
+    fence.advance(id(1, 1));
+    let ack = popup
+        .submit(show(id(1, 1), "text"))
+        .unwrap()
+        .blocking_recv()
+        .unwrap();
+    assert!(ack.result.is_err(), "no configured panel: {:?}", ack.result);
+    assert_eq!(main.posted(), 0, "nothing dispatched to main");
+    assert!(window.calls().is_empty());
+    drop(popup.shutdown().blocking_recv());
+}
+
 #[test]
 fn ready_replays_the_newest_model() {
     let main = FakeMainThread::new();
