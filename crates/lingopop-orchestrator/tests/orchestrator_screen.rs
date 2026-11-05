@@ -1,6 +1,9 @@
 //! The Screen Translate flow over platform fakes, a scripted region picker and a `FakeTransport`.
 
+#[path = "support/presentation_transport.rs"]
+mod presentation_transport;
 use lingopop_platform::fake::{DismissCall, FakeDismissWatcher, FakePopupWindow};
+use presentation_transport::AfterPresentation;
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
 
@@ -56,10 +59,12 @@ struct TestOcr {
     inner: FakeOcr,
     threads: Mutex<Vec<ThreadId>>,
     after: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    popup: Arc<FakePopup>,
 }
 
 impl Ocr for TestOcr {
     fn recognize(&self, image: &CapturedImage) -> Result<OcrText, PlatformError> {
+        self.popup.flush();
         self.threads
             .lock()
             .unwrap()
@@ -143,7 +148,9 @@ fn rig_gated(
     let keys = FakeKeys::new(clip.clone(), sleeper.clone());
     let capture = Arc::new(FakeCapture::new([10, 20, 30, 255]));
     let picker = Arc::new(FakePicker::new(pick));
+    let popup = Arc::new(FakePopup::new());
     let ocr = Arc::new(TestOcr {
+        popup: popup.clone(),
         inner: FakeOcr::new(ocr),
         threads: Mutex::new(Vec::new()),
         after: Mutex::new(None),
@@ -167,7 +174,6 @@ fn rig_gated(
         sleeper,
     };
     let registry = Arc::new(ProviderRegistry::standard());
-    let popup = Arc::new(FakePopup::new());
     let persist = Arc::new(FakePersist::new());
     // Written against Claude as the active provider (the Windows default is Google (Free)).
     let settings = Settings {
@@ -178,6 +184,11 @@ fn rig_gated(
     let status = Arc::new(lingopop_orchestrator::fake::FakeStatus::default());
     let logs = Arc::new(Mutex::new(Vec::new()));
     let log_lines = logs.clone();
+    let popup_barrier = popup.clone();
+    let transport = Arc::new(AfterPresentation {
+        transport,
+        flush: Arc::new(move || popup_barrier.flush()),
+    });
     let orch = Orchestrator::new(Deps {
         status: Some(status.clone()),
         platform,
@@ -729,14 +740,17 @@ fn superseded_auto_copy_never_writes_clipboard() {
 async fn reposition_updates_dismiss_rect_instead_of_restarting() {
     let r = rig(ocr_ok(OCR_TEXT), ok_transport());
     r.orch.trigger(AIOperation::ScreenTranslate).await;
+    r.popup.flush();
     let initial_calls = r.dismiss.calls();
     assert!(matches!(initial_calls.as_slice(), [DismissCall::Start(_)]));
     r.orch.popup_resized((700.0, 400.0));
+    r.popup.flush();
     let Some(DismissCall::UpdateRect(resized)) = r.dismiss.calls().last().cloned() else {
         panic!("expected UpdateRect");
     };
     r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
     r.orch.trigger(AIOperation::ScreenTranslate).await;
+    r.popup.flush();
     // The reposition uses the measured size, not the initial one.
     let origin = popup_origin((700.0, 400.0), Point { x: 1000, y: 540 }, &monitor_list());
     assert_eq!(
@@ -752,15 +766,11 @@ async fn reposition_updates_dismiss_rect_instead_of_restarting() {
 async fn failed_reposition_hides_popup_and_stops_dismissal() {
     let r = rig(ocr_ok(OCR_TEXT), ok_transport());
     r.orch.trigger(AIOperation::ScreenTranslate).await;
-    assert!(lingopop_orchestrator::PopupView::is_visible(
-        r.popup.as_ref()
-    ));
+    assert!(r.popup.is_visible());
     r.popup.fail_show(true);
     r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
     r.orch.trigger(AIOperation::ScreenTranslate).await;
-    assert!(!lingopop_orchestrator::PopupView::is_visible(
-        r.popup.as_ref()
-    ));
+    assert!(!r.popup.is_visible());
     assert_eq!(r.dismiss.calls().last(), Some(&DismissCall::Stop));
 }
 

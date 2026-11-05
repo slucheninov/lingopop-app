@@ -20,9 +20,19 @@ pub use last_foreground::MacLastForeground;
 pub use monitors::MacMonitors;
 pub use ocr::MacOcr;
 
+mod event_monitors;
+pub use event_monitors::AppKitMonitors;
 mod popup_window;
-pub use popup_window::MacDismissWatcher;
-pub use popup_window::MacPopupWindow;
+#[doc(hidden)]
+pub use popup_window::OwnerRunWindow;
+pub use popup_window::{configure_popup_panel, MacPopupWindow};
+/// The production macOS dismiss watcher: passive `NSEvent` monitors.
+pub type MacDismissWatcher = crate::macos_dismiss::MacDismissWatcher<AppKitMonitors>;
+
+/// True on the process main thread.
+pub fn on_main_thread() -> bool {
+    objc2::MainThreadMarker::new().is_some()
+}
 
 mod system;
 pub use system::MacSystem;

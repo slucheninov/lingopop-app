@@ -45,6 +45,10 @@ pub const KEY_PERMISSION_ACCESSIBILITY: &str = "LingoPop needs Accessibility acc
 /// Shown as the notice of the kept result; nothing was pasted.
 pub const KEY_REPLACE_NEEDS_ACCESSIBILITY: &str =
     "Replace needs Accessibility access. Allow LingoPop in System Settings, then try again.";
+/// NEW (macOS only): without Accessibility the popup cannot observe Escape (a global keyDown
+/// monitor needs it); click-outside still closes it. Added by the shell as the popup notice.
+pub const KEY_ESCAPE_UNAVAILABLE: &str =
+    "Escape can't close this popup until LingoPop has Accessibility access. Click outside it to close.";
 /// NEW (macOS only): Screen Recording is missing, so Screen Translate cannot capture.
 pub const KEY_PERMISSION_SCREEN_RECORDING: &str = "LingoPop needs Screen Recording access to translate the screen. Grant it in Settings → Main → Permissions.";
 /// NEW (macOS only): the previous clipboard holds content that cannot be preserved (promised,

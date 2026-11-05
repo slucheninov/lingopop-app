@@ -49,6 +49,11 @@
     "pl": "Odmówiono",
     "uk": "Відхилено"
   },
+  "Escape can't close this popup until LingoPop has Accessibility access. Click outside it to close.": {
+    "de": "Escape kann dieses Pop-up erst schließen, wenn LingoPop Zugriff auf Bedienungshilfen hat. Klicke daneben, um es zu schließen.",
+    "pl": "Klawisz Escape nie zamknie tego okienka, dopóki LingoPop nie ma uprawnień Dostępności. Kliknij poza nim, aby je zamknąć.",
+    "uk": "Escape не закриє це вікно, доки LingoPop не має дозволу «Універсальний доступ». Клацніть поза ним, щоб закрити."
+  },
   "Granted": {
     "de": "Erteilt",
     "pl": "Przyznano",

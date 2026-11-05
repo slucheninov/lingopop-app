@@ -6,6 +6,8 @@ pub mod dismiss;
 mod history_cmds;
 pub mod hotkeys;
 pub mod logging;
+#[cfg(target_os = "macos")]
+pub mod macos_main_thread;
 pub mod paths;
 pub mod permissions_cmds;
 pub mod picker;
@@ -178,11 +180,22 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         // With a shadow tao insets the client area of an undecorated window, so the
         // SetWindowPos rect would no longer equal the webview size (scrollbars, clipped close).
         .shadow(false)
+        // macOS: the first click into the never-key panel reaches the webview (buttons work
+        // without first making the panel key). Ignored on Windows.
+        .accept_first_mouse(true)
         .inner_size(width, height)
         .build()?;
 
-    // Cached once, here on the main thread: `hwnd()` blocks on the main thread on Windows.
+    // Cached once, here on the main thread: `hwnd()` blocks on the main thread on Windows;
+    // on macOS this converts the window into the non-activating panel (main thread only).
     let handle = popup_shell::native_handle(&window);
+    // macOS: NSEvent dismiss monitors are installed through the main-thread dispatcher.
+    #[cfg(target_os = "macos")]
+    platform
+        .dismiss
+        .bind_main_thread(Arc::new(macos_main_thread::TauriMacMainThread(
+            app.handle().clone(),
+        )));
     let popup = Arc::new(ShellPopup::new(
         app.handle().clone(),
         platform.clone(),
@@ -325,14 +338,20 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-    app.run(|_app, event| {
+    app.run(|app, event| match event {
         // A tray app keeps running when its last window closes.
-        if let RunEvent::ExitRequested {
+        RunEvent::ExitRequested {
             code: None, api, ..
-        } = event
-        {
-            api.prevent_exit();
+        } => api.prevent_exit(),
+        // Last main-thread turn: remove the dismiss monitors inline (we are on main) and
+        // stop the presentation worker without waiting for it.
+        RunEvent::Exit => {
+            if let Some(state) = app.try_state::<ShellState>() {
+                state.platform.dismiss.shutdown();
+                drop(state.popup.shutdown());
+            }
         }
+        _ => {}
     });
 }
 
