@@ -125,6 +125,14 @@ fn read_topology(mtm: MainThreadMarker) -> Result<(f64, Vec<MacDisplay>), Platfo
     }
     Ok((height, displays))
 }
+impl crate::macos_overlay::TopologySource for MacMonitors {
+    fn geometry(&self) -> MacGeometry {
+        MacMonitors::geometry(self)
+    }
+    fn topology_revision(&self) -> u64 {
+        MacMonitors::topology_revision(self)
+    }
+}
 impl Monitors for MacMonitors {
     fn initialize_on_main_thread(&self) -> Result<(), PlatformError> {
         MacMonitors::initialize_on_main_thread(self)

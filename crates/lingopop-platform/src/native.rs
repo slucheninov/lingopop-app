@@ -90,8 +90,15 @@ pub fn native() -> Platform {
     let last_foreground = crate::macos::MacLastForeground::new(&foreground);
     let capture =
         MacCapture::with_services(MacMonitors::clone(&monitors), Arc::clone(&permissions));
+    let sleeper: Arc<dyn Sleeper> = Arc::new(SystemSleeper::new());
     Platform {
-        overlay: Arc::new(crate::MacOverlay),
+        // Needs `RegionOverlay::bind_main_thread` from shell setup before the first pick; the
+        // overlay shares the one topology cache with the popup and capture.
+        overlay: Arc::new(crate::MacOverlay::new(
+            Arc::new(crate::macos::AppKitOverlay::new()),
+            Arc::new(MacMonitors::clone(&monitors)),
+            sleeper.clone(),
+        )),
         system: native_system(),
         login_item: Arc::new(crate::macos::MacLoginItem),
         // Main thread only: the shell's presenter dispatches every call (macos/presentation.rs).
@@ -109,7 +116,7 @@ pub fn native() -> Platform {
         ocr: Arc::new(MacOcr::new()),
         permissions,
         protector: Arc::new(MacProtector::new()),
-        sleeper: Arc::new(SystemSleeper::new()),
+        sleeper,
     }
 }
 

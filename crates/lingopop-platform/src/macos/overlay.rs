@@ -1,7 +1,436 @@
-use crate::{PlatformError, Rect, RegionOverlay};
-pub struct MacOverlay;
-impl RegionOverlay for MacOverlay {
-    fn pick(&self, _: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, PlatformError> {
-        Err(PlatformError::Unsupported("region overlay on macOS"))
+//! Portable half of the macOS region overlay, compiled on every OS as
+//! `lingopop_platform::macos_overlay` so the whole lifecycle runs on fakes.
+//!
+//! One `pick` (called on a worker thread, never on the main thread) does:
+//! 1. serialize: a second pick waits until the first one's native cleanup is acknowledged, so
+//!    at most one native overlay exists at a time;
+//! 2. snapshot the cached topology and ask the main thread (waiting OFF it, holding no lock)
+//!    to create the native overlay through an [`OverlayBackend`];
+//! 3. wait for a result, a cancel (a message or the dropped sender) or a topology change;
+//! 4. ask the main thread to remove the overlay and wait for that acknowledgment (bounded),
+//!    then give the compositor [`COMPOSITOR_SETTLE`], so the capture that follows can never
+//!    contain the tint. A panic in between still posts the cleanup (`CleanupGuard`).
+//!
+//! Native input reaches [`OverlaySink::push`] in arrival order. The sink queues it and posts at
+//! most ONE drain job to the main thread, so a backlog of drag events is one batch: the shared
+//! reducer [`fold_input_batch_with`] folds it in order (Down resets the anchor, Up and Escape
+//! end it) and the backend draws only the final selection. The acceptance rule of a finishing
+//! `Up` is ten BACKING pixels on the display where the drag started
+//! ([`MacGeometry::selection_accepted`]); the result is in desktop (Quartz point) units.
+//!
+//! A change of the display topology revision while the overlay is up cancels the pick
+//! (`Ok(None)`, fixed log line) instead of capturing a region of another layout.
+use crate::error::platform_log;
+use crate::macos_geometry::{MacGeometry, TopologyCache};
+use crate::main_thread::{dispatch_error, run_on_main, MainThread};
+use crate::overlay::{fold_input_batch_with, InputBatch, OverlayInput};
+use crate::{PlatformError, Point, Rect, RegionOverlay, Sleeper};
+use crossbeam_channel::{bounded, select, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
+
+/// How often the waiting worker compares the topology revision (no event announces a display
+/// change to it: the cache is updated by the main-queue observer).
+pub const TOPOLOGY_POLL: Duration = Duration::from_millis(50);
+/// Time given to the window server after the overlay is ordered out, before the capture
+/// (the Windows overlay waits the same 50 ms after its compositor flush).
+pub const COMPOSITOR_SETTLE: Duration = Duration::from_millis(50);
+/// Upper bound for the main thread to acknowledge the removal of the overlay.
+pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The cached topology the overlay reads (shared with `MacMonitors`).
+pub trait TopologySource: Send + Sync {
+    fn geometry(&self) -> MacGeometry;
+    fn topology_revision(&self) -> u64;
+}
+impl TopologySource for TopologyCache {
+    fn geometry(&self) -> MacGeometry {
+        self.snapshot()
+    }
+    fn topology_revision(&self) -> u64 {
+        TopologyCache::topology_revision(self)
+    }
+}
+
+/// The native overlay. Every method is called on the main thread only.
+pub trait OverlayBackend: Send + Sync + 'static {
+    /// Creates one overlay window per display of `geometry`, installs the input monitors (each
+    /// forwarding to `sink` in desktop points, see [`OverlaySink::push`]), shows the windows,
+    /// activates the app and sets the crosshair. On `Err` the engine calls `cleanup`.
+    fn create(&self, geometry: &MacGeometry, sink: Arc<OverlaySink>) -> Result<(), PlatformError>;
+    /// Shows `selection` (desktop points) on every window; `None` = dim only.
+    fn draw(&self, selection: Option<Rect>);
+    /// Removes monitors and windows and restores the cursor, before returning; idempotent.
+    fn cleanup(&self);
+}
+
+/// The part of the selection that falls on a display, in display-local top-left coordinates
+/// (what every overlay window draws). `None` when it does not touch the display or has no area.
+pub fn selection_in_display(display: Rect, selection: Rect) -> Option<Rect> {
+    let r = display.intersect(selection)?;
+    Some(Rect::new(
+        r.x.saturating_sub(display.x),
+        r.y.saturating_sub(display.y),
+        r.width,
+        r.height,
+    ))
+}
+
+#[derive(Default)]
+struct Queue {
+    events: Vec<OverlayInput>,
+    drain_posted: bool,
+    active: bool,
+}
+
+/// Consumes one drained batch on the main thread.
+trait Handler: Send + Sync {
+    fn handle(&self, batch: Vec<OverlayInput>);
+    fn dispatch_failed(&self);
+}
+
+/// Where native input lands. Created by the engine per pick, handed to `create`, and dropped
+/// by the backend at cleanup.
+pub struct OverlaySink {
+    queue: Mutex<Queue>,
+    main: Arc<dyn MainThread>,
+    handler: OnceLock<Arc<dyn Handler>>,
+}
+
+impl OverlaySink {
+    fn queue(&self) -> MutexGuard<'_, Queue> {
+        self.queue.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Called from the native monitor callbacks (main thread) with desktop-point input.
+    /// Returns whether the overlay consumes the event: true while the overlay is up, so
+    /// the clicks and Escape meant for it never reach other windows.
+    pub fn push(self: &Arc<Self>, input: OverlayInput) -> bool {
+        let post = {
+            let mut q = self.queue();
+            if !q.active {
+                return false;
+            }
+            q.events.push(input);
+            !std::mem::replace(&mut q.drain_posted, true)
+        };
+        if post {
+            let sink = self.clone();
+            // Never inline: events that arrive before the drain job runs form one batch.
+            if self.main.post(Box::new(move || sink.drain())).is_err() {
+                self.queue().drain_posted = false;
+                if let Some(handler) = self.handler.get() {
+                    handler.dispatch_failed();
+                }
+            }
+        }
+        true
+    }
+
+    fn drain(&self) {
+        let batch = {
+            let mut q = self.queue();
+            q.drain_posted = false;
+            if !q.active {
+                return;
+            }
+            std::mem::take(&mut q.events)
+        };
+        if let (false, Some(handler)) = (batch.is_empty(), self.handler.get()) {
+            handler.handle(batch);
+        }
+    }
+
+    fn deactivate(&self) {
+        let mut q = self.queue();
+        q.active = false;
+        q.events.clear();
+    }
+}
+
+type Outcome = Result<Option<Rect>, PlatformError>;
+
+#[derive(Default)]
+struct Fold {
+    start: Option<Point>,
+    rendered: Option<Rect>,
+    start_display: Option<u32>,
+    finished: bool,
+}
+
+enum Step {
+    Draw(Rect),
+    Finish(Option<Rect>),
+}
+
+/// Folds batches on the main thread and reports the result to the waiting worker.
+struct Session {
+    backend: Arc<dyn OverlayBackend>,
+    geometry: MacGeometry,
+    fold: Mutex<Fold>,
+    done: Sender<Outcome>,
+}
+
+impl Handler for Session {
+    fn handle(&self, batch: Vec<OverlayInput>) {
+        let step = {
+            let mut fold = self.fold.lock().unwrap_or_else(|p| p.into_inner());
+            if fold.finished {
+                return;
+            }
+            // The acceptance of an `Up` depends on the display of the Down that anchors it.
+            for event in &batch {
+                match event {
+                    OverlayInput::Down(p) => fold.start_display = self.geometry.display_at(*p),
+                    OverlayInput::Up(_) | OverlayInput::Escape => break,
+                    OverlayInput::Move(_) => {}
+                }
+            }
+            let (geometry, start_display) = (&self.geometry, fold.start_display);
+            let accepted = |r: Rect| {
+                start_display
+                    .and_then(|id| geometry.selection_accepted(id, r).ok())
+                    .unwrap_or(false)
+            };
+            let Fold {
+                start, rendered, ..
+            } = &mut *fold;
+            let folded = fold_input_batch_with(start, *rendered, batch, accepted);
+            match folded {
+                InputBatch::Unchanged => return,
+                InputBatch::Redraw(r) => {
+                    fold.rendered = Some(r);
+                    Step::Draw(r)
+                }
+                InputBatch::Finish(result) => {
+                    fold.finished = true;
+                    Step::Finish(result)
+                }
+            }
+        };
+        match step {
+            Step::Draw(selection) => self.backend.draw(Some(selection)),
+            Step::Finish(result) => {
+                let _ = self.done.try_send(Ok(result));
+            }
+        }
+    }
+
+    fn dispatch_failed(&self) {
+        let _ = self.done.try_send(Err(dispatch_error()));
+    }
+}
+
+/// Posts the cleanup (without waiting) if the pick unwinds before it ran.
+struct CleanupGuard {
+    main: Arc<dyn MainThread>,
+    backend: Arc<dyn OverlayBackend>,
+    sink: Arc<OverlaySink>,
+    armed: bool,
+}
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.sink.deactivate();
+        let backend = self.backend.clone();
+        if self.main.post(Box::new(move || backend.cleanup())).is_err() {
+            platform_log("region overlay cleanup could not be posted");
+        }
+    }
+}
+
+/// `RegionOverlay` over an [`OverlayBackend`] (production: `AppKitOverlay`).
+pub struct MacOverlay<B: OverlayBackend> {
+    backend: Arc<B>,
+    topology: Arc<dyn TopologySource>,
+    sleeper: Arc<dyn Sleeper>,
+    main: OnceLock<Arc<dyn MainThread>>,
+    /// Held for a whole pick, cleanup included: the serialization of native overlays.
+    serial: Mutex<()>,
+    poll: Duration,
+}
+
+fn cancelled(cancel: &Receiver<()>) -> bool {
+    !matches!(cancel.try_recv(), Err(TryRecvError::Empty))
+}
+
+impl<B: OverlayBackend> MacOverlay<B> {
+    pub fn new(
+        backend: Arc<B>,
+        topology: Arc<dyn TopologySource>,
+        sleeper: Arc<dyn Sleeper>,
+    ) -> Self {
+        Self {
+            backend,
+            topology,
+            sleeper,
+            main: OnceLock::new(),
+            serial: Mutex::new(()),
+            poll: TOPOLOGY_POLL,
+        }
+    }
+
+    /// Tests shorten the topology poll; production uses [`TOPOLOGY_POLL`].
+    pub fn with_topology_poll(mut self, poll: Duration) -> Self {
+        self.poll = poll;
+        self
+    }
+
+    /// Removes the native overlay on the main thread and waits for that (bounded), then lets
+    /// the compositor settle. Disarms the guard: the work is done here.
+    fn finalize(&self, guard: &mut CleanupGuard) -> Result<(), PlatformError> {
+        guard.armed = false;
+        guard.sink.deactivate();
+        let (ack, acked) = bounded::<()>(1);
+        let backend = self.backend.clone();
+        guard.main.post(Box::new(move || {
+            backend.cleanup();
+            let _ = ack.send(());
+        }))?;
+        match acked.recv_timeout(CLEANUP_TIMEOUT) {
+            Ok(()) => {
+                self.sleeper.sleep(COMPOSITOR_SETTLE);
+                Ok(())
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                platform_log("region overlay cleanup dropped by the main loop");
+                Err(dispatch_error())
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                platform_log("region overlay cleanup timed out");
+                Err(PlatformError::Os {
+                    api: "region overlay cleanup",
+                    code: 0,
+                })
+            }
+        }
+    }
+}
+
+enum Wait {
+    Cancelled,
+    TopologyChanged,
+    Done(Outcome),
+}
+
+impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
+    fn pick(&self, cancel: Receiver<()>) -> Outcome {
+        let _serial = self.serial.lock().unwrap_or_else(|p| p.into_inner());
+        let main = self.main.get().cloned().ok_or(PlatformError::Unsupported(
+            "region overlay without main thread",
+        ))?;
+        if main.is_main_thread() {
+            // Waiting for the main thread on the main thread would deadlock the very work.
+            return Err(PlatformError::Unsupported(
+                "region overlay on the main thread",
+            ));
+        }
+        if cancelled(&cancel) {
+            return Ok(None);
+        }
+        let geometry = self.topology.geometry();
+        if geometry.displays().is_empty() {
+            platform_log("region overlay: no displays");
+            return Err(PlatformError::InvalidRegion);
+        }
+        let revision = geometry.topology_revision();
+
+        let (done, result) = bounded::<Outcome>(1);
+        let session = Arc::new(Session {
+            backend: self.backend.clone(),
+            geometry: geometry.clone(),
+            fold: Mutex::new(Fold::default()),
+            done,
+        });
+        let sink = Arc::new(OverlaySink {
+            queue: Mutex::new(Queue {
+                active: true,
+                ..Queue::default()
+            }),
+            main: main.clone(),
+            handler: OnceLock::new(),
+        });
+        let _ = sink.handler.set(session);
+        let mut guard = CleanupGuard {
+            main: main.clone(),
+            backend: self.backend.clone(),
+            sink: sink.clone(),
+            armed: true,
+        };
+
+        let created = run_on_main(main.as_ref(), {
+            let backend = self.backend.clone();
+            let sink = sink.clone();
+            move || {
+                let created = backend.create(&geometry, sink);
+                if created.is_err() {
+                    backend.cleanup();
+                }
+                created
+            }
+        });
+        match created {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                // The create job already ran the cleanup on the main thread.
+                guard.armed = false;
+                sink.deactivate();
+                return Err(error);
+            }
+            Err(error) => {
+                // The job never ran (the loop is gone): nothing exists to clean up.
+                guard.armed = false;
+                return Err(error);
+            }
+        }
+
+        let ticker = crossbeam_channel::tick(self.poll);
+        let waited = loop {
+            select! {
+                recv(cancel) -> _ => break Wait::Cancelled,
+                recv(result) -> message => {
+                    break Wait::Done(message.unwrap_or_else(|_| Err(dispatch_error())));
+                }
+                recv(ticker) -> _ => {
+                    if self.topology.topology_revision() != revision {
+                        break Wait::TopologyChanged;
+                    }
+                }
+            }
+        };
+        let finished = self.finalize(&mut guard);
+        let outcome = match waited {
+            Wait::Cancelled => Ok(None),
+            Wait::TopologyChanged => {
+                platform_log("region overlay cancelled: display topology changed");
+                Ok(None)
+            }
+            // A cancel that raced a finished selection wins: the caller abandoned the pick.
+            Wait::Done(_) if cancelled(&cancel) => Ok(None),
+            Wait::Done(outcome) => outcome,
+        };
+        // Without a confirmed cleanup the capture could contain the tint: fail instead.
+        finished.and(outcome)
+    }
+
+    fn bind_main_thread(&self, main: Arc<dyn MainThread>) {
+        let _ = self.main.set(main);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_in_display_clips_and_translates() {
+        let d = Rect::new(100, 50, 200, 100);
+        assert_eq!(
+            selection_in_display(d, Rect::new(150, 60, 400, 20)),
+            Some(Rect::new(50, 10, 150, 20))
+        );
+        assert_eq!(selection_in_display(d, Rect::new(300, 50, 10, 10)), None);
     }
 }

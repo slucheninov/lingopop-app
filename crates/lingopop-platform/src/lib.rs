@@ -25,6 +25,8 @@ mod macos;
 pub mod macos_dismiss;
 #[path = "macos/geometry.rs"]
 pub mod macos_geometry;
+#[path = "macos/overlay.rs"]
+pub mod macos_overlay;
 #[path = "macos/presentation.rs"]
 pub mod macos_presentation;
 #[path = "macos/screen.rs"]
@@ -103,4 +105,4 @@ pub use macos::activate_app;
 #[doc(hidden)]
 pub use macos::OwnerRunWindow;
 #[cfg(target_os = "macos")]
-pub use macos::{configure_popup_panel, AppKitMonitors};
+pub use macos::{configure_popup_panel, AppKitMonitors, AppKitOverlay};

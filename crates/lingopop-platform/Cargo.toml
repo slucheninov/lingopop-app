@@ -84,6 +84,15 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSResponder",
     "NSRunningApplication",
     "NSWorkspace",
+    # The region overlay window (macos/overlay_window.rs): dim fill, hole, border, size label.
+    "NSAttributedString",
+    "NSBezierPath",
+    "NSColor",
+    "NSCursor",
+    "NSFont",
+    "NSFontDescriptor",
+    "NSShadow",
+    "NSStringDrawing",
 ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
@@ -132,6 +141,12 @@ harness = false
 # explicit opt-in below, skips unless `--ignored`.
 [[test]]
 name = "macos_screen"
+harness = false
+
+# Owner-run real-AppKit region overlay check: needs the main thread and real input, skips
+# unless `--ignored`.
+[[test]]
+name = "macos_overlay"
 harness = false
 
 [target.'cfg(windows)'.dev-dependencies]

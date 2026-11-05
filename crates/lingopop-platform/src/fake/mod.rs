@@ -41,6 +41,8 @@ pub use login_item::FakeLoginItem;
 
 mod overlay;
 pub use overlay::FakeOverlay;
+mod overlay_backend;
+pub use overlay_backend::{FakeOverlayBackend, OverlayCall};
 
 mod main_thread;
 pub use main_thread::{on_fake_main, FakeMainThread};

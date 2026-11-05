@@ -40,8 +40,10 @@ pub use system::MacSystem;
 mod login_item;
 pub use login_item::MacLoginItem;
 
-mod overlay;
-pub use overlay::MacOverlay;
+mod overlay_window;
+pub use overlay_window::AppKitOverlay;
+/// The production macOS region overlay: AppKit windows over the portable lifecycle.
+pub type MacOverlay = crate::macos_overlay::MacOverlay<AppKitOverlay>;
 
 mod permissions;
 pub use permissions::MacPermissions;

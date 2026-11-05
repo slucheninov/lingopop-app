@@ -190,12 +190,14 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     // on macOS this converts the window into the non-activating panel (main thread only).
     let handle = popup_shell::native_handle(&window);
     // macOS: NSEvent dismiss monitors are installed through the main-thread dispatcher.
+    // The region overlay's native windows live on the same dispatcher.
     #[cfg(target_os = "macos")]
-    platform
-        .dismiss
-        .bind_main_thread(Arc::new(macos_main_thread::TauriMacMainThread(
-            app.handle().clone(),
-        )));
+    {
+        let main: Arc<dyn lingopop_platform::MainThread> =
+            Arc::new(macos_main_thread::TauriMacMainThread(app.handle().clone()));
+        platform.dismiss.bind_main_thread(main.clone());
+        platform.overlay.bind_main_thread(main);
+    }
     let popup = Arc::new(ShellPopup::new(
         app.handle().clone(),
         platform.clone(),
