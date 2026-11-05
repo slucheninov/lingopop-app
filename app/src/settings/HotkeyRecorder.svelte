@@ -1,6 +1,17 @@
+<script lang="ts" module>
+  import { invoke as invoke } from '@tauri-apps/api/core';
+  // Suspend calls of ALL recorders are chained (the shell has one suspension flag): each waits for the
+  // previous one to settle, so a `false` (blur, Esc, unmount) can never reach the shell after a later `true`,
+  // of this row or of another row, whatever order the async Tauri tasks would run in.
+  let inFlight: Promise<unknown> = Promise.resolve();
+  function suspend(suspended: boolean): Promise<unknown> {
+    const run = inFlight.then(() => invoke('hotkeys_suspend', { suspended }));
+    inFlight = run.catch(() => {});
+    return run;
+  }
+</script>
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
   import { classifyKeydown } from '../lib/hotkeyRecorder';
   import { currentHost } from '../lib/bootstrap';
   import { t } from '../lib/i18n';
@@ -14,14 +25,6 @@
   let failure = $state<string | null>(null);
   let disposed = false;
   let button: HTMLButtonElement | undefined = $state();
-  // Suspend calls are chained: each waits for the previous one to settle, so a `false` (blur, Esc, unmount)
-  // can never reach the shell before the `true` it undoes, whatever order the async Tauri tasks would run in.
-  let inFlight: Promise<unknown> = Promise.resolve();
-  function suspend(suspended: boolean): Promise<unknown> {
-    const run = inFlight.then(() => invoke('hotkeys_suspend', { suspended }));
-    inFlight = run.catch(() => {});
-    return run;
-  }
   async function stop() {
     if (!recording) return;
     recording = false;

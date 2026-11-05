@@ -43,6 +43,29 @@ test('recorder_focuses_itself_on_click_so_webkit_delivers_keydown', async () => 
   await fireEvent.click(field);
   expect(document.activeElement).toBe(field);
 });
+test('suspension_is_serialized_across_recorders', async () => {
+  const explain = await open();
+  const translate = screen.getByRole('button', { name: 'Translate' });
+  const base = vi.mocked(invoke).getMockImplementation()!;
+  const pending: Array<() => void> = [];
+  const order: boolean[] = [];
+  vi.mocked(invoke).mockImplementation((cmd, args) => {
+    if (cmd !== 'hotkeys_suspend') return base(cmd, args);
+    order.push((args as { suspended: boolean }).suspended);
+    return new Promise(resolve => pending.push(() => resolve(undefined)));
+  });
+  await fireEvent.click(explain);
+  // Moving to another row blurs the first (resume) and starts the second (suspend).
+  await fireEvent.blur(explain);
+  await fireEvent.click(translate);
+  await Promise.resolve();
+  expect(order).toEqual([true]);
+  pending.shift()!();
+  await waitFor(() => expect(order).toEqual([true, false]));
+  pending.shift()!();
+  await waitFor(() => expect(order).toEqual([true, false, true]));
+  pending.shift()!();
+});
 test('clear_button_only_when_set_and_sends_null', async () => {
   await open();
   expect(screen.queryByRole('button', { name: 'Clear Explain' })).toBeNull();
