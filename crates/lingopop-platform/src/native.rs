@@ -91,7 +91,10 @@ pub fn native() -> Platform {
         login_item: Arc::new(crate::macos::MacLoginItem),
         // Main thread only: the shell's presenter dispatches every call (macos/presentation.rs).
         popup_window: Arc::new(crate::MacPopupWindow::new(MacMonitors::clone(&monitors))),
-        dismiss: Arc::new(crate::MacDismissWatcher::default()),
+        // Needs `DismissWatcher::bind_main_thread` from shell setup before the first start.
+        dismiss: Arc::new(crate::MacDismissWatcher::new(Arc::new(
+            crate::AppKitMonitors,
+        ))),
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),
         foreground: Arc::new(foreground),

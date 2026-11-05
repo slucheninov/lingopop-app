@@ -1,4 +1,5 @@
-//! OWNER-RUN real-AppKit check of the non-activating popup panel. Never part of the default suite: this target has `harness = false` so it runs on
+//! OWNER-RUN real-AppKit check of the non-activating popup panel and the passive dismiss
+//! monitors. Never part of the default suite: this target has `harness = false` so it runs on
 //! the process MAIN thread (AppKit requires it), and without `--ignored` it prints a skip line
 //! and exits 0 at once, creating no window. Run it from a terminal while another app (e.g.
 //! TextEdit) is frontmost:
@@ -8,7 +9,8 @@
 //! ```
 //!
 //! It shows a 360x100 panel at (100, 100) for an instant, checks that LingoPop did not become
-//! active, the frontmost app is unchanged and the panel is not key, then hides the panel. It never
+//! active, the frontmost app is unchanged and the panel is not key, then installs and removes
+//! the dismiss monitors through the real `AppKitMonitors` and hides the panel. It never
 //! prompts for or resets TCC permissions and never touches the Keychain.
 
 #[cfg(target_os = "macos")]
@@ -28,13 +30,27 @@ fn main() {}
 #[allow(unsafe_code)]
 mod owner_run {
     use lingopop_platform::{
-        configure_popup_panel, MacMonitors, MacPopupWindow, NoActivateWindow, Rect,
+        configure_popup_panel, AppKitMonitors, DismissWatcher, MacDismissWatcher, MacMonitors,
+        MacPopupWindow, MainThread, NoActivateWindow, PlatformError, Rect,
     };
     use objc2::rc::Retained;
     use objc2::MainThreadMarker;
     use objc2_app_kit::{
         NSApplication, NSApplicationActivationPolicy, NSWindow, NSWindowStyleMask, NSWorkspace,
     };
+    use std::sync::Arc;
+
+    /// This test IS the main thread: run every job inline.
+    struct Inline;
+    impl MainThread for Inline {
+        fn is_main_thread(&self) -> bool {
+            true
+        }
+        fn post(&self, job: Box<dyn FnOnce() + Send>) -> Result<(), PlatformError> {
+            job();
+            Ok(())
+        }
+    }
 
     fn frontmost_pid() -> Option<i32> {
         NSWorkspace::sharedWorkspace()
@@ -72,6 +88,16 @@ mod owner_run {
         );
         assert!(!app.isActive(), "LingoPop must not become active");
         assert!(!window.isKeyWindow(), "the panel does not take key status");
+
+        let watcher = MacDismissWatcher::new(Arc::new(AppKitMonitors));
+        watcher.bind_main_thread(Arc::new(Inline));
+        println!("escape available: {}", watcher.escape_available());
+        watcher
+            .start(Rect::new(100, 100, 360, 100))
+            .expect("monitors");
+        watcher.stop();
+        watcher.shutdown();
+        assert!(watcher.start(Rect::new(0, 0, 1, 1)).is_err());
 
         popup.hide(handle).expect("hide");
         assert!(!window.isVisible(), "the panel is ordered out");

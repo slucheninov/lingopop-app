@@ -1,9 +1,13 @@
 //! The macOS presentation consumer on fakes: the real shell worker, the platform
-//! `MacPresenter` over a `FakeMainThread` (jobs run only when the test says so). Compiled on
-//! every OS; no AppKit, no Tauri runtime, no clock.
+//! `MacPresenter` over a `FakeMainThread` (jobs run only when the test says so) and the
+//! portable `MacDismissWatcher` over a `FakeMonitorBackend`. Compiled on every OS; no
+//! AppKit, no Tauri runtime, no clock.
 use super::*;
-use lingopop_platform::fake::{FakeMainThread, FakeMonitors, FakePopupWindow, PopupWindowCall};
-use lingopop_platform::{MonitorInfo, NoActivateWindow};
+use lingopop_platform::fake::{
+    FakeMainThread, FakeMonitorBackend, FakeMonitors, FakePopupWindow, PopupWindowCall,
+};
+use lingopop_platform::macos_dismiss::{MacDismissWatcher, ObservedEvent};
+use lingopop_platform::{DismissEvent, DismissWatcher, MonitorInfo, NoActivateWindow};
 
 const WINDOW: WindowHandle = WindowHandle(0x77);
 
@@ -38,7 +42,11 @@ fn monitors() -> Arc<dyn lingopop_platform::Monitors> {
     ))
 }
 type Emitted = Arc<Mutex<Vec<serde_json::Value>>>;
-fn mac_popup(main: Arc<FakeMainThread>, window: Arc<FakePopupWindow>) -> (ShellPopup, Emitted) {
+fn mac_popup(
+    main: Arc<FakeMainThread>,
+    window: Arc<FakePopupWindow>,
+    dismiss: Arc<dyn DismissWatcher>,
+) -> (ShellPopup, Emitted) {
     let emitted: Emitted = Arc::default();
     let sink = emitted.clone();
     let window: Arc<dyn NoActivateWindow> = window;
@@ -46,14 +54,99 @@ fn mac_popup(main: Arc<FakeMainThread>, window: Arc<FakePopupWindow>) -> (ShellP
         Arc::new(move |value: &serde_json::Value| sink.lock().unwrap().push(value.clone())),
         monitors(),
         Box::new(MacPanelSurface::new(main, window, Some(WINDOW))),
-    );
+    )
+    .with_dismiss(dismiss);
     (ShellPopup::from_consumer(consumer), emitted)
 }
+fn native_shows(window: &FakePopupWindow) -> usize {
+    window
+        .calls()
+        .iter()
+        .filter(|c| matches!(c, PopupWindowCall::ShowAt(..)))
+        .count()
+}
+fn watcher(
+    trusted: bool,
+    main: &Arc<FakeMainThread>,
+) -> (
+    Arc<MacDismissWatcher<FakeMonitorBackend>>,
+    Arc<FakeMonitorBackend>,
+) {
+    let backend = Arc::new(FakeMonitorBackend::new(trusted));
+    let watcher = Arc::new(MacDismissWatcher::new(backend.clone()));
+    watcher.bind_main_thread(main.clone());
+    (watcher, backend)
+}
+
+#[test]
+fn stale_show_after_dismiss_has_no_effect() {
+    let main = FakeMainThread::new();
+    let window = Arc::new(FakePopupWindow::default());
+    let (watcher, backend) = watcher(true, &main);
+    let (popup, _) = mac_popup(main.clone(), window.clone(), watcher.clone());
+    let fence = Arc::new(PresentationFence::default());
+    popup.bind(fence.clone(), Arc::new(|_| {}));
+
+    // Generation 2 is on screen and watched.
+    fence.advance(id(2, 1));
+    let shown = popup.submit(show(id(2, 1), "two")).unwrap();
+    main.wait_for_pending(1);
+    main.run_pending();
+    assert_eq!(
+        shown.blocking_recv().unwrap().result,
+        Ok(PresentationVisibility::Visible)
+    );
+    watcher.start(Rect::new(40, 50, 360, 100)).unwrap();
+    main.run_pending();
+
+    // Generation 3's Show is queued on the main thread but has not run.
+    fence.advance(id(3, 2));
+    let queued = popup.submit(show(id(3, 2), "three")).unwrap();
+    main.wait_for_pending(1);
+    let shows_before = native_shows(&window);
+
+    // A click outside arrives before the dispatcher runs; the orchestrator's answer is a
+    // newer generation, a stopped watcher and a Hide.
+    backend.fire(ObservedEvent::MouseDown {
+        location: Point { x: 1000, y: 800 },
+        marker: 0,
+    });
+    assert_eq!(watcher.events().try_recv(), Ok(DismissEvent::ClickOutside));
+    fence.advance(id(4, 3));
+    watcher.stop();
+    let hidden = popup
+        .submit(PresentationCommand {
+            id: id(4, 3),
+            kind: PresentationKind::Hide,
+        })
+        .unwrap();
+
+    main.run_pending();
+    let ack = queued.blocking_recv().unwrap();
+    main.wait_for_pending(1);
+    main.run_pending();
+    assert_eq!(
+        hidden.blocking_recv().unwrap().result,
+        Ok(PresentationVisibility::Hidden)
+    );
+    let stale_native_show_count = native_shows(&window) - shows_before;
+
+    let done = popup.shutdown();
+    done.blocking_recv().unwrap();
+    main.run_pending();
+    let native_monitors_after_shutdown = backend.native_monitors();
+
+    assert_eq!(stale_native_show_count, 0);
+    assert_eq!(ack.result, Ok(PresentationVisibility::Superseded));
+    assert_eq!(native_monitors_after_shutdown, 0);
+}
+
 #[test]
 fn show_acks_only_after_native_completion_and_no_lock_spans_dispatch() {
     let main = FakeMainThread::new();
     let window = Arc::new(FakePopupWindow::default());
-    let (popup, emitted) = mac_popup(main.clone(), window.clone());
+    let (watcher, _) = watcher(true, &main);
+    let (popup, emitted) = mac_popup(main.clone(), window.clone(), watcher);
     let fence = Arc::new(PresentationFence::default());
     popup.bind(fence.clone(), Arc::new(|_| {}));
     fence.advance(id(1, 1));
@@ -97,7 +190,8 @@ fn show_acks_only_after_native_completion_and_no_lock_spans_dispatch() {
 fn ready_replays_the_newest_model() {
     let main = FakeMainThread::new();
     let window = Arc::new(FakePopupWindow::default());
-    let (popup, emitted) = mac_popup(main.clone(), window);
+    let (watcher, _) = watcher(true, &main);
+    let (popup, emitted) = mac_popup(main.clone(), window, watcher);
     let fence = Arc::new(PresentationFence::default());
     popup.bind(fence.clone(), Arc::new(|_| {}));
     fence.advance(id(1, 1));
@@ -122,6 +216,59 @@ fn ready_replays_the_newest_model() {
     let last = emitted.last().unwrap();
     assert_eq!(emitted.len(), 3, "show, update, replay");
     assert_eq!(last, &serde_json::to_value(model("new")).unwrap());
+}
+
+#[test]
+fn worker_shutdown_removes_monitors() {
+    let main = FakeMainThread::new();
+    let window = Arc::new(FakePopupWindow::default());
+    let (watcher, backend) = watcher(true, &main);
+    let (popup, _) = mac_popup(main.clone(), window, watcher.clone());
+    popup.bind(Arc::default(), Arc::new(|_| {}));
+    watcher.start(Rect::new(0, 0, 10, 10)).unwrap();
+    main.run_pending();
+    assert!(backend.native_monitors() > 0);
+    popup.shutdown().blocking_recv().unwrap();
+    main.run_pending();
+    assert_eq!(backend.native_monitors(), 0);
+}
+
+#[test]
+fn missing_accessibility_adds_the_escape_notice() {
+    let main = FakeMainThread::new();
+    let window = Arc::new(FakePopupWindow::default());
+    let (watcher, _) = watcher(false, &main);
+    let (popup, emitted) = mac_popup(main.clone(), window, watcher);
+    let fence = Arc::new(PresentationFence::default());
+    popup.bind(fence.clone(), Arc::new(|_| {}));
+    fence.advance(id(1, 1));
+    let shown = popup.submit(show(id(1, 1), "x")).unwrap();
+    main.wait_for_pending(1);
+    main.run_pending();
+    shown.blocking_recv().unwrap();
+    drop(popup.shutdown().blocking_recv());
+    let emitted = emitted.lock().unwrap();
+    assert_eq!(
+        emitted[0]["notice"]["key"],
+        serde_json::Value::from(lingopop_orchestrator::messages::KEY_ESCAPE_UNAVAILABLE)
+    );
+}
+
+#[test]
+fn trusted_popup_has_no_escape_notice() {
+    let main = FakeMainThread::new();
+    let window = Arc::new(FakePopupWindow::default());
+    let (watcher, _) = watcher(true, &main);
+    let (popup, emitted) = mac_popup(main.clone(), window, watcher);
+    let fence = Arc::new(PresentationFence::default());
+    popup.bind(fence.clone(), Arc::new(|_| {}));
+    fence.advance(id(1, 1));
+    let shown = popup.submit(show(id(1, 1), "x")).unwrap();
+    main.wait_for_pending(1);
+    main.run_pending();
+    shown.blocking_recv().unwrap();
+    drop(popup.shutdown().blocking_recv());
+    assert!(emitted.lock().unwrap()[0].get("notice").is_none());
 }
 
 mod replace {
@@ -175,7 +322,7 @@ mod replace {
         }
         let fg = FakeForeground::new(Some(WindowHandle(7)));
         let dismiss = Arc::new(FakeDismissWatcher::default());
-        let (popup, _) = mac_popup(main.clone(), window.clone());
+        let (popup, _) = mac_popup(main.clone(), window.clone(), dismiss.clone());
         let popup = Arc::new(popup);
         let snapshot = ConfigSnapshot {
             magic_prompt: String::new(),

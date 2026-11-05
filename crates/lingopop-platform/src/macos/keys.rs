@@ -5,7 +5,7 @@
 //! returns `PermissionDenied(Accessibility)` instead of silently doing nothing; `InputBlocked`
 //! (the Windows UIPI error) is never produced on macOS.
 
-use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode, EventField};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use lingopop_core::hotkey::Modifier;
 
@@ -54,6 +54,11 @@ fn post(key: CGKeyCode, down: bool, flags: CGEventFlags) -> Result<(), PlatformE
         .map_err(|_| event_error())?;
     let event = CGEvent::new_keyboard_event(source, key, down).map_err(|_| event_error())?;
     event.set_flags(flags);
+    // Our own Cmd+C / Cmd+V must never dismiss the popup (macos/dismiss.rs ignores the marker).
+    event.set_integer_value_field(
+        EventField::EVENT_SOURCE_USER_DATA,
+        crate::macos_dismiss::OWN_EVENT_MARKER,
+    );
     event.post(CGEventTapLocation::AnnotatedSession);
     Ok(())
 }

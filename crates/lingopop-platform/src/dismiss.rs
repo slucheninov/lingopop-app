@@ -13,6 +13,20 @@ pub trait DismissWatcher: Send + Sync {
     fn update_rect(&self, popup_rect: Rect);
     fn stop(&self);
     fn events(&self) -> crossbeam_channel::Receiver<DismissEvent>;
+    /// Hands the watcher the main-thread dispatcher it installs native monitors through
+    /// (macOS: `NSEvent` monitors are main-thread only). Called once by the shell at setup;
+    /// the default ignores it (Windows hooks run on their own thread).
+    fn bind_main_thread(&self, _main: std::sync::Arc<dyn crate::MainThread>) {}
+    /// False when Escape cannot be observed (macOS without Accessibility trust); click-outside
+    /// dismissal still works then. Never prompts.
+    fn escape_available(&self) -> bool {
+        true
+    }
+    /// Process teardown: stops and removes every native monitor; later `start` calls fail.
+    /// Non-blocking like the rest of the trait (inline only when already on the main thread).
+    fn shutdown(&self) {
+        self.stop();
+    }
 }
 pub fn classify_click(point: Point, popup: Rect) -> Option<DismissEvent> {
     (!popup.contains(point)).then_some(DismissEvent::ClickOutside)

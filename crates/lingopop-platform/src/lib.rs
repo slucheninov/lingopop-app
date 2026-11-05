@@ -21,6 +21,8 @@ pub mod login_item;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 mod macos;
+#[path = "macos/dismiss.rs"]
+pub mod macos_dismiss;
 #[path = "macos/geometry.rs"]
 pub mod macos_geometry;
 #[path = "macos/presentation.rs"]
@@ -96,4 +98,4 @@ pub use macos::keychain::LoginKeyStore;
 #[cfg(target_os = "macos")]
 pub use macos::activate_app;
 #[cfg(target_os = "macos")]
-pub use macos::configure_popup_panel;
+pub use macos::{configure_popup_panel, AppKitMonitors};

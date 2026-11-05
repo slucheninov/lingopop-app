@@ -18,8 +18,8 @@ use lingopop_platform::macos_presentation::{
     CurrentCheck, MacPresenter, MacWindowCommand, MacWindowOutcome,
 };
 use lingopop_platform::{
-    monitor_at, physical_size, MainThread, Monitors, NoActivateWindow, Platform, PlatformError,
-    Point, Rect, WindowHandle,
+    monitor_at, physical_size, DismissWatcher, MainThread, Monitors, NoActivateWindow, Platform,
+    PlatformError, Point, Rect, WindowHandle,
 };
 use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Emitter, WebviewWindow};
@@ -110,6 +110,9 @@ pub struct PresentationConsumer {
     emit: Arc<EmitFn>,
     monitors: Arc<dyn Monitors>,
     surface: Box<dyn PopupSurface>,
+    /// Asked whether Escape can dismiss (macOS without Accessibility: no) and shut down with
+    /// the worker so no native monitor outlives it.
+    dismiss: Option<Arc<dyn DismissWatcher>>,
     visible: AtomicBool,
     pending: Mutex<Pending>,
 }
@@ -152,9 +155,15 @@ impl PresentationConsumer {
             emit,
             monitors,
             surface,
+            dismiss: None,
             visible: AtomicBool::new(false),
             pending: Mutex::new(Pending { last_model: None }),
         }
+    }
+
+    pub fn with_dismiss(mut self, dismiss: Arc<dyn DismissWatcher>) -> Self {
+        self.dismiss = Some(dismiss);
+        self
     }
 
     /// The production consumer over the shell's Tauri app and platform bundle.
@@ -176,7 +185,7 @@ impl PresentationConsumer {
             drop(app);
             Box::new(PlatformSurface::new(platform.popup_window.clone(), handle))
         };
-        Self::new(emit, platform.monitors.clone(), surface)
+        Self::new(emit, platform.monitors.clone(), surface).with_dismiss(platform.dismiss.clone())
     }
 
     fn pending(&self) -> MutexGuard<'_, Pending> {
@@ -192,8 +201,29 @@ impl PresentationConsumer {
         Rect::new(origin.x, origin.y, size.width, size.height)
     }
 
+    /// Emits `value`, adding the Escape-unavailable notice when the dismiss watcher cannot
+    /// observe Escape and the model carries no notice of its own. The cache keeps the plain
+    /// model, so a later trust change is reflected on the next emission.
     fn emit_model(&self, value: &serde_json::Value) {
-        (self.emit)(value);
+        let escape_missing = self
+            .dismiss
+            .as_ref()
+            .is_some_and(|dismiss| !dismiss.escape_available());
+        if escape_missing && value.get("notice").is_none() {
+            let mut decorated = value.clone();
+            if let Some(object) = decorated.as_object_mut() {
+                object.insert(
+                    "notice".into(),
+                    serde_json::json!({
+                        "key": lingopop_orchestrator::messages::KEY_ESCAPE_UNAVAILABLE,
+                        "args": [],
+                    }),
+                );
+            }
+            (self.emit)(&decorated);
+        } else {
+            (self.emit)(value);
+        }
     }
 
     /// Shows or moves the window to `rect` without activating it.
@@ -257,6 +287,13 @@ impl PresentationConsumer {
 
     fn is_visible(&self) -> bool {
         self.visible.load(Ordering::Acquire)
+    }
+
+    /// Worker shutdown: no native dismiss monitor may outlive the presentation worker.
+    fn shutdown_native(&self) {
+        if let Some(dismiss) = &self.dismiss {
+            dismiss.shutdown();
+        }
     }
 }
 
@@ -339,6 +376,7 @@ impl PopupView for ShellPopup {
                     match message {
                         WorkerMessage::Ready => native.ready(),
                         WorkerMessage::Shutdown(done) => {
+                            native.shutdown_native();
                             queue.close(sink.as_ref());
                             let _ = done.send(());
                             return;

@@ -44,3 +44,6 @@ pub use overlay::FakeOverlay;
 
 mod main_thread;
 pub use main_thread::{on_fake_main, FakeMainThread};
+
+mod monitor_backend;
+pub use monitor_backend::FakeMonitorBackend;

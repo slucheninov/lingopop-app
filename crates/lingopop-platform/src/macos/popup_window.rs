@@ -13,7 +13,7 @@
 //! `show_at` sets the frame (desktop Quartz points converted to AppKit) and uses
 //! `orderFrontRegardless`, which never activates LingoPop; `hide` is `orderOut:`. Every call
 //! off the main thread, or for any handle other than the configured panel, is refused.
-use crate::{DismissEvent, DismissWatcher, NoActivateWindow, PlatformError, Rect, WindowHandle};
+use crate::{NoActivateWindow, PlatformError, Rect, WindowHandle};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{define_class, ClassType, MainThreadMarker, MainThreadOnly};
@@ -218,27 +218,5 @@ impl NoActivateWindow for MacPopupWindow {
         let (panel, _) = panel_for(window)?;
         panel.orderOut(None);
         Ok(())
-    }
-}
-
-/// Dev stub until passive dismiss monitors land: an idle channel, the webview handles Escape.
-pub struct MacDismissWatcher {
-    _sender: crossbeam_channel::Sender<DismissEvent>,
-    receiver: crossbeam_channel::Receiver<DismissEvent>,
-}
-impl Default for MacDismissWatcher {
-    fn default() -> Self {
-        let (_sender, receiver) = crossbeam_channel::bounded(1);
-        Self { _sender, receiver }
-    }
-}
-impl DismissWatcher for MacDismissWatcher {
-    fn start(&self, _: Rect) -> Result<(), PlatformError> {
-        Ok(())
-    }
-    fn update_rect(&self, _: Rect) {}
-    fn stop(&self) {}
-    fn events(&self) -> crossbeam_channel::Receiver<DismissEvent> {
-        self.receiver.clone()
     }
 }

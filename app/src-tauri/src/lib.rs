@@ -189,6 +189,13 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     // Cached once, here on the main thread: `hwnd()` blocks on the main thread on Windows;
     // on macOS this converts the window into the non-activating panel (main thread only).
     let handle = popup_shell::native_handle(&window);
+    // macOS: NSEvent dismiss monitors are installed through the main-thread dispatcher.
+    #[cfg(target_os = "macos")]
+    platform
+        .dismiss
+        .bind_main_thread(Arc::new(macos_main_thread::TauriMacMainThread(
+            app.handle().clone(),
+        )));
     let popup = Arc::new(ShellPopup::new(
         app.handle().clone(),
         platform.clone(),
@@ -336,9 +343,11 @@ pub fn run() {
         RunEvent::ExitRequested {
             code: None, api, ..
         } => api.prevent_exit(),
-        // Last main-thread turn: stop the presentation worker without waiting for it.
+        // Last main-thread turn: remove the dismiss monitors inline (we are on main) and
+        // stop the presentation worker without waiting for it.
         RunEvent::Exit => {
             if let Some(state) = app.try_state::<ShellState>() {
+                state.platform.dismiss.shutdown();
                 drop(state.popup.shutdown());
             }
         }
