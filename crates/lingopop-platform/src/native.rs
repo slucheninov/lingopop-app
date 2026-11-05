@@ -89,7 +89,8 @@ pub fn native() -> Platform {
         overlay: Arc::new(crate::MacOverlay),
         system: native_system(),
         login_item: Arc::new(crate::macos::MacLoginItem),
-        popup_window: Arc::new(crate::MacPopupWindow),
+        // Main thread only: the shell's presenter dispatches every call (macos/presentation.rs).
+        popup_window: Arc::new(crate::MacPopupWindow::new(MacMonitors::clone(&monitors))),
         dismiss: Arc::new(crate::MacDismissWatcher::default()),
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),

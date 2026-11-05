@@ -21,8 +21,12 @@ pub use monitors::MacMonitors;
 pub use ocr::MacOcr;
 
 mod popup_window;
-pub use popup_window::MacDismissWatcher;
-pub use popup_window::MacPopupWindow;
+pub use popup_window::{configure_popup_panel, MacDismissWatcher, MacPopupWindow};
+
+/// True on the process main thread.
+pub fn on_main_thread() -> bool {
+    objc2::MainThreadMarker::new().is_some()
+}
 
 mod system;
 pub use system::MacSystem;

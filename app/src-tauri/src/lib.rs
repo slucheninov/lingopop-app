@@ -6,6 +6,8 @@ pub mod dismiss;
 mod history_cmds;
 pub mod hotkeys;
 pub mod logging;
+#[cfg(target_os = "macos")]
+pub mod macos_main_thread;
 pub mod paths;
 pub mod permissions_cmds;
 pub mod picker;
@@ -178,11 +180,22 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         // With a shadow tao insets the client area of an undecorated window, so the
         // SetWindowPos rect would no longer equal the webview size (scrollbars, clipped close).
         .shadow(false)
+        // macOS: the first click into the never-key panel reaches the webview (buttons work
+        // without first making the panel key). Ignored on Windows.
+        .accept_first_mouse(true)
         .inner_size(width, height)
         .build()?;
 
     // Cached once, here on the main thread: `hwnd()` blocks on the main thread on Windows.
+    #[cfg(not(target_os = "macos"))]
     let handle = popup_shell::native_handle(&window);
+    // macOS: convert the window into the non-activating panel (main thread only).
+    #[cfg(target_os = "macos")]
+    let handle = window.ns_window().ok().and_then(|ns_window| {
+        lingopop_platform::configure_popup_panel(ns_window)
+            .map_err(|e| log::warn!("popup panel configuration failed: {e}"))
+            .ok()
+    });
     let popup = Arc::new(ShellPopup::new(
         app.handle().clone(),
         platform.clone(),
