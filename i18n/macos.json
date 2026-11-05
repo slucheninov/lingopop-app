@@ -19,6 +19,11 @@
     "pl": "Kliknij pole skrótu, a następnie naciśnij kombinację klawiszy. Użyj dowolnego z ⌃ ⌥ ⇧ ⌘ oraz klawisza. Esc anuluje nagrywanie. ✕ usuwa skrót.",
     "uk": "Клацніть поле скорочення, потім натисніть комбінацію клавіш. Використовуйте будь-які з ⌃ ⌥ ⇧ ⌘ разом із клавішею. Esc скасовує запис. ✕ видаляє скорочення."
   },
+  "Clipboard content can't be preserved. Nothing was changed.": {
+    "de": "Der Inhalt der Zwischenablage kann nicht gesichert werden. Es wurde nichts geändert.",
+    "pl": "Zawartości schowka nie można zachować. Nic nie zostało zmienione.",
+    "uk": "Вміст буфера обміну не можна зберегти. Нічого не змінено."
+  },
   "Could not capture the screen. Check that Screen Recording permission is granted.": {
     "de": "Bildschirm konnte nicht aufgenommen werden. Prüfen, ob die Berechtigung für die Bildschirmaufnahme erteilt wurde.",
     "pl": "Nie udało się przechwycić ekranu. Sprawdź, czy przyznano uprawnienie Nagrywanie ekranu.",
@@ -83,6 +88,11 @@
     "de": "Erneut prüfen",
     "pl": "Sprawdź ponownie",
     "uk": "Перевірити знову"
+  },
+  "Replace needs Accessibility access. Allow LingoPop in System Settings, then try again.": {
+    "de": "Ersetzen benötigt Zugriff auf die Bedienungshilfen. Erlaube LingoPop in den Systemeinstellungen und versuche es dann erneut.",
+    "pl": "Zamiana wymaga dostępu do Dostępności. Zezwól LingoPop w Ustawieniach systemowych i spróbuj ponownie.",
+    "uk": "Для заміни потрібен доступ до «Універсального доступу». Дозвольте LingoPop у Системних налаштуваннях і спробуйте ще раз."
   },
   "Request": {
     "de": "Anfordern",

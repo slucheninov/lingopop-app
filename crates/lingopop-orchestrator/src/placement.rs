@@ -1,5 +1,6 @@
-//! Popup placement (port of `Core/PopupPlacement.swift`). Coordinates are physical pixels of the
-//! virtual screen with y growing DOWN, so "below the cursor" is a larger y.
+//! Popup placement (port of `Core/PopupPlacement.swift`). Coordinates belong to the
+//! desktop with y growing DOWN, so "below the cursor" is a larger y. Windows uses physical
+//! pixels; Mac uses Quartz points and MonitorInfo.scale_factor = 1.0.
 
 use lingopop_platform::monitors::{monitor_at, physical_size, MonitorInfo, Point};
 
@@ -8,13 +9,13 @@ pub const OFFSET: f64 = 12.0;
 /// Logical margin kept free inside the work area.
 pub const INSET: f64 = 8.0;
 
-/// A logical length in physical pixels of a monitor with `scale`; rounded up like
+/// A logical length in desktop units of a monitor with `scale`; rounded up like
 /// `physical_size`.
 fn scaled(logical: f64, scale: f64) -> i32 {
     (logical * scale).ceil() as i32
 }
 
-/// Top-left (physical px) of a popup of `size_logical` shown near `cursor`: right of the cursor
+/// Top-left (desktop units) of a popup of `size_logical` shown near `cursor`: right of the cursor
 /// and below it, flipped above when it does not fit below the inset work area, and on the side
 /// with more room when neither fits. The result is clamped into the inset work area (a popup
 /// larger than the area pins to its top-left). No monitors: the cursor plus the offset at scale 1.

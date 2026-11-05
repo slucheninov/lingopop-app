@@ -5,7 +5,7 @@ use lingopop_platform::{replace_selection, PlatformError, ReplaceOptions, Replac
 
 use crate::{
     gate::GateError,
-    messages::{gate_message, KEY_FOREGROUND_LOST},
+    messages::{gate_message, replace_message, KEY_FOREGROUND_LOST},
     orchestrator::Orchestrator,
     view_model::{PopupViewModel, UserMessageView},
 };
@@ -100,6 +100,9 @@ impl Orchestrator {
                             },
                         )
                     } else {
+                        // Nothing is snapshotted here: refuse to overwrite what a restore
+                        // could not bring back.
+                        clip.check_preservable()?;
                         clip.write_text(&text)?;
                         Ok(ReplaceOutcome::ForegroundLost)
                     }
@@ -133,7 +136,7 @@ impl Orchestrator {
                 // returned (it stopped before pasting). Show the same result again (popup
                 // re-shown at the last origin, dismiss watcher restarted by the show) with a
                 // notice; Replace stays available.
-                Err(e) => me.present_notice(generation, gate_message(&e)),
+                Err(e) => me.present_notice(generation, replace_message(&e)),
             }
         })
         .await;

@@ -79,6 +79,12 @@ pub fn native() -> Platform {
     use crate::sleeper::SystemSleeper;
     use crate::MacProtector;
 
+    // This is the one shared monitor/cache instance. Shell setup initializes it through
+    // Monitors; Task 15 must also give MacCapture a clone of this instance.
+    let monitors = Arc::new(MacMonitors::new());
+    // One target registry: handles from the last-foreground tracker must resolve in `foreground`.
+    let foreground = MacForeground::new();
+    let last_foreground = crate::macos::MacLastForeground::new(&foreground);
     Platform {
         overlay: Arc::new(crate::MacOverlay),
         system: native_system(),
@@ -87,9 +93,9 @@ pub fn native() -> Platform {
         dismiss: Arc::new(crate::MacDismissWatcher::default()),
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),
-        foreground: Arc::new(MacForeground::new()),
-        last_foreground: Arc::new(crate::macos::MacLastForeground::new()),
-        monitors: Arc::new(MacMonitors::new()),
+        foreground: Arc::new(foreground),
+        last_foreground: Arc::new(last_foreground),
+        monitors,
         capture: Arc::new(MacCapture::new()),
         ocr: Arc::new(MacOcr::new()),
         permissions: Arc::new(crate::macos::MacPermissions::new()),

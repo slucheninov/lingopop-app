@@ -21,9 +21,14 @@ pub mod login_item;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 mod macos;
+#[path = "macos/geometry.rs"]
+pub mod macos_geometry;
+#[path = "macos/target_registry.rs"]
+pub mod macos_targets;
 pub mod monitors;
 pub mod native;
 pub mod ocr;
+pub mod pasteboard;
 pub mod permissions;
 pub mod popup_window;
 pub mod secrets_aead;
@@ -37,6 +42,7 @@ mod windows;
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
     MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPermissions, MacPopupWindow, MacProtector,
+    NsPasteboard,
 };
 #[cfg(windows)]
 pub use crate::windows::{

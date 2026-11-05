@@ -181,13 +181,34 @@ fn every_message_key_has_all_translations() {
         KEY_NO_TEXT_FOUND,
         KEY_SELECTION_TOO_SMALL,
         KEY_INPUT_BLOCKED,
-        KEY_FOREGROUND_LOST,
+        KEY_FOREGROUND_LOST_WINDOWS,
         KEY_OCR_UNAVAILABLE,
         KEY_PLATFORM_GENERIC,
         KEY_SCREEN_TIMEOUT,
     ] {
         for language in [Language::Pl, Language::Uk, Language::De] {
             assert_ne!(lookup(language, key), key, "{language:?}: {key}");
+        }
+    }
+}
+
+#[test]
+fn macos_message_keys_have_all_translations() {
+    use lingopop_core::i18n::{lookup_for, CatalogPlatform};
+    use lingopop_core::Language;
+    use lingopop_orchestrator::messages::*;
+
+    for key in [
+        KEY_FOREGROUND_LOST_MACOS,
+        KEY_REPLACE_NEEDS_ACCESSIBILITY,
+        KEY_PERMISSION_ACCESSIBILITY,
+    ] {
+        for language in [Language::Pl, Language::Uk, Language::De] {
+            assert_ne!(
+                lookup_for(CatalogPlatform::Macos, language, key),
+                key,
+                "{language:?}: {key}"
+            );
         }
     }
 }

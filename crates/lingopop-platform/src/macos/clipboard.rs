@@ -1,23 +1,53 @@
-//! `Clipboard` over `NSPasteboard.generalPasteboard`.
+//! `Clipboard` over `NSPasteboard`: the item-based engine in `crate::pasteboard` with an AppKit
+//! backend. Item boundaries and every readable type survive a snapshot and restore; types that
+//! cannot be preserved make the snapshot abort (see the engine's docs for the rules, the
+//! never-read skip list and the `changeCount` retry).
 //!
-//! DEV-ONLY LIMITATION: the snapshot holds the plain-text string only. Other pasteboard types
-//! (images, rich text, files) are listed by name in `skipped` and are lost if a restore runs
-//! after the clipboard changed. Acceptable because the macOS build is never shipped.
+//! NSPasteboard has no cross-process compare-and-swap: `restore_if` compares `changeCount`
+//! right before `clearContents`, so a foreign write inside that gap is not detected. This is
+//! weaker than the Windows clipboard, which stays open across check and write.
 
-use objc2::rc::Retained;
-use objc2_app_kit::{NSPasteboard, NSPasteboardType, NSPasteboardTypeString};
-use objc2_foundation::{NSData, NSString};
+use objc2::rc::{autoreleasepool, Retained};
+use objc2::runtime::ProtocolObject;
+use objc2_app_kit::{
+    NSPasteboard, NSPasteboardItem, NSPasteboardType, NSPasteboardTypeString, NSPasteboardWriting,
+};
+use objc2_foundation::{NSArray, NSData, NSString};
 
-use crate::clipboard::{Clipboard, ClipboardEntry, ClipboardFormat, ClipboardSnapshot};
 use crate::error::PlatformError;
+use crate::pasteboard::{
+    PasteboardBackend, PasteboardClipboard, PasteboardItem, UNSUPPORTED_SNAPSHOT,
+};
 
-/// Markers from nspasteboard.org that clipboard managers honour, set like the mac app's
-/// `Core/PasteboardSnapshot.swift` does for its temporary write.
-const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
-const CONCEALED_TYPE: &str = "org.nspasteboard.ConcealedType";
+/// `NSPasteboard` as a `PasteboardBackend`. It holds only the pasteboard's NAME (`None` = the
+/// general pasteboard) and looks the object up per call, so it is `Send + Sync` and never keeps
+/// AppKit objects across threads.
+#[derive(Debug, Clone, Default)]
+pub struct NsPasteboard {
+    name: Option<String>,
+}
 
-fn pasteboard() -> Retained<NSPasteboard> {
-    NSPasteboard::generalPasteboard()
+impl NsPasteboard {
+    /// The general (user) pasteboard.
+    pub fn general() -> Self {
+        Self { name: None }
+    }
+
+    /// A private pasteboard with a unique name, for owner-run native tests: it is not the user's
+    /// clipboard.
+    #[doc(hidden)]
+    pub fn unique_for_tests() -> Self {
+        Self {
+            name: Some(NSPasteboard::pasteboardWithUniqueName().name().to_string()),
+        }
+    }
+
+    fn pasteboard(&self) -> Retained<NSPasteboard> {
+        match &self.name {
+            None => NSPasteboard::generalPasteboard(),
+            Some(name) => NSPasteboard::pasteboardWithName(&NSString::from_str(name)),
+        }
+    }
 }
 
 fn string_type() -> &'static NSPasteboardType {
@@ -27,109 +57,98 @@ fn string_type() -> &'static NSPasteboardType {
 
 fn write_error() -> PlatformError {
     PlatformError::Os {
-        api: "NSPasteboard.setString",
+        api: "NSPasteboard.writeObjects",
         code: 0,
     }
 }
 
-fn set_string(pb: &NSPasteboard, text: &str) -> Result<(), PlatformError> {
-    if pb.setString_forType(&NSString::from_str(text), string_type()) {
-        Ok(())
-    } else {
-        Err(write_error())
-    }
-}
-
-/// Dev only (see the module docs). Entries hold UTF-8 bytes.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct MacClipboard;
-
-impl MacClipboard {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Clipboard for MacClipboard {
-    fn sequence_number(&self) -> u64 {
-        pasteboard().changeCount() as u64
+impl PasteboardBackend for NsPasteboard {
+    fn change_count(&self) -> u64 {
+        // A change count is never negative.
+        u64::try_from(self.pasteboard().changeCount()).unwrap_or(0)
     }
 
-    fn snapshot(&self) -> Result<ClipboardSnapshot, PlatformError> {
-        let pb = pasteboard();
-        let sequence = pb.changeCount() as u64;
-        let entries = pb
-            .stringForType(string_type())
-            .map(|s| ClipboardEntry {
-                format: ClipboardFormat::UnicodeText,
-                data: s.to_string().into_bytes(),
-            })
-            .into_iter()
-            .collect();
-        let skipped = pb
-            .types()
-            .map(|types| {
-                types
-                    .iter()
-                    .filter(|t| &**t != string_type())
-                    .map(|t| t.to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(ClipboardSnapshot {
-            entries,
-            skipped,
-            sequence,
+    fn item_types(&self) -> Result<Vec<Vec<String>>, PlatformError> {
+        autoreleasepool(|_| {
+            let pb = self.pasteboard();
+            // nil is AppKit's retrieval error, not an empty pasteboard (that is an empty
+            // array): treating it as empty would let a restore wipe the user's clipboard.
+            let Some(items) = pb.pasteboardItems() else {
+                return Err(PlatformError::Unsupported(UNSUPPORTED_SNAPSHOT));
+            };
+            // `types` only lists names; no data is requested.
+            Ok(items
+                .iter()
+                .map(|item| item.types().iter().map(|t| t.to_string()).collect())
+                .collect())
         })
     }
 
-    fn restore(&self, snapshot: &ClipboardSnapshot) -> Result<(), PlatformError> {
-        let pb = pasteboard();
-        pb.clearContents();
-        match snapshot
-            .entries
-            .iter()
-            .find(|e| e.format == ClipboardFormat::UnicodeText)
-        {
-            Some(entry) => set_string(&pb, &String::from_utf8_lossy(&entry.data)),
-            None => Ok(()),
-        }
+    fn read(&self, item: u32, type_name: &str) -> Result<Option<Vec<u8>>, PlatformError> {
+        autoreleasepool(|_| {
+            let pb = self.pasteboard();
+            let Some(items) = pb.pasteboardItems() else {
+                return Ok(None);
+            };
+            let Some(entry) = items.iter().nth(item as usize) else {
+                return Ok(None);
+            };
+            // The single `dataForType:` read each type gets; nil = unreadable.
+            Ok(entry
+                .dataForType(&NSString::from_str(type_name))
+                .map(|data| data.to_vec()))
+        })
     }
 
-    fn restore_if(
-        &self,
-        snapshot: &ClipboardSnapshot,
-        expected_sequence: u64,
-    ) -> Result<bool, PlatformError> {
-        // Checked right before `clearContents`; the pasteboard has no lock to hold.
-        if pasteboard().changeCount() as u64 != expected_sequence {
-            return Ok(false);
-        }
-        self.restore(snapshot).map(|()| true)
+    fn clear(&self) -> u64 {
+        u64::try_from(self.pasteboard().clearContents()).unwrap_or(0)
+    }
+
+    fn write_items(&self, items: &[PasteboardItem]) -> Result<(), PlatformError> {
+        autoreleasepool(|_| {
+            let mut objects: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> =
+                Vec::with_capacity(items.len());
+            for types in items {
+                let item = NSPasteboardItem::new();
+                for (type_name, data) in types {
+                    if !item
+                        .setData_forType(&NSData::with_bytes(data), &NSString::from_str(type_name))
+                    {
+                        return Err(write_error());
+                    }
+                }
+                objects.push(ProtocolObject::from_retained(item));
+            }
+            if self
+                .pasteboard()
+                .writeObjects(&NSArray::from_retained_slice(&objects))
+            {
+                Ok(())
+            } else {
+                Err(write_error())
+            }
+        })
     }
 
     fn read_text(&self) -> Result<Option<String>, PlatformError> {
-        Ok(pasteboard()
+        Ok(self
+            .pasteboard()
             .stringForType(string_type())
             .map(|s| s.to_string()))
     }
+}
 
-    fn write_text_transient(&self, text: &str) -> Result<(), PlatformError> {
-        let pb = pasteboard();
-        pb.clearContents();
-        set_string(&pb, text)?;
-        let empty = NSData::new();
-        for marker in [TRANSIENT_TYPE, CONCEALED_TYPE] {
-            if !pb.setData_forType(Some(&empty), &NSString::from_str(marker)) {
-                return Err(write_error());
-            }
-        }
-        Ok(())
+/// The macOS clipboard over the general pasteboard.
+pub type MacClipboard = PasteboardClipboard<NsPasteboard>;
+
+impl MacClipboard {
+    pub fn new() -> Self {
+        Self::with_backend(NsPasteboard::general())
     }
+}
 
-    fn write_text(&self, text: &str) -> Result<(), PlatformError> {
-        let pb = pasteboard();
-        pb.clearContents();
-        set_string(&pb, text)
+impl Default for MacClipboard {
+    fn default() -> Self {
+        Self::new()
     }
 }

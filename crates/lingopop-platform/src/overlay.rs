@@ -1,4 +1,6 @@
-//! Blocking native region selection and physical-pixel geometry.
+//! Blocking native region selection in desktop space. Windows desktop units are physical
+//! pixels (existing helpers below); Mac uses Quartz points and MacGeometry::selection_accepted
+//! for the ten-backing-pixel threshold on the starting display (native overlay: Task 16).
 use crate::{PlatformError, Point, Rect, Size};
 
 pub trait RegionOverlay: Send + Sync {

@@ -4,6 +4,7 @@
 
 use lingopop_core::errors::TranslationError;
 use lingopop_core::provider::ProviderType;
+use lingopop_platform::pasteboard::UNSUPPORTED_SNAPSHOT;
 use lingopop_platform::{PermissionKind, PlatformError};
 
 use crate::gate::GateError;
@@ -20,8 +21,17 @@ pub const KEY_NO_TEXT_FOUND: &str = "No text found in the selected area. Try a l
 pub const KEY_SELECTION_TOO_SMALL: &str = "Selection is too small. Try selecting a larger area.";
 /// NEW (Windows only).
 pub const KEY_INPUT_BLOCKED: &str = "LingoPop can't reach an app running as administrator. Run LingoPop as administrator, or copy and paste the text manually.";
-/// NEW (Windows only).
-pub const KEY_FOREGROUND_LOST: &str = "Couldn't switch back to the original app, so nothing was replaced. The text is on your clipboard; paste it manually with Ctrl+V.";
+/// Windows catalog key (`i18n/windows.json`).
+pub const KEY_FOREGROUND_LOST_WINDOWS: &str = "Couldn't switch back to the original app, so nothing was replaced. The text is on your clipboard; paste it manually with Ctrl+V.";
+/// macOS catalog key (`i18n/macos.json`), the same sentence with the Command shortcut.
+pub const KEY_FOREGROUND_LOST_MACOS: &str = "Couldn't switch back to the original app, so nothing was replaced. The text is on your clipboard; paste it manually with ⌘V.";
+/// Replace did not paste because the original app could not be brought back or is no longer in
+/// front (a lost, stale or evicted target): the text is on the clipboard for a manual paste.
+/// Chosen by the build target so each platform shows its own paste shortcut.
+#[cfg(target_os = "macos")]
+pub const KEY_FOREGROUND_LOST: &str = KEY_FOREGROUND_LOST_MACOS;
+#[cfg(not(target_os = "macos"))]
+pub const KEY_FOREGROUND_LOST: &str = KEY_FOREGROUND_LOST_WINDOWS;
 /// NEW (Windows only).
 pub const KEY_OCR_UNAVAILABLE: &str = "No OCR language is installed. Add a language with Optical character recognition in Settings → Time & language → Language & region, or use Retry to send the image to AI.";
 /// NEW (Windows only).
@@ -31,8 +41,17 @@ pub const KEY_SCREEN_TIMEOUT: &str = "Screen capture or text recognition took to
 
 /// NEW (macOS only): Accessibility is missing, so the selection cannot be read or pasted.
 pub const KEY_PERMISSION_ACCESSIBILITY: &str = "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.";
+/// NEW (macOS only): Replace needs Accessibility to look at the foreground and send the paste.
+/// Shown as the notice of the kept result; nothing was pasted.
+pub const KEY_REPLACE_NEEDS_ACCESSIBILITY: &str =
+    "Replace needs Accessibility access. Allow LingoPop in System Settings, then try again.";
 /// NEW (macOS only): Screen Recording is missing, so Screen Translate cannot capture.
 pub const KEY_PERMISSION_SCREEN_RECORDING: &str = "LingoPop needs Screen Recording access to translate the screen. Grant it in Settings → Main → Permissions.";
+/// NEW (macOS only): the previous clipboard holds content that cannot be preserved (promised,
+/// lazy, `dyn.*`, oversized or unreadable types), so the operation stops before it touches the
+/// clipboard.
+pub const KEY_PASTEBOARD_UNSUPPORTED: &str =
+    "Clipboard content can't be preserved. Nothing was changed.";
 /// Mac catalog key (`MainSettingsTab.swift`). Conditional wording, never a claim that access was
 /// granted: macOS reads a new Screen Recording grant only after a relaunch, so this process cannot
 /// tell. Detail line of the denied message on a retry after `request` already ran, and the line
@@ -85,12 +104,26 @@ pub fn platform_message(e: &PlatformError) -> UserMessageView {
             plain(KEY_PERMISSION_SCREEN_RECORDING)
         }
         PlatformError::InvalidRegion => selection_too_small(),
+        PlatformError::Unsupported(what) if *what == UNSUPPORTED_SNAPSHOT => {
+            plain(KEY_PASTEBOARD_UNSUPPORTED)
+        }
         PlatformError::Unsupported(_)
         | PlatformError::HotkeyConflict
         | PlatformError::InvalidHotkey
         | PlatformError::Os { .. } => {
             UserMessageView::new(KEY_PLATFORM_GENERIC, vec![e.to_string()])
         }
+    }
+}
+
+/// Like `gate_message` for a failed Replace: a missing Accessibility permission has its own
+/// sentence (it is about replacing, not about reading the selection).
+pub fn replace_message(e: &GateError) -> UserMessageView {
+    match e {
+        GateError::Platform(PlatformError::PermissionDenied(PermissionKind::Accessibility)) => {
+            plain(KEY_REPLACE_NEEDS_ACCESSIBILITY)
+        }
+        other => gate_message(other),
     }
 }
 
@@ -133,6 +166,25 @@ mod tests {
         assert_eq!(
             platform_message(&PlatformError::InputBlocked),
             plain(KEY_INPUT_BLOCKED)
+        );
+    }
+
+    #[test]
+    fn platform_message_unpreservable_pasteboard_has_its_own_key() {
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported(UNSUPPORTED_SNAPSHOT)),
+            plain(KEY_PASTEBOARD_UNSUPPORTED)
+        );
+        // Any other unsupported feature keeps the generic message.
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported("ocr")).key,
+            KEY_PLATFORM_GENERIC
+        );
+        assert_eq!(
+            gate_message(&GateError::Platform(PlatformError::Unsupported(
+                UNSUPPORTED_SNAPSHOT
+            ))),
+            plain(KEY_PASTEBOARD_UNSUPPORTED)
         );
     }
 
@@ -195,7 +247,46 @@ mod tests {
     #[test]
     fn platform_message_foreground_lost() {
         let m = plain(KEY_FOREGROUND_LOST);
-        assert!(m.key.contains("Ctrl+V") && m.args.is_empty());
+        assert!(m.args.is_empty());
+        assert!(KEY_FOREGROUND_LOST_WINDOWS.ends_with("Ctrl+V."));
+        assert!(KEY_FOREGROUND_LOST_MACOS.ends_with("⌘V."));
+        // Each build shows its own paste shortcut, never the other platform's.
+        if cfg!(target_os = "macos") {
+            assert_eq!(m.key, KEY_FOREGROUND_LOST_MACOS);
+            assert!(!m.key.contains("Ctrl+V"));
+        } else {
+            assert_eq!(m.key, KEY_FOREGROUND_LOST_WINDOWS);
+            assert!(!m.key.contains('⌘'));
+        }
+    }
+
+    #[test]
+    fn replace_message_names_accessibility_only_for_a_missing_permission() {
+        let denied = GateError::Platform(PlatformError::PermissionDenied(
+            PermissionKind::Accessibility,
+        ));
+        assert_eq!(
+            replace_message(&denied),
+            plain(KEY_REPLACE_NEEDS_ACCESSIBILITY)
+        );
+        // Reading the selection keeps its own wording.
+        assert_eq!(gate_message(&denied), plain(KEY_PERMISSION_ACCESSIBILITY));
+        assert_ne!(
+            KEY_REPLACE_NEEDS_ACCESSIBILITY,
+            KEY_PERMISSION_ACCESSIBILITY
+        );
+        // Everything else is the ordinary gate message.
+        for e in [
+            GateError::Busy,
+            GateError::TimedOut,
+            GateError::Panicked,
+            GateError::Platform(PlatformError::InputBlocked),
+            GateError::Platform(PlatformError::PermissionDenied(
+                PermissionKind::ScreenRecording,
+            )),
+        ] {
+            assert_eq!(replace_message(&e), gate_message(&e));
+        }
     }
 
     #[test]

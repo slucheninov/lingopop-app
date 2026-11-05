@@ -20,15 +20,11 @@ fn native_bundle_on_macos_has_unsupported_capture_and_ocr() {
 }
 
 #[test]
-fn mac_monitors_report_a_main_display() {
+fn mac_monitors_start_with_an_empty_cache() {
+    // Native topology is initialized only in main-thread shell setup. Construction and
+    // worker reads are display-independent, including on headless CI.
     let monitors = native().monitors.monitors().unwrap();
-    assert!(!monitors.is_empty(), "no active display");
-    for m in &monitors {
-        assert!(!m.bounds.is_empty(), "{m:?}");
-        assert_eq!(m.bounds, m.work_area);
-        assert!(m.scale_factor >= 1.0, "{m:?}");
-    }
-    assert_eq!(monitors.iter().filter(|m| m.primary).count(), 1);
+    assert!(monitors.is_empty());
 }
 
 #[test]

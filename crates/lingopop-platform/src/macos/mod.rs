@@ -2,6 +2,7 @@
 //! Every `unsafe` block of the crate's macOS code lives under this module and
 //! carries a `// SAFETY:` comment.
 
+mod ax;
 mod capture;
 mod clipboard;
 mod foreground;
@@ -9,9 +10,10 @@ mod keys;
 mod last_foreground;
 mod monitors;
 mod ocr;
+mod procinfo;
 
 pub use capture::MacCapture;
-pub use clipboard::MacClipboard;
+pub use clipboard::{MacClipboard, NsPasteboard};
 pub use foreground::MacForeground;
 pub use keys::MacKeys;
 pub use last_foreground::MacLastForeground;

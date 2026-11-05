@@ -174,3 +174,114 @@ fn replace_transient_write_failure_restores_emptied_clipboard() {
     assert_eq!(r.clip.text(), some("ORIGINAL"));
     assert!(r.keys.events().is_empty());
 }
+
+#[test]
+fn replace_fallback_refuses_when_the_clipboard_is_not_preservable() {
+    let r = rig();
+    r.clip.set_unpreservable(true);
+    r.fg.fail_restore(true);
+    assert_eq!(
+        replace(&r),
+        Err(PlatformError::Unsupported("pasteboard snapshot"))
+    );
+    assert_eq!(r.clip.text(), some("ORIGINAL"));
+    let calls = r.clip.calls();
+    assert!(!calls.contains(&ClipboardCall::Write));
+    assert!(!calls.contains(&ClipboardCall::WriteTransient));
+    assert!(r.keys.events().is_empty());
+}
+
+#[test]
+fn replace_default_clipboard_is_always_preservable_and_takes_no_extra_call() {
+    // The default `check_preservable` is `Ok(())`: the Windows-like path is unchanged.
+    let r = rig();
+    r.fg.fail_restore(true);
+    assert_eq!(replace(&r), Ok(ReplaceOutcome::ForegroundLost));
+    assert_eq!(r.clip.calls(), vec![ClipboardCall::Write]);
+}
+
+// --- `is_current_target`: the last look before the keystroke (NOT atomic) ---
+
+#[test]
+fn replace_checks_the_target_once_right_before_the_paste() {
+    let r = rig();
+    assert_eq!(replace(&r), Ok(ReplaceOutcome::Pasted));
+    assert_eq!(r.fg.target_checks(), vec![T]);
+    let events: Vec<Event> = r.clip.log().events().into_iter().map(|e| e.event).collect();
+    assert!(events.contains(&Event::Key(KeyCall::SendPaste)));
+}
+
+#[test]
+fn foreground_change_after_restore_never_sends_to_the_new_app() {
+    // The check is not atomic (the user can still switch between the answer and the
+    // keystroke); this pins the case it does catch: the switch happened before the check.
+    let r = rig();
+    r.fg.switch_foreground_on_next_target_check(WindowHandle(55));
+    assert_eq!(replace(&r), Ok(ReplaceOutcome::ForegroundLost));
+    assert!(r.keys.pasted().is_empty());
+    assert!(!r.keys.events().contains(&KeyCall::SendPaste));
+    // The text is an ordinary clipboard entry for a manual paste.
+    assert_eq!(r.clip.text(), some("NEW"));
+    let calls = r.clip.calls();
+    assert!(calls.contains(&ClipboardCall::Write));
+}
+
+#[test]
+fn lost_target_never_overwrites_a_foreign_clipboard_write() {
+    let r = rig();
+    r.fg.switch_foreground_on_next_target_check(WindowHandle(55));
+    let clip = r.clip.clone();
+    r.fg.on_target_check(Box::new(move || clip.set_external_text("FOREIGN")));
+    assert_eq!(replace(&r), Err(PlatformError::ClipboardBusy));
+    assert_eq!(r.clip.text(), some("FOREIGN"));
+    assert!(r.keys.pasted().is_empty());
+    assert!(!r.keys.events().contains(&KeyCall::SendPaste));
+    assert!(!r.clip.calls().contains(&ClipboardCall::Write));
+    assert!(!r.clip.calls().contains(&ClipboardCall::Restore));
+}
+
+#[test]
+fn stale_target_is_a_lost_target_not_a_paste() {
+    let r = rig();
+    r.fg.retire_target(T);
+    assert_eq!(replace(&r), Ok(ReplaceOutcome::ForegroundLost));
+    assert!(r.keys.pasted().is_empty());
+    assert_eq!(r.clip.text(), some("NEW"));
+}
+
+#[test]
+fn revoked_accessibility_never_pastes() {
+    use lingopop_platform::fake::FakePermissions;
+    use lingopop_platform::{PermissionKind, PermissionState};
+    let r = rig();
+    let perms = FakePermissions::new();
+    perms.set_state(PermissionKind::Accessibility, PermissionState::Denied);
+    r.fg.require_permission(perms.clone());
+    r.keys.require_permission(perms);
+    assert_eq!(
+        replace(&r),
+        Err(PlatformError::PermissionDenied(
+            PermissionKind::Accessibility
+        ))
+    );
+    // `send_paste` was never even attempted, and the user's clipboard is back.
+    let attempts = r
+        .keys
+        .events()
+        .into_iter()
+        .filter(|e| *e == KeyCall::SendPaste)
+        .count();
+    assert_eq!(attempts, 0);
+    assert!(r.keys.pasted().is_empty());
+    assert_eq!(r.clip.text(), some("ORIGINAL"));
+}
+
+#[test]
+fn different_frontmost_after_pid_switch_is_not_the_target() {
+    use lingopop_platform::ForegroundWindow as _;
+    let r = rig();
+    r.fg.set_current(Some(T));
+    assert_eq!(r.fg.is_current_target(T), Ok(true));
+    r.fg.set_current(Some(WindowHandle(99)));
+    assert_eq!(r.fg.is_current_target(T), Ok(false));
+}
