@@ -144,16 +144,22 @@ impl<N: NativeScreen> ScreenCaptureAdapter<N> {
             .create_image(tile.display_id, NativeRect::from(enclosing))?;
         // Re-check before the image is used: on failure it is dropped here, never exposed.
         self.guard(plan)?;
-        Ok(crop_to_plan(bitmap, c, enclosing, scale))
+        crop_to_plan(bitmap, c, enclosing, scale)
     }
 }
 
 /// Cuts the bitmap of the integral-point rect `enclosing` back to the plan's exact pixel crop
 /// `crop` (display-local backing pixels). The offset is `crop - enclosing * scale` pixels, so a
 /// crop that already is integral in points is returned untouched. A bitmap whose size does not
-/// match the scale (an OS that resampled it) cannot be indexed exactly and is returned whole:
-/// `blit` then resamples it into the destination as before.
-fn crop_to_plan(bitmap: NativeBitmap, crop: Rect, enclosing: Rect, scale: f64) -> NativeBitmap {
+/// match `enclosing * scale` (an OS that resampled it), an invalid one, or a crop outside it
+/// cannot be indexed exactly: it fails with the fixed-text capture error (never returned whole,
+/// which would resample the widened area, pixels outside the plan's crop, into the selection).
+fn crop_to_plan(
+    bitmap: NativeBitmap,
+    crop: Rect,
+    enclosing: Rect,
+    scale: f64,
+) -> Result<NativeBitmap, PlatformError> {
     let expect_w = f64::from(enclosing.width) * scale;
     let expect_h = f64::from(enclosing.height) * scale;
     let ox = (f64::from(crop.x) - f64::from(enclosing.x) * scale).round();
@@ -161,7 +167,7 @@ fn crop_to_plan(bitmap: NativeBitmap, crop: Rect, enclosing: Rect, scale: f64) -
     let sized = (f64::from(bitmap.width) - expect_w).abs() < 1.0
         && (f64::from(bitmap.height) - expect_h).abs() < 1.0;
     let (Ok(cw), Ok(ch)) = (u32::try_from(crop.width), u32::try_from(crop.height)) else {
-        return bitmap;
+        return Err(os_error());
     };
     let fits = ox >= 0.0
         && oy >= 0.0
@@ -169,12 +175,13 @@ fn crop_to_plan(bitmap: NativeBitmap, crop: Rect, enclosing: Rect, scale: f64) -
         && ch > 0
         && ox + f64::from(cw) <= f64::from(bitmap.width)
         && oy + f64::from(ch) <= f64::from(bitmap.height);
-    if !sized || !fits || validate_bitmap(&bitmap).is_err() {
-        return bitmap;
+    validate_bitmap(&bitmap)?;
+    if !sized || !fits {
+        return Err(os_error());
     }
     let (ox, oy) = (ox as usize, oy as usize);
     if ox == 0 && oy == 0 && cw == bitmap.width && ch == bitmap.height {
-        return bitmap;
+        return Ok(bitmap);
     }
     let row = cw as usize * 4;
     let mut data = Vec::with_capacity(row * ch as usize);
@@ -182,18 +189,29 @@ fn crop_to_plan(bitmap: NativeBitmap, crop: Rect, enclosing: Rect, scale: f64) -
         let start = (oy + y) * bitmap.bytes_per_row + ox * 4;
         data.extend_from_slice(&bitmap.data[start..start + row]);
     }
-    NativeBitmap {
+    Ok(NativeBitmap {
         width: cw,
         height: ch,
         bytes_per_row: row,
         format: bitmap.format,
         data,
-    }
+    })
 }
 
 impl<N: NativeScreen> ScreenCapture for ScreenCaptureAdapter<N> {
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError> {
         self.capture_region_at(region, None)
+    }
+
+    fn ensure_topology(&self, revision: Option<u64>) -> Result<(), PlatformError> {
+        // The region was picked against another layout: its coordinates are not ours any more.
+        if revision.is_some_and(|r| r != self.geometry.snapshot().topology_revision()) {
+            return Err(PlatformError::Os {
+                api: TOPOLOGY_CHANGED_API,
+                code: 0,
+            });
+        }
+        Ok(())
     }
 
     fn capture_region_at(
@@ -203,14 +221,8 @@ impl<N: NativeScreen> ScreenCapture for ScreenCaptureAdapter<N> {
     ) -> Result<CapturedImage, PlatformError> {
         // Never reach the native API unpermitted (it would return a wallpaper-only image).
         self.require_permission()?;
+        self.ensure_topology(revision)?;
         let geometry = self.geometry.snapshot();
-        // The region was picked against another layout: its coordinates are not ours any more.
-        if revision.is_some_and(|r| r != geometry.topology_revision()) {
-            return Err(PlatformError::Os {
-                api: TOPOLOGY_CHANGED_API,
-                code: 0,
-            });
-        }
         let clipped = validate_region(region, &geometry.monitors())?;
         let plan = geometry.capture_plan(clipped)?;
         let (width, height) = plan.output_size;
@@ -358,7 +370,8 @@ mod tests {
             Rect::new(1, 1, 5, 5),
             Rect::new(0, 0, 4, 4),
             1.5,
-        );
+        )
+        .unwrap();
         assert_eq!((out.width, out.height, out.bytes_per_row), (5, 5, 20));
         assert_eq!(rgb_at(&out, 0, 0), [1, 1, 0]);
         assert_eq!(rgb_at(&out, 4, 4), [5, 5, 0]);
@@ -367,15 +380,38 @@ mod tests {
     #[test]
     fn an_integral_crop_is_returned_untouched() {
         let b = numbered(4, 4);
-        let out = crop_to_plan(b.clone(), Rect::new(2, 2, 4, 4), Rect::new(1, 1, 2, 2), 2.0);
+        let out =
+            crop_to_plan(b.clone(), Rect::new(2, 2, 4, 4), Rect::new(1, 1, 2, 2), 2.0).unwrap();
         assert_eq!(out, b);
     }
 
     #[test]
-    fn a_bitmap_that_does_not_match_the_scale_is_returned_whole() {
-        let b = numbered(9, 9);
-        let out = crop_to_plan(b.clone(), Rect::new(1, 1, 5, 5), Rect::new(0, 0, 4, 4), 1.5);
-        assert_eq!(out, b);
+    fn a_bitmap_that_does_not_match_the_scale_is_an_error_not_the_widened_area() {
+        // 9x9 for an enclosing 4x4 at scale 1.5 (expected 6x6): the exact crop cannot be
+        // established, so the capture fails with the fixed-text error.
+        let err = crop_to_plan(
+            numbered(9, 9),
+            Rect::new(1, 1, 5, 5),
+            Rect::new(0, 0, 4, 4),
+            1.5,
+        )
+        .unwrap_err();
+        assert_eq!(err, os_error());
+    }
+
+    #[test]
+    fn a_crop_outside_the_bitmap_or_an_invalid_bitmap_is_an_error() {
+        let outside = crop_to_plan(
+            numbered(6, 6),
+            Rect::new(3, 3, 5, 5),
+            Rect::new(0, 0, 4, 4),
+            1.5,
+        );
+        assert_eq!(outside.unwrap_err(), os_error());
+        let mut broken = numbered(6, 6);
+        broken.data.truncate(10);
+        let invalid = crop_to_plan(broken, Rect::new(1, 1, 5, 5), Rect::new(0, 0, 4, 4), 1.5);
+        assert_eq!(invalid.unwrap_err(), os_error());
     }
 
     #[test]

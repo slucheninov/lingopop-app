@@ -197,6 +197,10 @@ impl Orchestrator {
         let captured = d
             .gate
             .run(move || {
+                // A pick made on a layout that is gone is a failed capture, whatever the new
+                // monitors look like: check the revision before the region is clipped (an
+                // outside region would otherwise read as a too-small selection).
+                capture.ensure_topology(revision)?;
                 let list = monitors.monitors()?;
                 let clipped = validate_region(region, &list)?;
                 let image = capture.capture_region_at(clipped, revision)?;

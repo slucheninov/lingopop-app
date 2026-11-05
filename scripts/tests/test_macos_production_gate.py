@@ -221,6 +221,62 @@ class MacosProductionGate(unittest.TestCase):
         path.write_text("jobs:\n  b:\n    steps:\n      - run: cargo tree && cargo test --all-features\n")
         self.assert_fails("nightly.yml builds with --all-features")
 
+    def test_a_folded_or_literal_multiline_yaml_build_fails(self):
+        path = self.root / ".github/workflows/nightly.yml"
+        for body in [
+            # `>` folds the lines into ONE command.
+            "      - run: >\n          cargo build --release\n          --all-features\n",
+            "      - run: >-\n          cargo build\n            --release --all-features\n",
+            # `|` keeps the lines; the continuation joins them.
+            "      - run: |\n          cargo build --release \\\n            --all-features\n",
+            # A plain multi-line scalar folds too.
+            "      - run: cargo build --release\n          --all-features\n",
+        ]:
+            with self.subTest(body=body):
+                path.write_text("jobs:\n  b:\n    steps:\n" + body)
+                self.assert_fails("nightly.yml builds with --all-features")
+
+    def test_cargo_global_options_before_the_subcommand_do_not_hide_a_build(self):
+        path = self.root / ".github/workflows/nightly.yml"
+        for command in [
+            "cargo --color always build --release --all-features",
+            "cargo --color=always test --all-features",
+            "cargo +nightly -Z unstable-options build --all-features",
+            "cargo --locked -C ../x clippy --all-features",
+        ]:
+            with self.subTest(command=command):
+                path.write_text(f"jobs:\n  b:\n    steps:\n      - run: {command}\n")
+                self.assert_fails("nightly.yml builds with --all-features")
+
+    def test_a_global_option_before_cargo_tree_is_still_fine(self):
+        (self.root / ".github/workflows/deps.yml").write_text(
+            "jobs:\n  b:\n    steps:\n      - run: >\n          cargo --color always tree\n"
+            "          --all-features\n      - run: cargo --color always build --release\n"
+        )
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_an_inline_comment_is_not_a_flag(self):
+        (self.root / ".github/workflows/nightly.yml").write_text(
+            "jobs:\n  b:\n    steps:\n"
+            "      - run: cargo build --release # --all-features is forbidden here\n"
+            "      - run: |\n          cargo test --release   # never --all-features\n"
+            "          echo \"a # b\" && cargo build   # --all-features\n"
+        )
+        notes = self.root / "scripts" / "package-notes.sh"  # a name that makes every command count
+        notes.parent.mkdir(parents=True, exist_ok=True)
+        notes.write_text(
+            "#!/usr/bin/env bash\ncargo build --release # --all-features is forbidden\n"
+        )
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_flag_after_a_quoted_hash_is_still_caught(self):
+        (self.root / ".github/workflows/nightly.yml").write_text(
+            "jobs:\n  b:\n    steps:\n      - run: cargo build --features \"a#b\" --all-features\n"
+        )
+        self.assert_fails("nightly.yml builds with --all-features")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -825,6 +825,77 @@ fn a_panic_in_the_pick_still_restores_the_previous_app_once_and_releases_the_lea
     pump.join().unwrap();
 }
 
+/// A main loop that survives a panicking job (like a run loop whose job is caught): each job
+/// that unwinds is dropped and the next one still runs.
+fn surviving_dispatcher(
+    main: Arc<FakeMainThread>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    panics: Arc<std::sync::atomic::AtomicUsize>,
+) -> JoinHandle<()> {
+    use std::sync::atomic::Ordering::SeqCst;
+    std::thread::spawn(move || {
+        while !stop.load(SeqCst) {
+            main.wait_for_pending(1);
+            let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| main.run_pending()));
+            if ran.is_err() {
+                panics.fetch_add(1, SeqCst);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    })
+}
+
+#[test]
+fn a_backend_panic_in_the_middle_of_a_pick_still_restores_once_and_releases_the_lease() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+    let h = Harness::manual(one_display(1.0));
+    let (stop, panics) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let dispatcher = surviving_dispatcher(h.main.clone(), stop.clone(), panics.clone());
+    let (tx, join) = h.pick_created(1);
+    // The next draw (a job on the main thread) panics: the dispatcher drops that job and lives.
+    h.backend.panic_next_draw();
+    assert!(h.backend.fire(OverlayInput::Down(p(10, 10))));
+    assert!(h.backend.fire(OverlayInput::Move(p(100, 100))));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while panics.load(SeqCst) == 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        panics.load(SeqCst),
+        1,
+        "the injected backend panic ran once"
+    );
+    assert!(h.active.is_set(), "the pick is still in progress");
+    // The user cancels: the normal teardown still runs on the surviving dispatcher.
+    drop(tx);
+    assert_eq!(join.join().unwrap(), Ok(None));
+    assert_eq!(h.backend.cleanups(), 1);
+    assert_eq!(h.backend.restores(), 1, "restored exactly once");
+    assert!(
+        h.backend.cleanup_seq(1).unwrap() < h.backend.restore_seq(1).unwrap(),
+        "the restore follows the window removal"
+    );
+    assert!(!h.active.is_set(), "the lease is released");
+    // The dispatcher survived the panic: a following pick works end to end.
+    let (_tx2, join2) = h.pick_created(2);
+    for e in [
+        OverlayInput::Down(p(10, 10)),
+        OverlayInput::Move(p(200, 200)),
+        OverlayInput::Up(p(200, 200)),
+    ] {
+        assert!(h.backend.fire(e));
+    }
+    assert_eq!(join2.join().unwrap(), Ok(Some(Rect::new(10, 10, 190, 190))));
+    assert_eq!(h.backend.restores(), 2);
+    assert!(!h.active.is_set());
+    stop.store(true, SeqCst);
+    h.main.close();
+    dispatcher.join().unwrap();
+}
+
 #[test]
 fn a_panic_in_the_pick_clears_the_overlay_flag_after_the_posted_cleanup() {
     let main = FakeMainThread::new();

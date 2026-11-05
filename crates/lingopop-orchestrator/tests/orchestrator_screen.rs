@@ -512,11 +512,65 @@ async fn a_topology_change_between_pick_and_capture_fails_the_capture() {
         error_key(&m),
         lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL
     );
-    assert_eq!(r.capture.revisions(), vec![Some(7)]);
+    assert_eq!(r.capture.topology_checks(), vec![Some(7)]);
+    assert!(
+        r.capture.regions().is_empty(),
+        "the stale pick is refused before any capture"
+    );
     assert!(
         r.ocr.threads.lock().unwrap().is_empty(),
         "no OCR of a stale rect"
     );
+}
+
+#[tokio::test]
+async fn a_stale_pick_outside_the_current_monitors_is_still_a_failed_capture() {
+    // The pick was on a display that is gone: its rect lies outside every current monitor, so
+    // clipping alone would say InvalidRegion ("selection too small"). The revision wins.
+    let outside = Rect::new(5000, 4000, 200, 50);
+    let r = rig_full(
+        Ok(Some(outside)),
+        ocr_ok(OCR_TEXT),
+        ok_transport(),
+        &KEYED,
+        &[],
+    );
+    r.picker.set_revision(Some(7));
+    r.capture.set_live_revision(Some(8));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_SCREEN_CAPTURE_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    assert_ne!(
+        error_key(&m),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL
+    );
+    assert_eq!(r.capture.topology_checks(), vec![Some(7)]);
+    assert!(r.capture.regions().is_empty(), "zero native capture calls");
+    assert!(r.ocr.threads.lock().unwrap().is_empty(), "zero OCR calls");
+}
+
+#[tokio::test]
+async fn an_outside_pick_without_a_revision_is_still_a_small_selection() {
+    // Windows / None path unchanged: clipping decides.
+    let outside = Rect::new(5000, 4000, 200, 50);
+    let r = rig_full(
+        Ok(Some(outside)),
+        ocr_ok(OCR_TEXT),
+        ok_transport(),
+        &KEYED,
+        &[],
+    );
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(
+        error_key(&last_model(&r)),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL
+    );
+    assert!(r.capture.regions().is_empty());
 }
 
 #[tokio::test]

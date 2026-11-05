@@ -15,6 +15,7 @@ pub struct FakeCapture {
     permissions: Option<Arc<FakePermissions>>,
     failure: Mutex<Option<PlatformError>>,
     revisions: Mutex<Vec<Option<u64>>>,
+    topology_checks: Mutex<Vec<Option<u64>>>,
     live_revision: Mutex<Option<u64>>,
 }
 
@@ -26,6 +27,7 @@ impl FakeCapture {
             permissions: None,
             failure: Mutex::new(None),
             revisions: Mutex::new(Vec::new()),
+            topology_checks: Mutex::new(Vec::new()),
             live_revision: Mutex::new(None),
         }
     }
@@ -40,6 +42,14 @@ impl FakeCapture {
     /// The revision passed with every capture, in order (`None` for a plain `capture_region`).
     pub fn revisions(&self) -> Vec<Option<u64>> {
         self.revisions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// The revision of every `ensure_topology` call (the check made before clipping), in order.
+    pub fn topology_checks(&self) -> Vec<Option<u64>> {
+        self.topology_checks
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone()
@@ -68,6 +78,21 @@ impl FakeCapture {
 }
 
 impl ScreenCapture for FakeCapture {
+    fn ensure_topology(&self, revision: Option<u64>) -> Result<(), PlatformError> {
+        self.topology_checks
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(revision);
+        let live = *self.live_revision.lock().unwrap_or_else(|p| p.into_inner());
+        match (revision, live) {
+            (Some(picked), Some(live)) if picked != live => Err(PlatformError::Os {
+                api: "display topology changed",
+                code: 0,
+            }),
+            _ => Ok(()),
+        }
+    }
+
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError> {
         self.capture_region_at(region, None)
     }

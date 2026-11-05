@@ -65,6 +65,15 @@ pub trait ScreenCapture: Send + Sync {
         let _ = revision;
         self.capture_region(region)
     }
+    /// Only the revision check of [`capture_region_at`](Self::capture_region_at), with no
+    /// capture. The caller runs it BEFORE it clips the region against the live monitors: a
+    /// region picked on a layout that is gone may lie outside the new monitors, and that is a
+    /// stale pick (`Os { api: "display topology changed" }`), not a selection the user drew
+    /// too small (`InvalidRegion`). The default accepts everything (no revision on Windows).
+    fn ensure_topology(&self, revision: Option<u64>) -> Result<(), PlatformError> {
+        let _ = revision;
+        Ok(())
+    }
 }
 
 /// Box-filter downsampling for OCR. A zero limit is treated as one pixel.

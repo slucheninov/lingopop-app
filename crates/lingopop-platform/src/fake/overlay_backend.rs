@@ -40,6 +40,7 @@ struct State {
     max_live: usize,
     hold_cleanup: bool,
     panic_cleanup: bool,
+    panic_draw: bool,
     fail_create: Option<PlatformError>,
     watched: Option<OverlayActive>,
     flag_log: Vec<(&'static str, bool)>,
@@ -164,6 +165,10 @@ impl FakeOverlayBackend {
     pub fn panic_next_cleanup(&self) {
         self.state().panic_cleanup = true;
     }
+    /// The next draw panics (a backend that unwinds on the main thread in the middle of a pick).
+    pub fn panic_next_draw(&self) {
+        self.state().panic_draw = true;
+    }
     /// The next create fails with `error`.
     pub fn fail_next_create(&self, error: PlatformError) {
         self.state().fail_create = Some(error);
@@ -243,7 +248,12 @@ impl OverlayBackend for FakeOverlayBackend {
     }
 
     fn draw(&self, selection: Option<Rect>) {
-        self.state().calls.push(OverlayCall::Draw(selection));
+        let mut s = self.state();
+        if std::mem::take(&mut s.panic_draw) {
+            drop(s);
+            panic!("fake overlay draw panicked");
+        }
+        s.calls.push(OverlayCall::Draw(selection));
     }
 
     fn cleanup(&self) {

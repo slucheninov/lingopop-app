@@ -243,8 +243,10 @@ fn frontmost_other_app() -> Option<AppIdentity> {
 /// Whether the previous app gets focus back: only while LingoPop is still the active app (not
 /// after the user switched away), never to ourselves, an exited app or a process that is not
 /// the one we remembered. "Same process" is `AppIdentity::same_process` (pid AND a readable,
-/// equal kernel start time), and the remembered app must also have a launch date: two missing
-/// launch dates are no evidence of identity, so such an app is never refocused (fail safe).
+/// equal kernel start time), and the remembered app must also have a launch date that the
+/// current one repeats exactly: two missing launch dates are no evidence of identity, and a
+/// date that disappeared (`Some` then `None`) is not a match either, so such an app is never
+/// refocused (fail safe; `same_process` alone treats a missing date as compatible).
 fn should_restore(
     own_active: bool,
     terminated: bool,
@@ -256,6 +258,7 @@ fn should_restore(
         && !terminated
         && !is_self
         && previous.launch.is_some()
+        && previous.launch == current.launch
         && previous.same_process(current)
 }
 
@@ -507,5 +510,17 @@ mod tests {
         // An unreadable start time is not the same process either.
         let b = app(7, None, Some(5));
         assert!(!should_restore(true, false, false, &b, &b));
+    }
+
+    #[test]
+    fn a_launch_date_that_disappeared_or_changed_is_not_the_same_app() {
+        let remembered = app(7, Some(100), Some(5));
+        // Some -> None: same_process alone would accept it (missing metadata is compatible).
+        let lost = app(7, Some(100), None);
+        assert!(!should_restore(true, false, false, &remembered, &lost));
+        // The reverse asymmetry and a different date are refused too.
+        assert!(!should_restore(true, false, false, &lost, &remembered));
+        let other = app(7, Some(100), Some(6));
+        assert!(!should_restore(true, false, false, &remembered, &other));
     }
 }
