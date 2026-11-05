@@ -202,6 +202,7 @@ fn macos_message_keys_have_all_translations() {
         KEY_FOREGROUND_LOST_MACOS,
         KEY_REPLACE_NEEDS_ACCESSIBILITY,
         KEY_PERMISSION_ACCESSIBILITY,
+        KEY_ESCAPE_UNAVAILABLE,
     ] {
         for language in [Language::Pl, Language::Uk, Language::De] {
             assert_ne!(

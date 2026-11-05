@@ -1,6 +1,9 @@
 //! The text-operation flow over platform fakes, a `FakeTransport` and a recording popup.
 
+#[path = "support/presentation_transport.rs"]
+mod presentation_transport;
 use lingopop_platform::fake::{FakeDismissWatcher, FakePopupWindow};
+use presentation_transport::AfterPresentation;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::ThreadId;
@@ -201,6 +204,11 @@ fn rig_with(transport: Arc<dyn Transport>, opts: RigOptions) -> Rig {
         ..Settings::default()
     };
     let config = Arc::new(FakeConfig::new(settings, snapshot_with(opts.keys_for)));
+    let popup_barrier = popup.clone();
+    let transport = Arc::new(AfterPresentation {
+        transport,
+        flush: Arc::new(move || popup_barrier.flush()),
+    });
     let deps = Deps {
         status: None,
         platform,
@@ -279,7 +287,7 @@ async fn translate_happy_path_shows_loading_then_result() {
     let r = rig(t.clone(), "Hello");
     r.orch.trigger(AIOperation::Translate).await;
     let calls = r.popup.calls();
-    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(calls.len(), 2);
     let PopupCall::ShowAt(origin, loading) = &calls[0] else {
         panic!("first call must be show_at: {calls:?}")
     };
@@ -292,7 +300,7 @@ async fn translate_happy_path_shows_loading_then_result() {
         PopupViewModel::loading(AIOperation::Translate, "Hello")
     );
     let PopupCall::Update(done) = &calls[1] else {
-        panic!("second call must be update: {calls:?}")
+        panic!("second call must update the result: {calls:?}");
     };
     assert_eq!(result_text(done), Some("TRANSLATED"));
     assert_eq!(t.requests().len(), 1);

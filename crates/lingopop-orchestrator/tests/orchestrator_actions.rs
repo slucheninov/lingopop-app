@@ -1,4 +1,6 @@
 //! Popup actions over real runner requests and deterministic platform fakes.
+#[path = "support/presentation_transport.rs"]
+mod presentation_transport;
 use lingopop_core::{
     http::{FakeTransport, HttpResponse, Transport},
     operation::AIOperation,
@@ -15,6 +17,7 @@ use lingopop_orchestrator::{
     INPUT_BLOCKED_AUTO_CLOSE, *,
 };
 use lingopop_platform::{fake::*, *};
+use presentation_transport::AfterPresentation;
 use std::sync::{Arc, Mutex};
 
 struct Protector;
@@ -34,23 +37,22 @@ struct Popup {
     hidden_at: Mutex<Vec<usize>>,
 }
 impl PopupView for Popup {
-    fn show_at(&self, p: Point, s: (f64, f64), m: &PopupViewModel) -> bool {
-        self.view.show_at(p, s, m)
+    fn submit(&self, cmd: PresentationCommand) -> Result<AckReceiver, PresentationQueueError> {
+        if matches!(cmd.kind, PresentationKind::Hide) {
+            self.hidden_at.lock().unwrap().push(self.log.events().len());
+        }
+        self.view.submit(cmd)
     }
-    fn update(&self, m: &PopupViewModel) {
-        self.view.update(m);
+    fn bind(&self, fence: Arc<PresentationFence>, sink: Arc<AckSink>) {
+        self.view.bind(fence, sink);
     }
-    fn resize(&self, o: Point, s: (f64, f64)) {
-        self.view.resize(o, s);
-    }
-    fn hide(&self) {
-        self.hidden_at.lock().unwrap().push(self.log.events().len());
-        self.view.hide();
-    }
+}
+impl Popup {
     fn is_visible(&self) -> bool {
         self.view.is_visible()
     }
 }
+
 struct Rig {
     logs: Arc<Mutex<Vec<String>>>,
     orch: Orchestrator,
@@ -106,6 +108,11 @@ fn rig_full(
     let sink = logs.clone();
     let log: Arc<lingopop_platform::LogFn> =
         Arc::new(move |m: &str| sink.lock().unwrap().push(m.to_string()));
+    let popup_barrier = popup.clone();
+    let t = Arc::new(AfterPresentation {
+        transport: t,
+        flush: Arc::new(move || popup_barrier.view.flush()),
+    });
     let orch = Orchestrator::new(Deps {
         status: None,
         platform: Platform {
@@ -184,10 +191,12 @@ fn body(t: &FakeTransport) -> serde_json::Value {
 async fn copy_writes_clipboard_and_keeps_popup() {
     let (r, _) = ready_rig();
     ready(&r).await;
+    let before = r.popup.view.calls();
     r.orch.copy().await;
+    assert_eq!(r.popup.view.calls(), before, "Copy makes no popup call");
     assert_eq!(r.clip.text().as_deref(), Some("DISPLAYED"));
     assert!(r.popup.is_visible());
-    assert_eq!(r.popup.view.calls().len(), 2);
+    assert!(matches!(model(&r).phase, PopupPhase::Result(_)));
 }
 #[tokio::test]
 async fn replace_hides_popup_before_paste() {
@@ -524,10 +533,12 @@ async fn reshow_uses_measured_size_for_dismiss_rect() {
     let (r, _) = ready_rig();
     ready(&r).await;
     r.orch.popup_resized((700.0, 400.0));
+    r.popup.view.flush();
     for _ in 0..2 {
         r.clip
             .fail_next(FakeOp::WriteTransient, PlatformError::ClipboardBusy);
         r.orch.replace().await;
+        r.popup.view.flush();
     }
     let starts: Vec<Rect> = r
         .dismiss
@@ -559,6 +570,7 @@ async fn resize_near_edge_is_clamped() {
     );
     ready(&r).await;
     r.orch.popup_resized((700.0, 400.0));
+    r.popup.view.flush();
     let Some(PopupCall::Resize(origin, size)) = r.popup.view.calls().last().cloned() else {
         panic!("expected a Resize call");
     };
@@ -715,6 +727,7 @@ async fn popup_resized_updates_dismiss_rect() {
     ready(&r).await;
     let popup_calls = r.popup.view.calls().len();
     r.orch.popup_resized((700.0, 400.0));
+    r.popup.view.flush();
     let Some(PopupCall::Resize(_, size)) = r.popup.view.calls().last().cloned() else {
         panic!("expected a Resize call");
     };
@@ -726,6 +739,64 @@ async fn popup_resized_updates_dismiss_rect() {
     ));
 }
 #[tokio::test]
+async fn resize_after_copy_resizes_the_visible_popup() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    // A successful Copy starts a new generation but presents nothing: the popup stays on
+    // screen under the generation that showed it.
+    r.orch.copy().await;
+    r.popup.view.flush();
+    assert!(r.popup.view.is_visible());
+    let popup_calls = r.popup.view.calls().len();
+    r.orch.popup_resized((700.0, 400.0));
+    r.popup.view.flush();
+    let calls = r.popup.view.calls();
+    assert_eq!(calls.len(), popup_calls + 1, "exactly one native resize");
+    let Some(PopupCall::Resize(_, size)) = calls.last().cloned() else {
+        panic!("expected a Resize call");
+    };
+    assert_eq!(size, (700.0, 400.0));
+    assert!(matches!(r.orch.visibility(), Visibility::Visible(_)));
+    assert!(matches!(
+        r.dismiss.calls().last(),
+        Some(DismissCall::UpdateRect(rect)) if (rect.width, rect.height) == (1050, 600)
+    ));
+}
+#[tokio::test]
+async fn copy_during_in_flight_resize_keeps_the_popup_visible() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.popup.view.flush();
+    let (entered, release) = r.popup.view.hold_next_resize();
+    r.orch.popup_resized((700.0, 400.0));
+    entered.recv().expect("resize entered its native effect");
+    // Copy starts a new generation while the Resize is inside its effect.
+    r.orch.copy().await;
+    release.send(()).unwrap();
+    r.popup.view.flush();
+    assert!(r.popup.view.is_visible(), "popup stays visible after Copy");
+    assert!(
+        !r.popup.view.calls().contains(&PopupCall::Hide),
+        "no Hide executed"
+    );
+    assert!(matches!(r.orch.visibility(), Visibility::Visible(_)));
+    assert!(!r
+        .dismiss
+        .calls()
+        .iter()
+        .any(|c| matches!(c, DismissCall::Stop)));
+    // A later resize is still applied.
+    let before = r.popup.view.calls().len();
+    r.orch.popup_resized((650.0, 300.0));
+    r.popup.view.flush();
+    let calls = r.popup.view.calls();
+    assert_eq!(calls.len(), before + 1);
+    assert!(matches!(
+        calls.last(),
+        Some(PopupCall::Resize(_, (650.0, 300.0)))
+    ));
+}
+#[tokio::test]
 async fn popup_resized_after_close_does_nothing() {
     let (r, _) = ready_rig();
     ready(&r).await;
@@ -733,6 +804,7 @@ async fn popup_resized_after_close_does_nothing() {
     let popup_calls = r.popup.view.calls();
     let dismiss_calls = r.dismiss.calls();
     r.orch.popup_resized((700.0, 400.0));
+    r.popup.view.flush();
     assert_eq!(r.popup.view.calls(), popup_calls, "no show or resize");
     assert!(!r.popup.view.is_visible());
     assert_eq!(r.dismiss.calls(), dismiss_calls, "no update_rect");
@@ -752,6 +824,7 @@ async fn show_failure_does_not_start_dismiss_watcher() {
         .any(|l| l == "popup show failed"));
     let popup_calls = r.popup.view.calls();
     r.orch.popup_resized((700.0, 400.0));
+    r.popup.view.flush();
     assert_eq!(r.popup.view.calls(), popup_calls, "no resize");
     assert!(r.dismiss.calls().is_empty(), "no update_rect");
 }

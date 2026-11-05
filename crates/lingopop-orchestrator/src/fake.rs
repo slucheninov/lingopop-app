@@ -27,64 +27,137 @@ pub enum PopupCall {
     Hide,
 }
 
-/// Records every call; `show_at` makes it visible, `hide` invisible.
+/// Queued fake. Read helpers are barriers: they wait for all submitted acknowledgments.
 #[derive(Default)]
-pub struct FakePopup {
+struct PopupState {
     calls: Mutex<Vec<PopupCall>>,
     visible: AtomicBool,
     sizes: Mutex<Vec<(f64, f64)>>,
     fail_show: AtomicBool,
+    resize_hold: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+    outstanding: Mutex<usize>,
+    done: std::sync::Condvar,
 }
-
+#[derive(Default)]
+pub struct FakePopup {
+    state: std::sync::Arc<PopupState>,
+    queue: std::sync::Arc<crate::PresentationQueue>,
+}
 impl FakePopup {
     pub fn new() -> Self {
         Self::default()
     }
-
+    pub fn flush(&self) {
+        let mut n = lock(&self.state.outstanding);
+        while *n != 0 {
+            n = self.state.done.wait(n).unwrap();
+        }
+    }
     pub fn calls(&self) -> Vec<PopupCall> {
-        lock(&self.calls).clone()
+        self.flush();
+        lock(&self.state.calls).clone()
     }
-
-    /// Makes every later `show_at` fail: recorded, returns false, popup stays hidden.
+    /// Holds the next native Resize inside its effect: the first receiver fires when the effect
+    /// is entered, the sender releases it.
+    pub fn hold_next_resize(&self) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *lock(&self.state.resize_hold) = Some((entered_tx, release_rx));
+        (entered_rx, release_tx)
+    }
     pub fn fail_show(&self, fail: bool) {
-        self.fail_show.store(fail, Ordering::SeqCst);
+        self.state.fail_show.store(fail, Ordering::SeqCst);
     }
-
-    /// The logical size passed to every `show_at`, in order.
     pub fn show_sizes(&self) -> Vec<(f64, f64)> {
-        lock(&self.sizes).clone()
+        self.flush();
+        lock(&self.state.sizes).clone()
+    }
+    pub fn is_visible(&self) -> bool {
+        self.flush();
+        self.state.visible.load(Ordering::SeqCst)
     }
 }
-
+impl Drop for FakePopup {
+    fn drop(&mut self) {
+        self.queue.seal();
+    }
+}
 impl PopupView for FakePopup {
-    fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) -> bool {
-        lock(&self.calls).push(PopupCall::ShowAt(origin, model.clone()));
-        lock(&self.sizes).push(size);
-        if self.fail_show.load(Ordering::SeqCst) {
-            return false;
+    fn submit(
+        &self,
+        cmd: crate::PresentationCommand,
+    ) -> Result<crate::AckReceiver, crate::PresentationQueueError> {
+        *lock(&self.state.outstanding) += 1;
+        let result = self.queue.submit(cmd);
+        if result.is_err() {
+            *lock(&self.state.outstanding) -= 1;
+            self.state.done.notify_all();
         }
-        self.visible.store(true, Ordering::SeqCst);
-        true
+        result
     }
-
-    fn update(&self, model: &PopupViewModel) {
-        lock(&self.calls).push(PopupCall::Update(model.clone()));
-    }
-
-    /// Visible: records `Resize`. Hidden: nothing recorded.
-    fn resize(&self, origin: Point, size: (f64, f64)) {
-        if self.is_visible() {
-            lock(&self.calls).push(PopupCall::Resize(origin, size));
-        }
-    }
-
-    fn hide(&self) {
-        lock(&self.calls).push(PopupCall::Hide);
-        self.visible.store(false, Ordering::SeqCst);
-    }
-
-    fn is_visible(&self) -> bool {
-        self.visible.load(Ordering::SeqCst)
+    fn bind(
+        &self,
+        fence: std::sync::Arc<crate::PresentationFence>,
+        sink: std::sync::Arc<crate::AckSink>,
+    ) {
+        let queue = self.queue.clone();
+        let state = self.state.clone();
+        let self_placeholder = state.clone();
+        std::thread::spawn(move || {
+            let complete = move |ack| {
+                sink(ack);
+                *lock(&state.outstanding) -= 1;
+                state.done.notify_all();
+            };
+            while let Some(job) = queue.next(&complete) {
+                let ack = fence
+                    .apply_if_current(job.command.id, || {
+                        use crate::{PresentationKind::*, PresentationVisibility::*};
+                        match &job.command.kind {
+                            Show {
+                                origin,
+                                size_logical,
+                                model,
+                            } => {
+                                lock(&self_placeholder.calls)
+                                    .push(PopupCall::ShowAt(*origin, model.clone()));
+                                lock(&self_placeholder.sizes).push(*size_logical);
+                                if self_placeholder.fail_show.load(Ordering::SeqCst) {
+                                    self_placeholder.visible.store(false, Ordering::SeqCst);
+                                    return Err(PlatformError::Unsupported("fake show"));
+                                }
+                                self_placeholder.visible.store(true, Ordering::SeqCst);
+                            }
+                            Update { model } => {
+                                lock(&self_placeholder.calls).push(PopupCall::Update(model.clone()))
+                            }
+                            Resize {
+                                origin,
+                                size_logical,
+                            } => {
+                                lock(&self_placeholder.calls)
+                                    .push(PopupCall::Resize(*origin, *size_logical));
+                                let hold = lock(&self_placeholder.resize_hold).take();
+                                if let Some((entered, release)) = hold {
+                                    let _ = entered.send(());
+                                    let _ = release.recv();
+                                }
+                            }
+                            Hide => {
+                                lock(&self_placeholder.calls).push(PopupCall::Hide);
+                                self_placeholder.visible.store(false, Ordering::SeqCst);
+                            }
+                        }
+                        Ok(if self_placeholder.visible.load(Ordering::SeqCst) {
+                            Visible
+                        } else {
+                            Hidden
+                        })
+                    })
+                    .unwrap();
+                job.complete(ack, &complete);
+            }
+        });
     }
 }
 

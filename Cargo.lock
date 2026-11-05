@@ -2300,6 +2300,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "png",
+ "raw-window-handle",
  "security-framework",
  "security-framework-sys",
  "tempfile",

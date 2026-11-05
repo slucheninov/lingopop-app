@@ -47,7 +47,15 @@ impl Orchestrator {
     }
 
     pub async fn replace(&self) {
-        self.start(|me, generation| async move {
+        self.replace_with_deadline(tokio::time::sleep(std::time::Duration::from_secs(2)))
+            .await;
+    }
+
+    pub async fn replace_with_deadline(
+        &self,
+        deadline: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        self.start(move |me, generation| async move {
             let (text, target) = {
                 let st = me.state();
                 if st.generation != generation {
@@ -70,10 +78,44 @@ impl Orchestrator {
                 let text = with_original_padding(&session.captured, &text);
                 // The session stays until the paste is decided, so a gate failure can
                 // show the result again.
-                me.deps().popup.hide();
-                me.deps().platform.dismiss.stop();
                 (text, target)
             };
+            if let Err(cause) = me.wait_for_hide(deadline).await {
+                if me.is_current(generation)
+                    && cause != crate::orchestrator::HideWaitError::Superseded
+                {
+                    use crate::{orchestrator::HideWaitError, PresentationQueueError};
+                    me.log(match cause {
+                        // Excluded by the guard above; a fixed line keeps the match total.
+                        HideWaitError::Superseded => "replace hide superseded",
+                        HideWaitError::TimedOut => "replace hide timed out",
+                        HideWaitError::Failed => "replace hide failed",
+                        HideWaitError::Disconnected => "replace hide disconnected",
+                        HideWaitError::Queue(PresentationQueueError::Closed) => {
+                            "replace hide closed"
+                        }
+                        HideWaitError::Queue(PresentationQueueError::Full) => "replace hide full",
+                    });
+                    let error = if cause == HideWaitError::TimedOut {
+                        GateError::TimedOut
+                    } else {
+                        GateError::Platform(PlatformError::Unsupported("popup hide"))
+                    };
+                    me.present_notice(generation, gate_message(&error));
+                }
+                return;
+            }
+            {
+                let st = me.state();
+                if st.generation != generation
+                    || st
+                        .session
+                        .as_ref()
+                        .is_none_or(|s| s.target_window != target || s.replace_disabled)
+                {
+                    return;
+                }
+            }
             let p = &me.deps().platform;
             let (fg, clip, keys, sleeper, log) = (
                 p.foreground.clone(),
@@ -82,10 +124,14 @@ impl Orchestrator {
                 p.sleeper.clone(),
                 me.deps().log.clone(),
             );
+            let current = me.clone();
             let outcome = me
                 .deps()
                 .gate
                 .run(move || {
+                    if !current.is_current(generation) {
+                        return Err(PlatformError::Unsupported("stale replace"));
+                    }
                     if let Some(target) = target {
                         replace_selection(
                             fg.as_ref(),
@@ -268,8 +314,9 @@ impl Orchestrator {
                 return;
             }
             me.set_status_locked(&mut st, crate::TrayStatus::Idle);
-            me.deps().popup.hide();
+            let _ = me.submit_locked(&mut st, crate::PresentationKind::Hide);
             me.deps().platform.dismiss.stop();
+            st.watching = false;
             st.session = None;
         })
         .await;

@@ -21,10 +21,15 @@ pub mod login_item;
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 mod macos;
+#[path = "macos/dismiss.rs"]
+pub mod macos_dismiss;
 #[path = "macos/geometry.rs"]
 pub mod macos_geometry;
+#[path = "macos/presentation.rs"]
+pub mod macos_presentation;
 #[path = "macos/target_registry.rs"]
 pub mod macos_targets;
+pub mod main_thread;
 pub mod monitors;
 pub mod native;
 pub mod ocr;
@@ -78,6 +83,7 @@ pub use selection::{capture_selection, CaptureOptions};
 pub use sleeper::{retry_busy, Sleeper, SystemSleeper};
 
 pub use dismiss::{classify_click, DismissEvent, DismissWatcher};
+pub use main_thread::MainThread;
 pub use popup_window::NoActivateWindow;
 
 pub mod system;
@@ -91,3 +97,8 @@ pub use macos::keychain::LoginKeyStore;
 
 #[cfg(target_os = "macos")]
 pub use macos::activate_app;
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub use macos::OwnerRunWindow;
+#[cfg(target_os = "macos")]
+pub use macos::{configure_popup_panel, AppKitMonitors};
