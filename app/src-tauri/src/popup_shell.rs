@@ -1,32 +1,14 @@
 //! `ShellPopup`: the orchestrator's `PopupView` over the hidden `popup` Tauri window.
 //!
-//! RULES
-//! - NEVER call Tauri `show()` / `set_focus()` on Windows: only the platform
-//!   `NoActivateWindow` (`SetWindowPos(.., SWP_NOACTIVATE | SWP_SHOWWINDOW)`) shows the popup,
-//!   so the user's app keeps focus. The macOS dev build falls back to Tauri `show()` because
-//!   the platform returns `Unsupported` there (dev only).
-//! - These methods run on async-runtime workers while the orchestrator holds its session
-//!   mutex. They must never wait on the main thread, and every Tauri command in this crate is
-//!   `async` (see `commands.rs`) so the main thread never waits on that mutex while a worker
-//!   does a cross-thread `SetWindowPos`.
-//! - The model JSON is the only place user text leaves Rust; failures log fixed text only.
-//!
-//! - The native window handle is cached ONCE in `setup` (on the main thread, when the window is
-//!   built) and passed to `ShellPopup::new`. `WebviewWindow::hwnd()` synchronously dispatches
-//!   to the main thread on Windows, so no `PopupView` method may ever call it.
-//!
-//! The orchestrator owns the geometry: it passes the origin and the LOGICAL size (what the
-//! frontend measures, reported through `popup_resized`) to every `show_at` / `resize`, clamped
-//! into the work area, and builds the dismiss rect from the same numbers. This shell only
-//! converts logical sizes to desktop units with the scale of the monitor under the origin and places
-//! the window. `resize` is called under the orchestrator's commit mutex and only while the popup
-//! is visible (a resize never re-shows a popup that Close just hid).
+//! Commands are consumed on one dedicated worker, never the main thread. HWND is cached
+//! during setup. Windows uses only NoActivateWindow; Mac keeps the Tauri dev fallback.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
-use lingopop_orchestrator::{PopupView, PopupViewModel};
+use lingopop_orchestrator::{presentation::*, PopupView, PopupViewModel};
 use lingopop_platform::{monitor_at, physical_size, Platform, Point, Rect, WindowHandle};
+use std::sync::{Arc, OnceLock};
 #[cfg(not(windows))]
 use tauri::Manager;
 use tauri::{AppHandle, Emitter, WebviewWindow};
@@ -39,7 +21,7 @@ struct Pending {
     last_model: Option<serde_json::Value>,
 }
 
-pub struct ShellPopup {
+struct NativePopup {
     app: AppHandle,
     platform: Platform,
     /// Native handle cached at construction (see the module docs); `None` = unavailable.
@@ -63,7 +45,7 @@ pub fn native_handle(_window: &WebviewWindow) -> Option<WindowHandle> {
     Some(WindowHandle(0))
 }
 
-impl ShellPopup {
+impl NativePopup {
     pub fn new(app: AppHandle, platform: Platform, handle: Option<WindowHandle>) -> Self {
         Self {
             app,
@@ -103,18 +85,22 @@ impl ShellPopup {
     }
 
     /// Shows or moves the window to `rect` without activating it.
-    fn place(&self, rect: Rect) -> bool {
+    fn place(&self, rect: Rect) -> Result<(), lingopop_platform::PlatformError> {
         let Some(handle) = self.handle else {
             log::warn!("popup window handle is unavailable");
-            return false;
+            return Err(lingopop_platform::PlatformError::Unsupported(
+                "popup window",
+            ));
         };
         match self.platform.popup_window.show_at(handle, rect) {
-            Ok(()) => true,
+            Ok(()) => Ok(()),
             // macOS dev only: the platform has no no-activate show; Tauri `show()` may activate.
             #[cfg(not(windows))]
             Err(lingopop_platform::PlatformError::Unsupported(_)) => {
                 let Some(window) = self.window() else {
-                    return false;
+                    return Err(lingopop_platform::PlatformError::Unsupported(
+                        "popup window",
+                    ));
                 };
                 // tao converts LogicalPosition directly from top-left Y-down points to
                 // AppKit. PhysicalPosition would divide Quartz points by the backing scale.
@@ -140,36 +126,41 @@ impl ShellPopup {
                             rect.height.max(1) as u32,
                         ))
                     });
-                placed.and_then(|()| window.show()).is_ok()
+                placed
+                    .and_then(|()| window.show())
+                    .map_err(|_| lingopop_platform::PlatformError::Unsupported("popup placement"))
             }
             Err(e) => {
                 log::warn!("popup show failed: {e}");
-                false
+                Err(e)
             }
         }
     }
 
     /// The frontend mounted and listens: re-emits a model that arrived before that.
     ///
-    /// The cache lock is held across the emit here and in `show_at` / `update`, so a re-emitted
-    /// older model can never be delivered after a newer one (`emit_to` only queues the event).
+    /// The worker serializes ready with model updates; no cache lock crosses emit.
     pub fn ready(&self) {
-        let pending = self.pending();
-        if let Some(model) = &pending.last_model {
-            self.emit_model(model);
+        let model = self.pending().last_model.clone();
+        if let Some(model) = model {
+            self.emit_model(&model);
         }
     }
 }
 
-impl PopupView for ShellPopup {
-    fn show_at(&self, origin: Point, size_logical: (f64, f64), model: &PopupViewModel) -> bool {
+impl NativePopup {
+    fn show_at(
+        &self,
+        origin: Point,
+        size_logical: (f64, f64),
+        model: &PopupViewModel,
+    ) -> Result<(), lingopop_platform::PlatformError> {
         if let Ok(value) = serde_json::to_value(model) {
-            let mut pending = self.pending();
+            self.pending().last_model = Some(value.clone());
             self.emit_model(&value);
-            pending.last_model = Some(value);
         }
         let shown = self.place(self.rect_for(origin, size_logical));
-        self.visible.store(shown, Ordering::Release);
+        self.visible.store(shown.is_ok(), Ordering::Release);
         shown
     }
 
@@ -177,33 +168,257 @@ impl PopupView for ShellPopup {
         let Ok(value) = serde_json::to_value(model) else {
             return;
         };
-        let mut pending = self.pending();
+        self.pending().last_model = Some(value.clone());
         self.emit_model(&value);
-        pending.last_model = Some(value);
-    }
-
-    fn resize(&self, origin: Point, size_logical: (f64, f64)) {
-        if self.is_visible() {
-            let _ = self.place(self.rect_for(origin, size_logical));
-        }
     }
 
     fn hide(&self) {
-        self.visible.store(false, Ordering::Release);
-        let Some(handle) = self.handle else { return };
-        match self.platform.popup_window.hide(handle) {
-            Ok(()) => {}
+        let _ = self.hide_checked();
+    }
+    fn hide_checked(&self) -> Result<(), lingopop_platform::PlatformError> {
+        let handle = self
+            .handle
+            .ok_or(lingopop_platform::PlatformError::Unsupported(
+                "popup handle",
+            ))?;
+        let result = match self.platform.popup_window.hide(handle) {
+            Ok(()) => Ok(()),
             #[cfg(not(windows))]
             Err(lingopop_platform::PlatformError::Unsupported(_)) => {
-                if let Some(window) = self.window() {
-                    let _ = window.hide();
-                }
+                let window = self
+                    .window()
+                    .ok_or(lingopop_platform::PlatformError::Unsupported(
+                        "popup window",
+                    ))?;
+                window
+                    .hide()
+                    .map_err(|_| lingopop_platform::PlatformError::Unsupported("popup hide"))
             }
-            Err(e) => log::warn!("popup hide failed: {e}"),
+            Err(e) => Err(e),
+        };
+        if result.is_ok() {
+            self.visible.store(false, Ordering::Release);
         }
+        result
     }
 
     fn is_visible(&self) -> bool {
         self.visible.load(Ordering::Acquire)
+    }
+}
+
+enum WorkerMessage {
+    Drain,
+    Ready,
+    Shutdown(tokio::sync::oneshot::Sender<()>),
+}
+/// Queue owner. Dropping it requests worker shutdown without waiting on the UI thread.
+pub struct ShellPopup {
+    native: Arc<NativePopup>,
+    queue: Arc<PresentationQueue>,
+    sender: std::sync::mpsc::Sender<WorkerMessage>,
+    receiver: Mutex<Option<std::sync::mpsc::Receiver<WorkerMessage>>>,
+    sink: OnceLock<Arc<AckSink>>,
+}
+impl ShellPopup {
+    pub fn new(app: AppHandle, platform: Platform, handle: Option<WindowHandle>) -> Self {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        Self {
+            native: Arc::new(NativePopup::new(app, platform, handle)),
+            queue: Arc::default(),
+            sender,
+            receiver: Mutex::new(Some(receiver)),
+            sink: OnceLock::new(),
+        }
+    }
+    pub fn ready(&self) {
+        let _ = self.sender.send(WorkerMessage::Ready);
+    }
+    /// Explicit close rejects further submissions immediately. Completion means the worker
+    /// has finished its active command and resolved all pending acknowledgments.
+    #[allow(dead_code)]
+    pub fn shutdown(&self) -> tokio::sync::oneshot::Receiver<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.queue.seal();
+        let _ = self.sender.send(WorkerMessage::Shutdown(tx));
+        rx
+    }
+}
+impl Drop for ShellPopup {
+    fn drop(&mut self) {
+        drop(self.shutdown());
+    }
+}
+impl PopupView for ShellPopup {
+    fn submit(&self, cmd: PresentationCommand) -> Result<AckReceiver, PresentationQueueError> {
+        let rx = self.queue.submit(cmd)?;
+        self.sender
+            .send(WorkerMessage::Drain)
+            .map_err(|_| PresentationQueueError::Closed)?;
+        Ok(rx)
+    }
+    fn bind(&self, fence: Arc<PresentationFence>, sink: Arc<AckSink>) {
+        if self.sink.set(sink.clone()).is_err() {
+            return;
+        }
+        let receiver = self.receiver.lock().unwrap().take().unwrap();
+        let queue = self.queue.clone();
+        let native = self.native.clone();
+        std::thread::Builder::new()
+            .name("lingopop-presentation".into())
+            .spawn(move || {
+                let mut desired: Option<(Point, (f64, f64), PopupViewModel)> = None;
+                let mut desired_sequence = 0;
+                while let Ok(message) = receiver.recv() {
+                    match message {
+                        WorkerMessage::Ready => native.ready(),
+                        WorkerMessage::Shutdown(done) => {
+                            queue.close(sink.as_ref());
+                            let _ = done.send(());
+                            return;
+                        }
+                        WorkerMessage::Drain => {}
+                    }
+                    queue.complete_superseded(sink.as_ref());
+                    while let Some(job) = queue.try_next() {
+                        // Retain desired geometry/content even when a pending Show was fenced
+                        // before execution; its current Resize must still be able to show it.
+                        if job.command.id.sequence > desired_sequence {
+                            desired_sequence = job.command.id.sequence;
+                            match &job.command.kind {
+                                PresentationKind::Show {
+                                    origin,
+                                    size_logical,
+                                    model,
+                                } => desired = Some((*origin, *size_logical, model.clone())),
+                                PresentationKind::Update { model } => {
+                                    if let Some((_, _, current)) = desired.as_mut() {
+                                        *current = model.clone();
+                                    }
+                                }
+                                PresentationKind::Resize {
+                                    origin,
+                                    size_logical,
+                                } => {
+                                    if let Some((p, size, _)) = desired.as_mut() {
+                                        *p = *origin;
+                                        *size = *size_logical;
+                                    }
+                                }
+                                PresentationKind::Hide => {}
+                            }
+                        }
+                        consume_job(&fence, job, sink.as_ref(), |command| {
+                            match &command.kind {
+                                PresentationKind::Show {
+                                    origin,
+                                    size_logical,
+                                    model,
+                                } => {
+                                    if let Err(error) =
+                                        native.show_at(*origin, *size_logical, model)
+                                    {
+                                        native.hide();
+                                        return Err(error);
+                                    }
+                                }
+                                PresentationKind::Update { model } => native.update(model),
+                                PresentationKind::Resize {
+                                    origin,
+                                    size_logical,
+                                } => {
+                                    let placed = if native.is_visible() {
+                                        native.place(native.rect_for(*origin, *size_logical))
+                                    } else if let Some((p, size, model)) = &desired {
+                                        native.show_at(*p, *size, model)
+                                    } else {
+                                        Err(lingopop_platform::PlatformError::Unsupported(
+                                            "popup resize",
+                                        ))
+                                    };
+                                    if let Err(error) = placed {
+                                        native.hide();
+                                        return Err(error);
+                                    }
+                                }
+                                PresentationKind::Hide => {
+                                    native.hide_checked()?;
+                                }
+                            }
+                            Ok(if native.is_visible() {
+                                PresentationVisibility::Visible
+                            } else {
+                                PresentationVisibility::Hidden
+                            })
+                        });
+                        queue.complete_superseded(sink.as_ref());
+                    }
+                }
+                queue.close(sink.as_ref());
+            })
+            .expect("presentation worker");
+    }
+}
+
+fn consume_job(
+    fence: &PresentationFence,
+    job: PresentationJob,
+    sink: &AckSink,
+    effect: impl FnOnce(
+        &PresentationCommand,
+    ) -> Result<PresentationVisibility, lingopop_platform::PlatformError>,
+) {
+    let ack = fence
+        .apply_if_current(job.command.id, || effect(&job.command))
+        .unwrap();
+    job.complete(ack, sink);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn worker_effect_and_ack_run_off_submitter_and_sink_precedes_oneshot() {
+        let queue = Arc::new(PresentationQueue::default());
+        let fence = Arc::new(PresentationFence::default());
+        let id = PresentationId {
+            generation: 1,
+            sequence: 1,
+        };
+        fence.advance(id);
+        let submitter = std::thread::current().id();
+        let receiver = queue
+            .submit(PresentationCommand {
+                id,
+                kind: PresentationKind::Hide,
+            })
+            .unwrap();
+        let acked = Arc::new(AtomicBool::new(false));
+        let seen = acked.clone();
+        let (release, blocked) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            blocked.recv().unwrap();
+            let job = queue.try_next().unwrap();
+            consume_job(
+                &fence,
+                job,
+                &move |_| {
+                    seen.store(true, Ordering::SeqCst);
+                },
+                |_| {
+                    assert_ne!(std::thread::current().id(), submitter);
+                    Ok(PresentationVisibility::Hidden)
+                },
+            );
+            queue.close(&|_| {});
+        });
+        assert!(!acked.load(Ordering::SeqCst));
+        release.send(()).unwrap();
+        assert_eq!(
+            receiver.await.unwrap().result,
+            Ok(PresentationVisibility::Hidden)
+        );
+        assert!(acked.load(Ordering::SeqCst));
+        worker.join().unwrap();
     }
 }
