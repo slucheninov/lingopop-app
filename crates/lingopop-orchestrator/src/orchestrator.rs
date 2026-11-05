@@ -162,8 +162,16 @@ impl Orchestrator {
         let size = (width.min(MAX_LOGICAL_SIDE), height.min(MAX_LOGICAL_SIDE));
         let mut st = self.state();
         st.size = size;
+        // No generation condition: an action that presents nothing (a successful Copy) starts a
+        // new generation while the popup stays on screen as `Visible(old)`. `start` turns every
+        // `Pending` into `Hidden`, so a non-Hidden visibility here is a popup that is on screen
+        // (or being placed in this generation), and a hidden or closing one is never resurrected.
+        // The Resize gets a current-generation id from `submit_locked`, so the fence applies it.
         if st.pending_hiding
-            || !matches!(st.visibility, Visibility::Pending(id) | Visibility::Visible(id) if id.generation == st.generation)
+            || !matches!(
+                st.visibility,
+                Visibility::Pending(_) | Visibility::Visible(_)
+            )
         {
             return;
         }
@@ -213,8 +221,16 @@ impl Orchestrator {
                 generation: st.generation,
                 sequence: st.sequence,
             });
+            // A Hide still pending would be fenced out by the advance above and never run: the
+            // popup would stay on screen with `Hidden` visibility and no watcher if the new flow
+            // presents nothing (a cancelled Screen Translate pick). Re-queue it in the new
+            // generation; `submit_locked` only enqueues, no native dispatch happens here.
+            let reissue_hide = st.pending_hiding && matches!(st.visibility, Visibility::Pending(_));
             if matches!(st.visibility, Visibility::Pending(_)) {
                 st.visibility = Visibility::Hidden;
+            }
+            if reissue_hide {
+                let _ = self.submit_locked(&mut st, PresentationKind::Hide);
             }
             let generation = st.generation;
             if let Some(previous) = st.current.take() {

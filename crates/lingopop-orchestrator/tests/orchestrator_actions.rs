@@ -739,6 +739,30 @@ async fn popup_resized_updates_dismiss_rect() {
     ));
 }
 #[tokio::test]
+async fn resize_after_copy_resizes_the_visible_popup() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    // A successful Copy starts a new generation but presents nothing: the popup stays on
+    // screen under the generation that showed it.
+    r.orch.copy().await;
+    r.popup.view.flush();
+    assert!(r.popup.view.is_visible());
+    let popup_calls = r.popup.view.calls().len();
+    r.orch.popup_resized((700.0, 400.0));
+    r.popup.view.flush();
+    let calls = r.popup.view.calls();
+    assert_eq!(calls.len(), popup_calls + 1, "exactly one native resize");
+    let Some(PopupCall::Resize(_, size)) = calls.last().cloned() else {
+        panic!("expected a Resize call");
+    };
+    assert_eq!(size, (700.0, 400.0));
+    assert!(matches!(r.orch.visibility(), Visibility::Visible(_)));
+    assert!(matches!(
+        r.dismiss.calls().last(),
+        Some(DismissCall::UpdateRect(rect)) if (rect.width, rect.height) == (1050, 600)
+    ));
+}
+#[tokio::test]
 async fn popup_resized_after_close_does_nothing() {
     let (r, _) = ready_rig();
     ready(&r).await;

@@ -86,6 +86,8 @@ impl Orchestrator {
                 {
                     use crate::{orchestrator::HideWaitError, PresentationQueueError};
                     me.log(match cause {
+                        // Excluded by the guard above; a fixed line keeps the match total.
+                        HideWaitError::Superseded => "replace hide superseded",
                         HideWaitError::TimedOut => "replace hide timed out",
                         HideWaitError::Failed => "replace hide failed",
                         HideWaitError::Disconnected => "replace hide disconnected",
@@ -93,7 +95,6 @@ impl Orchestrator {
                             "replace hide closed"
                         }
                         HideWaitError::Queue(PresentationQueueError::Full) => "replace hide full",
-                        HideWaitError::Superseded => unreachable!(),
                     });
                     let error = if cause == HideWaitError::TimedOut {
                         GateError::TimedOut

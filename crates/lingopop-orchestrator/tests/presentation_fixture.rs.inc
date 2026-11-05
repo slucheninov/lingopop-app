@@ -429,6 +429,57 @@ async fn resize_during_pending_replace_hide_does_not_abort_paste() {
 }
 
 #[tokio::test]
+async fn pending_close_hide_survives_a_cancelled_screen_translate_start() {
+    let (r, _) = ready_rig();
+    r.orch.trigger(AIOperation::Translate).await;
+    confirm_result(&r);
+    let watcher_starts = r
+        .dismiss
+        .calls()
+        .iter()
+        .filter(|c| matches!(c, DismissCall::Start(_)))
+        .count();
+    // Close queues its Hide; Screen Translate starts before the worker ran it, and the
+    // (default) picker is cancelled, so the new flow presents nothing.
+    r.orch.close().await;
+    assert!(matches!(r.orch.visibility(), Visibility::Pending(_)));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    // The re-queued Hide belongs to the new generation (1 = Translate, 2 = close, 3 = Screen Translate).
+    assert!(
+        matches!(r.orch.visibility(), Visibility::Pending(id) if id.generation == 3),
+        "expected the re-queued Hide"
+    );
+    let effects_before = r.popup.view.effects.load(std::sync::atomic::Ordering::SeqCst);
+    // The worker now drains: the old Hide is fenced out, the re-queued one runs.
+    let mut acks = Vec::new();
+    while let Some(job) = r.popup.view.queue.try_next() {
+        let ack = r.popup.view.complete(job);
+        r.orch.presentation_acked(ack.clone());
+        acks.push(ack);
+    }
+    assert_eq!(acks.len(), 2, "the old Hide and its re-queued twin");
+    assert_eq!(acks[0].result, Ok(PresentationVisibility::Superseded));
+    assert_eq!(acks[1].result, Ok(PresentationVisibility::Hidden));
+    assert_eq!(
+        r.popup.view.effects.load(std::sync::atomic::Ordering::SeqCst),
+        effects_before + 1,
+        "exactly one native hide"
+    );
+    assert!(!r.popup.is_visible(), "the native popup is hidden");
+    assert_eq!(r.orch.visibility(), Visibility::Hidden);
+    let calls = r.dismiss.calls();
+    assert_eq!(calls.last(), Some(&DismissCall::Stop), "no watcher left");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| matches!(c, DismissCall::Start(_)))
+            .count(),
+        watcher_starts,
+        "no watcher restarted"
+    );
+}
+
+#[tokio::test]
 async fn hide_failure_timeout_and_closed_keep_replace_with_notice() {
     for cause in ["failed", "timed out", "closed", "full"] {
         let (r, _) = ready_rig();
