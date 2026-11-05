@@ -26,6 +26,7 @@ use crate::messages::{
 };
 use crate::placement::popup_origin;
 use crate::popup::{PopupView, MAX_LOGICAL_SIDE};
+use crate::presentation::*;
 use crate::providers::retry_providers;
 use crate::screen::RegionPicker;
 use crate::session::{Session, SessionState};
@@ -74,6 +75,7 @@ pub struct Deps {
 pub(crate) struct Inner {
     pub deps: Deps,
     state: Mutex<SessionState>,
+    fence: Arc<PresentationFence>,
 }
 
 #[derive(Clone)]
@@ -99,12 +101,23 @@ fn popup_rect(origin: Point, size_logical: (f64, f64), monitors: &[MonitorInfo])
 
 impl Orchestrator {
     pub fn new(deps: Deps) -> Self {
-        Self {
+        let me = Self {
             inner: Arc::new(Inner {
                 deps,
                 state: Mutex::new(SessionState::new()),
+                fence: Arc::new(PresentationFence::default()),
             }),
-        }
+        };
+        let weak = Arc::downgrade(&me.inner);
+        me.deps().popup.bind(
+            me.inner.fence.clone(),
+            Arc::new(move |ack| {
+                if let Some(inner) = weak.upgrade() {
+                    Orchestrator { inner }.presentation_acked(ack);
+                }
+            }),
+        );
+        me
     }
 
     /// Runs `operation` on the current selection. A newer `trigger` (or action) cancels this
@@ -140,16 +153,18 @@ impl Orchestrator {
         let size = (width.min(MAX_LOGICAL_SIDE), height.min(MAX_LOGICAL_SIDE));
         let mut st = self.state();
         st.size = size;
-        let popup = &self.deps().popup;
-        if !popup.is_visible() {
+        if !matches!(st.visibility, Visibility::Pending(id) | Visibility::Visible(id) if id.generation == st.generation)
+        {
             return;
         }
         let origin = popup_origin(size, st.cursor, &st.monitors);
-        popup.resize(origin, size);
-        self.deps()
-            .platform
-            .dismiss
-            .update_rect(popup_rect(origin, size, &st.monitors));
+        let _ = self.submit_locked(
+            &mut st,
+            PresentationKind::Resize {
+                origin,
+                size_logical: size,
+            },
+        );
     }
 
     /// Called by the shell's dismiss-event forwarder (the shell owns the async runtime).
@@ -183,6 +198,14 @@ impl Orchestrator {
             }
             st.status_sent = false;
             st.generation += 1;
+            st.sequence += 1;
+            self.inner.fence.advance(PresentationId {
+                generation: st.generation,
+                sequence: st.sequence,
+            });
+            if matches!(st.visibility, Visibility::Pending(_)) {
+                st.visibility = Visibility::Hidden;
+            }
             let generation = st.generation;
             if let Some(previous) = st.current.take() {
                 previous.abort();
@@ -286,29 +309,122 @@ impl Orchestrator {
                 matches!(model.phase, PopupPhase::Result(_) | PopupPhase::Ocr { .. })
                     .then(|| model.clone());
         }
-        let (cursor, monitors, size) = (st.cursor, &st.monitors, st.size);
-        let popup = &self.deps().popup;
-        let was_visible = popup.is_visible();
-        if was_visible && !reposition {
-            popup.update(model);
+        let kind = if !reposition && matches!(st.visibility, Visibility::Visible(_)) {
+            PresentationKind::Update {
+                model: model.clone(),
+            }
         } else {
-            let origin = popup_origin(size, cursor, monitors);
-            if !popup.show_at(origin, size, model) {
-                self.log("popup show failed");
-                if was_visible {
-                    // A failed reposition: hide the old window and stop its dismissal so the
-                    // window, `is_visible` and the watcher agree.
-                    popup.hide();
-                    self.deps().platform.dismiss.stop();
+            PresentationKind::Show {
+                origin: popup_origin(st.size, st.cursor, &st.monitors),
+                size_logical: st.size,
+                model: model.clone(),
+            }
+        };
+        let _ = self.submit_locked(st, kind);
+    }
+
+    pub fn visibility(&self) -> Visibility {
+        self.state().visibility
+    }
+
+    pub(crate) fn submit_locked(
+        &self,
+        st: &mut SessionState,
+        kind: PresentationKind,
+    ) -> Result<AckReceiver, PresentationQueueError> {
+        st.sequence += 1;
+        let id = PresentationId {
+            generation: st.generation,
+            sequence: st.sequence,
+        };
+        self.inner.fence.advance(id);
+        match self.deps().popup.submit(PresentationCommand { id, kind }) {
+            Ok(rx) => {
+                st.visibility = Visibility::Pending(id);
+                Ok(rx)
+            }
+            Err(e) => {
+                st.visibility = Visibility::Hidden;
+                Err(e)
+            }
+        }
+    }
+
+    /// Synchronous consumer callback, always before the command's oneshot is resolved.
+    pub fn presentation_acked(&self, ack: PresentationAck) {
+        let mut st = self.state();
+        if ack.id.sequence <= st.acked_sequence {
+            return;
+        }
+        st.acked_sequence = ack.id.sequence;
+        if st.visibility != Visibility::Pending(ack.id) {
+            if ack.result == Ok(PresentationVisibility::Visible)
+                && st.session.is_none()
+                && st.visibility == Visibility::Hidden
+            {
+                let _ = self.submit_locked(&mut st, PresentationKind::Hide);
+            }
+            return;
+        }
+        match ack.result {
+            Ok(PresentationVisibility::Visible) => {
+                st.visibility = Visibility::Visible(ack.id);
+                let origin = popup_origin(st.size, st.cursor, &st.monitors);
+                let rect = popup_rect(origin, st.size, &st.monitors);
+                // Watcher calls have no native presentation dispatch/wait.
+                if st.watching {
+                    if st.watched_rect != Some(rect) {
+                        self.deps().platform.dismiss.update_rect(rect);
+                    }
+                } else if self.deps().platform.dismiss.start(rect).is_err() {
+                    self.log("popup dismiss watcher failed to start");
+                } else {
+                    st.watching = true;
                 }
-                return;
+                st.watched_rect = Some(rect);
             }
-            let rect = popup_rect(origin, size, monitors);
-            if was_visible {
-                self.deps().platform.dismiss.update_rect(rect);
-            } else if self.deps().platform.dismiss.start(rect).is_err() {
-                self.log("popup dismiss watcher failed to start");
+            _ => {
+                st.visibility = Visibility::Hidden;
+                if st.watching {
+                    self.deps().platform.dismiss.stop();
+                    st.watching = false;
+                }
+                if ack.result.is_err() {
+                    self.log("popup show failed");
+                }
             }
+        }
+    }
+
+    /// Final Hide for a future shutdown caller. The caller supplies a deterministic deadline.
+    pub async fn hide_and_wait(&self, deadline: impl Future<Output = ()>) -> bool {
+        let command = {
+            let mut st = self.state();
+            st.sequence += 1;
+            let id = PresentationId {
+                generation: st.generation,
+                sequence: st.sequence,
+            };
+            self.inner.fence.advance(id);
+            st.visibility = Visibility::Pending(id);
+            PresentationCommand {
+                id,
+                kind: PresentationKind::Hide,
+            }
+        };
+        let id = command.id;
+        let Ok(receiver) = self.deps().popup.submit(command) else {
+            let mut st = self.state();
+            if st.visibility == Visibility::Pending(id) {
+                st.visibility = Visibility::Hidden;
+            }
+            return false;
+        };
+        tokio::pin!(deadline);
+        tokio::select! {
+            biased;
+            ack = receiver => matches!(ack, Ok(PresentationAck { result: Ok(PresentationVisibility::Hidden), .. })) && self.inner.fence.is_current(id),
+            () = &mut deadline => false,
         }
     }
 
@@ -335,8 +451,9 @@ impl Orchestrator {
             if st.generation != generation {
                 return;
             }
-            me.deps().popup.hide();
+            let _ = me.submit_locked(&mut st, PresentationKind::Hide);
             me.deps().platform.dismiss.stop();
+            st.watching = false;
             st.session = None;
         });
     }
@@ -689,7 +806,7 @@ mod commit_tests {
         view: FakePopup,
     }
     impl PopupView for CheckedPopup {
-        fn show_at(&self, origin: Point, size: (f64, f64), model: &PopupViewModel) -> bool {
+        fn submit(&self, cmd: PresentationCommand) -> Result<AckReceiver, PresentationQueueError> {
             assert!(self
                 .inner
                 .get()
@@ -699,28 +816,10 @@ mod commit_tests {
                 .state
                 .try_lock()
                 .is_err());
-            self.view.show_at(origin, size, model)
+            self.view.submit(cmd)
         }
-        fn update(&self, model: &PopupViewModel) {
-            assert!(self
-                .inner
-                .get()
-                .unwrap()
-                .upgrade()
-                .unwrap()
-                .state
-                .try_lock()
-                .is_err());
-            self.view.update(model);
-        }
-        fn resize(&self, origin: Point, size: (f64, f64)) {
-            self.view.resize(origin, size);
-        }
-        fn hide(&self) {
-            self.view.hide();
-        }
-        fn is_visible(&self) -> bool {
-            self.view.is_visible()
+        fn bind(&self, fence: Arc<PresentationFence>, sink: Arc<AckSink>) {
+            self.view.bind(fence, sink);
         }
     }
 

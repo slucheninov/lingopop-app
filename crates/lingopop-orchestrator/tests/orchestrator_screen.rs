@@ -639,7 +639,10 @@ async fn ocr_runs_off_the_async_thread() {
 async fn screen_translate_repositions_visible_popup() {
     let r = rig(ocr_ok(OCR_TEXT), ok_transport());
     r.orch.trigger(AIOperation::ScreenTranslate).await;
-    assert!(matches!(r.popup.calls().last(), Some(PopupCall::Update(_))));
+    assert!(matches!(
+        r.popup.calls().last(),
+        Some(PopupCall::ShowAt(..) | PopupCall::Update(_))
+    ));
     let second = Rect {
         x: 900,
         y: 500,
@@ -729,14 +732,17 @@ fn superseded_auto_copy_never_writes_clipboard() {
 async fn reposition_updates_dismiss_rect_instead_of_restarting() {
     let r = rig(ocr_ok(OCR_TEXT), ok_transport());
     r.orch.trigger(AIOperation::ScreenTranslate).await;
+    r.popup.flush();
     let initial_calls = r.dismiss.calls();
     assert!(matches!(initial_calls.as_slice(), [DismissCall::Start(_)]));
     r.orch.popup_resized((700.0, 400.0));
+    r.popup.flush();
     let Some(DismissCall::UpdateRect(resized)) = r.dismiss.calls().last().cloned() else {
         panic!("expected UpdateRect");
     };
     r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
     r.orch.trigger(AIOperation::ScreenTranslate).await;
+    r.popup.flush();
     // The reposition uses the measured size, not the initial one.
     let origin = popup_origin((700.0, 400.0), Point { x: 1000, y: 540 }, &monitor_list());
     assert_eq!(
@@ -752,15 +758,11 @@ async fn reposition_updates_dismiss_rect_instead_of_restarting() {
 async fn failed_reposition_hides_popup_and_stops_dismissal() {
     let r = rig(ocr_ok(OCR_TEXT), ok_transport());
     r.orch.trigger(AIOperation::ScreenTranslate).await;
-    assert!(lingopop_orchestrator::PopupView::is_visible(
-        r.popup.as_ref()
-    ));
+    assert!(r.popup.is_visible());
     r.popup.fail_show(true);
     r.picker.set_result(Ok(Some(Rect::new(900, 500, 100, 40))));
     r.orch.trigger(AIOperation::ScreenTranslate).await;
-    assert!(!lingopop_orchestrator::PopupView::is_visible(
-        r.popup.as_ref()
-    ));
+    assert!(!r.popup.is_visible());
     assert_eq!(r.dismiss.calls().last(), Some(&DismissCall::Stop));
 }
 

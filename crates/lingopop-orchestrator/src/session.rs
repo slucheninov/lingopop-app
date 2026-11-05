@@ -58,6 +58,11 @@ impl std::fmt::Debug for Session {
 
 #[derive(Debug)]
 pub(crate) struct SessionState {
+    pub visibility: crate::Visibility,
+    pub sequence: u64,
+    pub acked_sequence: u64,
+    pub watching: bool,
+    pub watched_rect: Option<lingopop_platform::Rect>,
     pub working: bool,
     pub status_sent: bool,
     pub generation: u64,
@@ -73,6 +78,11 @@ pub(crate) struct SessionState {
 impl SessionState {
     pub fn new() -> Self {
         Self {
+            visibility: crate::Visibility::Hidden,
+            sequence: 0,
+            acked_sequence: 0,
+            watching: false,
+            watched_rect: None,
             working: false,
             status_sent: false,
             generation: 0,
