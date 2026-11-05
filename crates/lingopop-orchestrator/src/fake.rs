@@ -34,6 +34,7 @@ struct PopupState {
     visible: AtomicBool,
     sizes: Mutex<Vec<(f64, f64)>>,
     fail_show: AtomicBool,
+    resize_hold: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     outstanding: Mutex<usize>,
     done: std::sync::Condvar,
 }
@@ -55,6 +56,14 @@ impl FakePopup {
     pub fn calls(&self) -> Vec<PopupCall> {
         self.flush();
         lock(&self.state.calls).clone()
+    }
+    /// Holds the next native Resize inside its effect: the first receiver fires when the effect
+    /// is entered, the sender releases it.
+    pub fn hold_next_resize(&self) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *lock(&self.state.resize_hold) = Some((entered_tx, release_rx));
+        (entered_rx, release_tx)
     }
     pub fn fail_show(&self, fail: bool) {
         self.state.fail_show.store(fail, Ordering::SeqCst);
@@ -125,8 +134,15 @@ impl PopupView for FakePopup {
                             Resize {
                                 origin,
                                 size_logical,
-                            } => lock(&self_placeholder.calls)
-                                .push(PopupCall::Resize(*origin, *size_logical)),
+                            } => {
+                                lock(&self_placeholder.calls)
+                                    .push(PopupCall::Resize(*origin, *size_logical));
+                                let hold = lock(&self_placeholder.resize_hold).take();
+                                if let Some((entered, release)) = hold {
+                                    let _ = entered.send(());
+                                    let _ = release.recv();
+                                }
+                            }
                             Hide => {
                                 lock(&self_placeholder.calls).push(PopupCall::Hide);
                                 self_placeholder.visible.store(false, Ordering::SeqCst);

@@ -149,7 +149,7 @@ impl PresentationQueue {
         command: PresentationCommand,
         notify: impl FnOnce() -> bool,
     ) -> Result<AckReceiver, PresentationQueueError> {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if s.closed {
             return Err(PresentationQueueError::Closed);
         }
@@ -220,8 +220,9 @@ impl PresentationQueue {
                 };
                 if let Some(kind) = merged {
                     job.command.kind = kind;
-                    let old = s.pending.pop_back().unwrap();
-                    s.superseded.push(old);
+                    if let Some(old) = s.pending.pop_back() {
+                        s.superseded.push(old);
+                    }
                 }
             }
         }
@@ -231,24 +232,34 @@ impl PresentationQueue {
     }
     /// Nonblocking manual consumer seam, for deterministic tests.
     pub fn seal(&self) {
-        self.state.lock().unwrap().closed = true;
+        self.state.lock().unwrap_or_else(|p| p.into_inner()).closed = true;
         self.wake.notify_all();
     }
     pub fn complete_superseded(&self, sink: &AckSink) {
-        let jobs = std::mem::take(&mut self.state.lock().unwrap().superseded);
+        let jobs = std::mem::take(
+            &mut self
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .superseded,
+        );
         for job in jobs {
             job.supersede(sink);
         }
     }
     pub fn try_next(&self) -> Option<PresentationJob> {
-        self.state.lock().unwrap().pending.pop_front()
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pending
+            .pop_front()
     }
     pub fn next(&self, sink: &AckSink) -> Option<PresentationJob> {
         loop {
             let (retired, job, closed) = {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
                 while s.pending.is_empty() && s.superseded.is_empty() && !s.closed {
-                    s = self.wake.wait(s).unwrap();
+                    s = self.wake.wait(s).unwrap_or_else(|p| p.into_inner());
                 }
                 (
                     std::mem::take(&mut s.superseded),
@@ -268,7 +279,7 @@ impl PresentationQueue {
     /// the final shutdown acknowledgment (its thread completion), after the active job ends.
     pub fn close(&self, sink: &AckSink) {
         let jobs = {
-            let mut s = self.state.lock().unwrap();
+            let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
             s.closed = true;
             let mut jobs = std::mem::take(&mut s.superseded);
             jobs.extend(s.pending.drain(..));

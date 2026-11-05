@@ -61,6 +61,8 @@ pub(crate) struct SessionState {
     pub visibility: crate::Visibility,
     /// Pending Hide is never eligible for a webview resize.
     pub pending_hiding: bool,
+    /// The last presentation an ack confirmed on screen; cleared by a confirmed Hide or failure.
+    pub last_visible: Option<crate::PresentationId>,
     pub sequence: u64,
     pub acked_sequence: u64,
     pub watching: bool,
@@ -82,6 +84,7 @@ impl SessionState {
         Self {
             visibility: crate::Visibility::Hidden,
             pending_hiding: false,
+            last_visible: None,
             sequence: 0,
             acked_sequence: 0,
             watching: false,

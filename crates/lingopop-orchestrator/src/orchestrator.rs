@@ -227,7 +227,12 @@ impl Orchestrator {
             // generation; `submit_locked` only enqueues, no native dispatch happens here.
             let reissue_hide = st.pending_hiding && matches!(st.visibility, Visibility::Pending(_));
             if matches!(st.visibility, Visibility::Pending(_)) {
-                st.visibility = Visibility::Hidden;
+                // A fenced non-Hide command (e.g. a Resize) leaves the popup where the last
+                // ack put it: still on screen if that ack confirmed it.
+                st.visibility = match st.last_visible {
+                    Some(id) if !st.pending_hiding => Visibility::Visible(id),
+                    _ => Visibility::Hidden,
+                };
             }
             if reissue_hide {
                 let _ = self.submit_locked(&mut st, PresentationKind::Hide);
@@ -389,6 +394,7 @@ impl Orchestrator {
         if ack.effect_left_visible
             && ack.result == Ok(PresentationVisibility::Superseded)
             && !has_current_presentation
+            && st.last_visible.is_none()
         {
             let _ = self.submit_locked(&mut st, PresentationKind::Hide);
             return;
@@ -405,6 +411,7 @@ impl Orchestrator {
         match ack.result {
             Ok(PresentationVisibility::Visible) => {
                 st.visibility = Visibility::Visible(ack.id);
+                st.last_visible = Some(ack.id);
                 let origin = popup_origin(st.size, st.cursor, &st.monitors);
                 let rect = popup_rect(origin, st.size, &st.monitors);
                 // Watcher calls have no native presentation dispatch/wait.
@@ -421,6 +428,7 @@ impl Orchestrator {
             }
             _ => {
                 st.visibility = Visibility::Hidden;
+                st.last_visible = None;
                 if st.watching {
                     self.deps().platform.dismiss.stop();
                     st.watching = false;

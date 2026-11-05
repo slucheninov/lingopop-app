@@ -763,6 +763,40 @@ async fn resize_after_copy_resizes_the_visible_popup() {
     ));
 }
 #[tokio::test]
+async fn copy_during_in_flight_resize_keeps_the_popup_visible() {
+    let (r, _) = ready_rig();
+    ready(&r).await;
+    r.popup.view.flush();
+    let (entered, release) = r.popup.view.hold_next_resize();
+    r.orch.popup_resized((700.0, 400.0));
+    entered.recv().expect("resize entered its native effect");
+    // Copy starts a new generation while the Resize is inside its effect.
+    r.orch.copy().await;
+    release.send(()).unwrap();
+    r.popup.view.flush();
+    assert!(r.popup.view.is_visible(), "popup stays visible after Copy");
+    assert!(
+        !r.popup.view.calls().contains(&PopupCall::Hide),
+        "no Hide executed"
+    );
+    assert!(matches!(r.orch.visibility(), Visibility::Visible(_)));
+    assert!(!r
+        .dismiss
+        .calls()
+        .iter()
+        .any(|c| matches!(c, DismissCall::Stop)));
+    // A later resize is still applied.
+    let before = r.popup.view.calls().len();
+    r.orch.popup_resized((650.0, 300.0));
+    r.popup.view.flush();
+    let calls = r.popup.view.calls();
+    assert_eq!(calls.len(), before + 1);
+    assert!(matches!(
+        calls.last(),
+        Some(PopupCall::Resize(_, (650.0, 300.0)))
+    ));
+}
+#[tokio::test]
 async fn popup_resized_after_close_does_nothing() {
     let (r, _) = ready_rig();
     ready(&r).await;

@@ -520,7 +520,11 @@ fn consume_job(
 ) {
     let ack = fence
         .apply_if_current(job.command.id, || effect(&job.command))
-        .unwrap();
+        .unwrap_or(PresentationAck {
+            id: job.command.id,
+            result: Ok(PresentationVisibility::Superseded),
+            effect_left_visible: false,
+        });
     job.complete(ack, sink);
 }
 
