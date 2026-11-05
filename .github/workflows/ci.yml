@@ -57,6 +57,7 @@ jobs:
         run: |
           python scripts/check-version.py
           python -m unittest discover -s scripts/tests -p 'test_check_version.py'
+          python -m unittest discover -s scripts/tests -p 'test_release_assets.py'
       - name: Check macOS production readiness
         if: runner.os == 'macOS'
         shell: bash
