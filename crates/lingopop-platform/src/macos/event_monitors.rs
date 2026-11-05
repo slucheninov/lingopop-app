@@ -70,6 +70,16 @@ fn cg_fields(event: &NSEvent) -> Option<(i64, CGPoint)> {
     }
 }
 
+/// The event's own Quartz location (what a CGEvent carries, top-left origin), floored like the
+/// cursor reads; `None` when AppKit exposes no CGEvent. Used by the region overlay so a press
+/// is placed where it happened, not where the mouse is by the time the handler runs.
+pub(super) fn quartz_point(event: &NSEvent) -> Option<Point> {
+    cg_fields(event).map(|(_, location)| Point {
+        x: location.x.floor() as i32,
+        y: location.y.floor() as i32,
+    })
+}
+
 /// Current mouse location in Quartz points (AppKit's is bottom-left, Y-up).
 fn fallback_location() -> CGPoint {
     let appkit = NSEvent::mouseLocation();

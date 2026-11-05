@@ -15,9 +15,12 @@
 //!
 //! The windows never become the remembered external source target (they belong to our own pid).
 //! Nothing here logs user data. Every symbol is available on macOS 13.
+use super::event_monitors::quartz_point;
+use super::foreground::identity;
 use crate::macos_dismiss::ESCAPE_KEY_CODE;
 use crate::macos_geometry::MacGeometry;
 use crate::macos_overlay::{selection_in_display, OverlayBackend, OverlaySink};
+use crate::macos_targets::AppIdentity;
 use crate::overlay::{size_label, OverlayInput, BORDER_PT, DIM_ALPHA, LABEL_PT};
 use crate::{PlatformError, Rect};
 use block2::RcBlock;
@@ -221,42 +224,39 @@ struct Native {
     resign: Option<ResignObserver>,
 }
 
-/// The application that was frontmost before the overlay activated ours: pid and launch date
-/// (a reused pid has another launch date).
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct PreviousApp {
-    pid: i32,
-    launch: Option<f64>,
-}
-
 thread_local! {
     /// The live overlay; touched only on the main thread.
     static ACTIVE: RefCell<Option<Native>> = const { RefCell::new(None) };
     /// Remembered by `create` before activating, consumed by `restore_previous_app`.
-    static PREVIOUS: Cell<Option<PreviousApp>> = const { Cell::new(None) };
+    static PREVIOUS: Cell<Option<AppIdentity>> = const { Cell::new(None) };
 }
 
-fn launch_seconds(app: &NSRunningApplication) -> Option<f64> {
-    app.launchDate().map(|d| d.timeIntervalSinceReferenceDate())
-}
-
-/// The frontmost application, unless it is this process (nothing to hand back to).
-fn frontmost_other_app() -> Option<PreviousApp> {
+/// The frontmost application (full identity), unless it is this process (nothing to hand back
+/// to).
+fn frontmost_other_app() -> Option<AppIdentity> {
     autoreleasepool(|_| {
         let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
-        let pid = app.processIdentifier();
-        (pid > 0 && pid as u32 != std::process::id()).then(|| PreviousApp {
-            pid,
-            launch: launch_seconds(&app),
-        })
+        identity(&app).filter(|id| id.pid as u32 != std::process::id())
     })
 }
 
 /// Whether the previous app gets focus back: only while LingoPop is still the active app (not
-/// after the user switched away), never to ourselves, an exited app or a process that reused
-/// the pid (a different launch date).
-fn should_restore(own_active: bool, terminated: bool, is_self: bool, same_launch: bool) -> bool {
-    own_active && !terminated && !is_self && same_launch
+/// after the user switched away), never to ourselves, an exited app or a process that is not
+/// the one we remembered. "Same process" is `AppIdentity::same_process` (pid AND a readable,
+/// equal kernel start time), and the remembered app must also have a launch date: two missing
+/// launch dates are no evidence of identity, so such an app is never refocused (fail safe).
+fn should_restore(
+    own_active: bool,
+    terminated: bool,
+    is_self: bool,
+    previous: &AppIdentity,
+    current: &AppIdentity,
+) -> bool {
+    own_active
+        && !terminated
+        && !is_self
+        && previous.launch.is_some()
+        && previous.same_process(current)
 }
 
 /// The production overlay backend.
@@ -269,9 +269,14 @@ impl AppKitOverlay {
     }
 }
 
-fn mouse_point(geometry: &MacGeometry) -> crate::Point {
-    let p = NSEvent::mouseLocation();
-    geometry.appkit_point_to_desktop(p.x, p.y)
+/// Where the event happened, in Quartz desktop points: the event's own CGEvent location, and
+/// only when AppKit gives no CGEvent the current `NSEvent.mouseLocation` (the same fallback as
+/// the dismiss monitors).
+fn mouse_point(event: &NSEvent, geometry: &MacGeometry) -> crate::Point {
+    quartz_point(event).unwrap_or_else(|| {
+        let p = NSEvent::mouseLocation();
+        geometry.appkit_point_to_desktop(p.x, p.y)
+    })
 }
 
 fn install_monitor(
@@ -287,11 +292,11 @@ fn install_monitor(
         let ev = unsafe { event.as_ref() };
         let kind = ev.r#type();
         let input = if kind == NSEventType::LeftMouseDown {
-            Some(OverlayInput::Down(mouse_point(&geometry)))
+            Some(OverlayInput::Down(mouse_point(ev, &geometry)))
         } else if kind == NSEventType::LeftMouseDragged {
-            Some(OverlayInput::Move(mouse_point(&geometry)))
+            Some(OverlayInput::Move(mouse_point(ev, &geometry)))
         } else if kind == NSEventType::LeftMouseUp {
-            Some(OverlayInput::Up(mouse_point(&geometry)))
+            Some(OverlayInput::Up(mouse_point(ev, &geometry)))
         } else if kind == NSEventType::KeyDown && ev.keyCode() == ESCAPE_KEY_CODE {
             Some(OverlayInput::Escape)
         } else {
@@ -445,11 +450,15 @@ impl OverlayBackend for AppKitOverlay {
             else {
                 return;
             };
+            let Some(current) = identity(&app) else {
+                return;
+            };
             if !should_restore(
                 own_active,
                 app.isTerminated(),
                 previous.pid as u32 == std::process::id(),
-                launch_seconds(&app) == previous.launch,
+                &previous,
+                &current,
             ) {
                 return;
             }
@@ -464,14 +473,39 @@ impl OverlayBackend for AppKitOverlay {
 #[cfg(test)]
 mod tests {
     use super::should_restore;
+    use crate::macos_targets::AppIdentity;
+
+    fn app(pid: i32, start: Option<i64>, launch: Option<i64>) -> AppIdentity {
+        AppIdentity {
+            pid,
+            process_start: start,
+            bundle_id: None,
+            launch,
+        }
+    }
 
     #[test]
     fn restores_only_while_lingopop_is_still_active_and_the_app_is_the_same_live_process() {
-        assert!(should_restore(true, false, false, true));
+        let a = app(7, Some(100), Some(5));
+        assert!(should_restore(true, false, false, &a, &a));
         // The user switched away (LingoPop resigned active): leave their choice alone.
-        assert!(!should_restore(false, false, false, true));
-        assert!(!should_restore(true, true, false, true), "exited");
-        assert!(!should_restore(true, false, true, true), "ourselves");
-        assert!(!should_restore(true, false, false, false), "pid reused");
+        assert!(!should_restore(false, false, false, &a, &a));
+        assert!(!should_restore(true, true, false, &a, &a), "exited");
+        assert!(!should_restore(true, false, true, &a, &a), "ourselves");
+        let reused = app(7, Some(200), Some(5));
+        assert!(
+            !should_restore(true, false, false, &a, &reused),
+            "pid reused"
+        );
+    }
+
+    #[test]
+    fn an_app_without_a_launch_date_is_never_refocused() {
+        // launchDate None == None used to count as the same process.
+        let a = app(7, Some(100), None);
+        assert!(!should_restore(true, false, false, &a, &a));
+        // An unreadable start time is not the same process either.
+        let b = app(7, None, Some(5));
+        assert!(!should_restore(true, false, false, &b, &b));
     }
 }

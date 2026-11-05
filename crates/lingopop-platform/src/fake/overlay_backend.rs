@@ -7,6 +7,10 @@ use crate::macos_overlay::{OverlayBackend, OverlaySink};
 use crate::overlay::OverlayInput;
 use crate::{PlatformError, Rect};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+/// How long a `wait_for_*` helper waits before it panics.
+const WAIT_DEADLINE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayCall {
@@ -54,10 +58,22 @@ impl FakeOverlayBackend {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
     }
+    /// Blocks until `done`, but never forever: a condition that does not come true within
+    /// [`WAIT_DEADLINE`] panics with a fixed message instead of hanging the test run.
     fn wait_until(&self, mut done: impl FnMut(&State) -> bool) {
+        let deadline = Instant::now() + WAIT_DEADLINE;
         let mut s = self.state();
         while !done(&s) {
-            s = self.changed.wait(s).unwrap_or_else(|p| p.into_inner());
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                drop(s);
+                panic!("FakeOverlayBackend: condition not reached within the wait deadline");
+            }
+            s = self
+                .changed
+                .wait_timeout(s, left)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
         }
     }
     pub fn calls(&self) -> Vec<OverlayCall> {

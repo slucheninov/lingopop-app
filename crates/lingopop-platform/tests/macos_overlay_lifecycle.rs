@@ -779,6 +779,53 @@ fn the_overlay_flag_is_cleared_when_the_main_loop_dropped_the_cleanup() {
 }
 
 #[test]
+fn a_panic_in_the_pick_still_restores_the_previous_app_once_and_releases_the_lease() {
+    let main = FakeMainThread::new();
+    let pump = {
+        let m = main.clone();
+        std::thread::spawn(move || m.pump())
+    };
+    let backend = FakeOverlayBackend::new();
+    let active = OverlayActive::new();
+    let topology = Arc::new(PanickingTopology {
+        cache: TopologyCache::new(MacGeometry::new(1, 900.0, one_display(1.0)).unwrap()),
+        armed: false.into(),
+    });
+    let overlay = Arc::new(
+        MacOverlay::new(
+            backend.clone(),
+            topology.clone(),
+            Arc::new(FakeSleeper::new()),
+        )
+        .with_overlay_active(active.clone())
+        .with_topology_poll(Duration::from_millis(5)),
+    );
+    overlay.bind_main_thread(main.clone());
+    let (_tx, rx) = bounded::<()>(1);
+    let o = overlay.clone();
+    let join = std::thread::spawn(move || o.pick(rx));
+    backend.wait_for_creates(1);
+    // The unwinding pick (the guard's drop) is the only teardown path: nobody finalizes it.
+    topology
+        .armed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(join.join().is_err(), "the pick thread panicked");
+    backend.wait_for_cleanups(1);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while active.is_set() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!active.is_set(), "the lease is released after the teardown");
+    assert_eq!(backend.restores(), 1, "restored exactly once on unwind");
+    assert!(
+        backend.cleanup_seq(1).unwrap() < backend.restore_seq(1).unwrap(),
+        "the restore follows the window removal"
+    );
+    main.close();
+    pump.join().unwrap();
+}
+
+#[test]
 fn a_panic_in_the_pick_clears_the_overlay_flag_after_the_posted_cleanup() {
     let main = FakeMainThread::new();
     let pump = {
@@ -958,4 +1005,29 @@ fn later_picks_after_an_abandoned_lease_leave_dismissal_enabled() {
     let (_tx, rx) = bounded::<()>(1);
     assert!(h.overlay.pick(rx).is_err());
     assert!(!h.active.is_set());
+}
+
+#[test]
+fn a_finished_pick_carries_the_topology_revision_it_was_made_against() {
+    let h = Harness::new(one_display(1.0));
+    let revision = h.cache.topology_revision();
+    let (_tx_cancel, rx) = bounded::<()>(1);
+    let overlay = h.overlay.clone();
+    let join = std::thread::spawn(move || overlay.pick_with_revision(rx));
+    h.backend.wait_for_creates(1);
+    for e in [
+        OverlayInput::Down(p(10, 10)),
+        OverlayInput::Move(p(200, 200)),
+        OverlayInput::Up(p(200, 200)),
+    ] {
+        assert!(h.backend.fire(e));
+    }
+    assert_eq!(
+        join.join().unwrap(),
+        Ok(Some((Rect::new(10, 10, 190, 190), Some(revision))))
+    );
+    // A cancelled pick has no rectangle and so no revision.
+    let (tx, rx) = bounded::<()>(1);
+    drop(tx);
+    assert_eq!(h.overlay.pick_with_revision(rx), Ok(None));
 }
