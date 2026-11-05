@@ -73,6 +73,26 @@ pub fn select_best(candidates: Vec<OcrCandidate>) -> Option<OcrText> {
     })
 }
 
+/// Builds the text of a recognizer that reports lines with a vertical position in a Y-UP space
+/// (a larger value is higher on screen, e.g. Vision's normalized `boundingBox.minY`), in no
+/// guaranteed order: the highest line comes first, lines at the same height keep the order the
+/// recognizer gave them (stable), a non-finite position sorts last, blank lines are dropped and
+/// the rest is joined with `"\n"`. `language` is `None` (the recognizer does not report one).
+/// An empty or all-blank input is a REAL empty result, not an error.
+pub fn text_in_reading_order(mut lines: Vec<(f64, String)>) -> OcrText {
+    let key = |y: f64| if y.is_finite() { y } else { f64::NEG_INFINITY };
+    lines.sort_by(|a, b| key(b.0).total_cmp(&key(a.0)));
+    OcrText {
+        text: lines
+            .iter()
+            .map(|(_, line)| line.as_str())
+            .filter(|line| !line.chars().all(char::is_whitespace))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        language: None,
+    }
+}
+
 pub trait Ocr: Send + Sync {
     /// Recognizes the text in `image`. `OcrUnavailable` when no recognizer language is installed.
     fn recognize(&self, image: &CapturedImage) -> Result<OcrText, PlatformError>;

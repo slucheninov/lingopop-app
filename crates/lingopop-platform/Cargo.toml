@@ -57,6 +57,8 @@ security-framework = "=3.7.0"
 security-framework-sys = "=2.17.0"
 core-foundation = "=0.10.1"
 core-graphics = "0.25.0"
+# `ForeignType::as_ptr` of core-graphics' `CGImage` (already in the lock through core-graphics).
+foreign-types = "=0.5.0"
 block2 = "0.6.2"
 # proc_pidinfo / proc_bsdinfo for the kernel process start time (macos/procinfo.rs). No std
 # needed; objc2-app-kit already pulls libc in.
@@ -98,6 +100,19 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSEnumerator",
     "NSObject",
     "NSString",
+] }
+
+# Vision text recognition (macos/ocr.rs). Exact pin, verified in the registry: bindings for
+# VNRecognizeTextRequest / VNImageRequestHandler / VNRecognizedTextObservation, macOS 10.15+
+# (the app floor is 13). Only the needed headers are enabled.
+objc2-vision = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "VNObservation",
+    "VNRecognizeTextRequest",
+    "VNRequest",
+    "VNRequestHandler",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
 ] }
 
 [dev-dependencies]

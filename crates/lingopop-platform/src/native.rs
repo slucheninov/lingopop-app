@@ -71,8 +71,8 @@ pub fn native() -> Platform {
     }
 }
 
-/// The macOS dev implementations: text-only clipboard, no screen capture or OCR, and the
-/// Keychain-backed secret protection.
+/// The macOS implementations: lossless pasteboard, permission-gated screen capture, Vision OCR
+/// and the Keychain-backed secret protection.
 #[cfg(target_os = "macos")]
 pub fn native() -> Platform {
     use crate::macos::{MacCapture, MacClipboard, MacForeground, MacKeys, MacMonitors, MacOcr};

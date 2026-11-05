@@ -129,6 +129,16 @@
     "pl": "Wymagane uprawnienia Nagrywania ekranu",
     "uk": "Потрібен дозвіл «Запис екрана»"
   },
+  "Screen capture failed. Try again.": {
+    "de": "Bildschirmaufnahme fehlgeschlagen. Versuche es erneut.",
+    "pl": "Nie udało się wykonać zrzutu ekranu. Spróbuj ponownie.",
+    "uk": "Не вдалося зробити знімок екрана. Спробуйте ще раз."
+  },
+  "Text recognition failed. Try again.": {
+    "de": "Texterkennung fehlgeschlagen. Versuche es erneut.",
+    "pl": "Rozpoznawanie tekstu nie powiodło się. Spróbuj ponownie.",
+    "uk": "Не вдалося розпізнати текст. Спробуйте ще раз."
+  },
   "Steps:\n1. Open System Settings → Privacy & Security → %@\n2. Make sure LingoPop is in the list and the toggle is ON\n3. Quit LingoPop completely (menu bar → Quit) and relaunch\n\nmacOS only reads the new permission after a full restart of the app.": {
     "de": "Schritte:\n1. Systemeinstellungen → Datenschutz & Sicherheit → %@ öffnen\n2. Sicherstellen, dass LingoPop in der Liste steht und der Schalter EIN ist\n3. LingoPop vollständig beenden (Menüleiste → Beenden) und neu starten\n\nmacOS liest die neue Berechtigung erst nach einem vollständigen Neustart der App.",
     "pl": "Kroki:\n1. Otwórz Ustawienia systemowe → Prywatność i ochrona → %@\n2. Upewnij się, że LingoPop jest na liście, a przełącznik jest WŁĄCZONY\n3. Całkowicie zamknij LingoPop (pasek menu → Wyjdź) i uruchom ponownie\n\nmacOS odczytuje nowe uprawnienie dopiero po pełnym ponownym uruchomieniu aplikacji.",

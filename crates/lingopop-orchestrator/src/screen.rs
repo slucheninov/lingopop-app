@@ -25,7 +25,8 @@ use lingopop_platform::{
 };
 
 use crate::messages::{
-    no_text_found, platform_message, screen_gate_message, KEY_SCREEN_RECORDING_RELAUNCH,
+    capture_gate_message, no_text_found, ocr_gate_message, platform_message, screen_gate_message,
+    KEY_SCREEN_RECORDING_RELAUNCH,
 };
 use crate::orchestrator::Orchestrator;
 use crate::providers::{ocr_translate_providers, vision_providers};
@@ -204,7 +205,7 @@ impl Orchestrator {
             Ok(c) => c,
             Err(e) => {
                 self.log("screen translate: capture failed");
-                self.present_error(generation, screen_gate_message(&e));
+                self.present_error(generation, capture_gate_message(&e));
                 return;
             }
         };
@@ -289,7 +290,7 @@ impl Orchestrator {
             }
             Err(e) => {
                 self.log("ocr failed");
-                self.present_error_with_vision(generation, screen_gate_message(&e));
+                self.present_error_with_vision(generation, ocr_gate_message(&e));
             }
         }
     }

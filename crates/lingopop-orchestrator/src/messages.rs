@@ -39,6 +39,13 @@ pub const KEY_PLATFORM_GENERIC: &str = "Something went wrong on this PC (%@). Tr
 /// NEW (Windows only).
 pub const KEY_SCREEN_TIMEOUT: &str = "Screen capture or text recognition took too long. Try again.";
 
+/// NEW (macOS only): the screenshot itself failed (a native capture error, not a missing
+/// permission, not a timeout). Shown by `capture_gate_message` on macOS only.
+pub const KEY_SCREEN_CAPTURE_FAILED: &str = "Screen capture failed. Try again.";
+/// NEW (macOS only): Vision failed on the captured image (a native recognition error, not an
+/// empty result, not a timeout). Shown by `ocr_gate_message` on macOS only.
+pub const KEY_TEXT_RECOGNITION_FAILED: &str = "Text recognition failed. Try again.";
+
 /// NEW (macOS only): Accessibility is missing, so the selection cannot be read or pasted.
 pub const KEY_PERMISSION_ACCESSIBILITY: &str = "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.";
 /// NEW (macOS only): Replace needs Accessibility to look at the foreground and send the paste.
@@ -146,6 +153,29 @@ pub fn screen_gate_message(e: &GateError) -> UserMessageView {
     match e {
         GateError::Busy | GateError::TimedOut => plain(KEY_SCREEN_TIMEOUT),
         other => gate_message(other),
+    }
+}
+
+/// `screen_gate_message` for the CAPTURE stage of Screen Translate. On macOS a native capture
+/// failure (`Os` / `Unsupported`) says the screenshot failed; permission denial keeps its own
+/// key (`platform_message`), `Busy` / `TimedOut` keep the screen timeout, and Windows is
+/// unchanged (the generic platform text).
+pub fn capture_gate_message(e: &GateError) -> UserMessageView {
+    stage_gate_message(e, cfg!(target_os = "macos"), KEY_SCREEN_CAPTURE_FAILED)
+}
+
+/// `screen_gate_message` for the OCR stage: on macOS a native recognition failure says text
+/// recognition failed; everything else is as in `screen_gate_message`.
+pub fn ocr_gate_message(e: &GateError) -> UserMessageView {
+    stage_gate_message(e, cfg!(target_os = "macos"), KEY_TEXT_RECOGNITION_FAILED)
+}
+
+fn stage_gate_message(e: &GateError, macos: bool, failed_key: &'static str) -> UserMessageView {
+    match e {
+        GateError::Platform(PlatformError::Os { .. } | PlatformError::Unsupported(_)) if macos => {
+            plain(failed_key)
+        }
+        other => screen_gate_message(other),
     }
 }
 
@@ -321,6 +351,69 @@ mod tests {
         assert_eq!(
             platform_message(&PlatformError::HotkeyConflict).key,
             KEY_PLATFORM_GENERIC
+        );
+    }
+
+    #[test]
+    fn stage_messages_name_the_failed_stage_on_macos_only() {
+        let os = GateError::Platform(PlatformError::Os {
+            api: "CGDisplayCreateImageForRect",
+            code: 0,
+        });
+        let unsupported = GateError::Platform(PlatformError::Unsupported("OCR on macOS"));
+        for e in [&os, &unsupported] {
+            assert_eq!(
+                stage_gate_message(e, true, KEY_SCREEN_CAPTURE_FAILED),
+                plain(KEY_SCREEN_CAPTURE_FAILED)
+            );
+            assert_eq!(
+                stage_gate_message(e, true, KEY_TEXT_RECOGNITION_FAILED),
+                plain(KEY_TEXT_RECOGNITION_FAILED)
+            );
+            // Windows text is unchanged.
+            assert_eq!(
+                stage_gate_message(e, false, KEY_SCREEN_CAPTURE_FAILED),
+                screen_gate_message(e)
+            );
+        }
+        assert_eq!(
+            stage_gate_message(&os, false, KEY_SCREEN_CAPTURE_FAILED).key,
+            KEY_PLATFORM_GENERIC
+        );
+        // Permission denial, timeouts, empty regions and panics keep their own messages.
+        for macos in [true, false] {
+            let denied = GateError::Platform(PlatformError::PermissionDenied(
+                PermissionKind::ScreenRecording,
+            ));
+            assert_eq!(
+                stage_gate_message(&denied, macos, KEY_SCREEN_CAPTURE_FAILED),
+                plain(KEY_PERMISSION_SCREEN_RECORDING)
+            );
+            assert_eq!(
+                stage_gate_message(&GateError::TimedOut, macos, KEY_TEXT_RECOGNITION_FAILED),
+                plain(KEY_SCREEN_TIMEOUT)
+            );
+            assert_eq!(
+                stage_gate_message(
+                    &GateError::Platform(PlatformError::InvalidRegion),
+                    macos,
+                    KEY_SCREEN_CAPTURE_FAILED
+                ),
+                selection_too_small()
+            );
+            assert_eq!(
+                stage_gate_message(&GateError::Panicked, macos, KEY_SCREEN_CAPTURE_FAILED).key,
+                KEY_PLATFORM_GENERIC
+            );
+        }
+        assert_eq!(
+            stage_gate_message(
+                &GateError::Platform(PlatformError::OcrUnavailable),
+                true,
+                KEY_TEXT_RECOGNITION_FAILED
+            )
+            .key,
+            KEY_OCR_UNAVAILABLE
         );
     }
 

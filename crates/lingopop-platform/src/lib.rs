@@ -77,7 +77,7 @@ pub use monitors::{
 pub use native::Platform;
 #[cfg(any(windows, target_os = "macos"))]
 pub use native::{native, native_system};
-pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
+pub use ocr::{select_best, text_in_reading_order, Ocr, OcrCandidate, OcrText};
 pub use permissions::{
     ensure_permission, AlwaysGranted, PermissionKind, PermissionState, Permissions,
 };

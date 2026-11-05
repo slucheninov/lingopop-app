@@ -18,11 +18,9 @@ fn native_bundle_on_macos_capture_never_reaches_the_screen_before_setup() {
         ),
         "{result:?}"
     );
-    let image = CapturedImage::new(1, 1, vec![0, 0, 0, 255]).unwrap();
-    assert_eq!(
-        platform.ocr.recognize(&image).map(|_| ()),
-        Err(PlatformError::Unsupported("OCR on macOS"))
-    );
+    // Vision needs no permission and no topology: a real (empty) recognition, never an error.
+    let image = CapturedImage::new(8, 8, vec![255; 8 * 8 * 4]).unwrap();
+    assert!(platform.ocr.recognize(&image).unwrap().is_empty());
     // Construction must not access the real login keychain.
 }
 

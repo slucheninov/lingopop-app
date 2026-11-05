@@ -424,6 +424,27 @@ async fn ocr_unavailable_message() {
 }
 
 #[tokio::test]
+async fn ocr_native_failure_names_the_recognition_stage_on_macos() {
+    let r = rig(
+        Err(PlatformError::Os {
+            api: "VNImageRequestHandler.performRequests",
+            code: 0,
+        }),
+        ok_transport(),
+    );
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_TEXT_RECOGNITION_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    // The vision retry stays on offer: a different provider may still read the image.
+    assert!(!m.retry_providers.is_empty());
+}
+
+#[tokio::test]
 async fn ocr_gate_timeout_uses_the_screen_message() {
     let r = rig_gated(
         Ok(Some(REGION)),
