@@ -52,6 +52,11 @@ jobs:
         run: |
           python scripts/gen-localizations.py check
           python -m unittest discover -s scripts/tests -p 'test_localizations.py'
+      - name: Check versions and release scripts
+        shell: bash
+        run: |
+          python scripts/check-version.py
+          python -m unittest discover -s scripts/tests -p 'test_check_version.py'
       - name: Check macOS production readiness
         if: runner.os == 'macOS'
         shell: bash
