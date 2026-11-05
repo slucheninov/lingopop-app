@@ -1,6 +1,10 @@
 //! Real Vision text recognition on the committed fixture (`fixtures/ocr/hello.png`, "Hello
 //! world"). It needs no permission and never touches the screen: the pixels come from a file.
 //! Recognized text is never printed; only `contains("hello")` style assertions run.
+//!
+//! Real Vision costs about a minute on a cold CI runner (model load), so the default run keeps
+//! ONE real-Vision test, `vision_reads_the_fixture`; the other Vision tests are
+//! `#[ignore = "owner-run: real Vision"]` (run them with `-- --ignored`).
 #![cfg(target_os = "macos")]
 
 use lingopop_platform::{CapturedImage, MacOcr, Ocr, PlatformError};
@@ -36,6 +40,7 @@ fn vision_reads_the_fixture() {
 }
 
 #[test]
+#[ignore = "owner-run: real Vision"]
 fn a_blank_image_is_a_real_empty_result_not_an_error() {
     let white = CapturedImage::new(200, 80, vec![255; 200 * 80 * 4]).unwrap();
     let text = MacOcr::new().recognize(&white).expect("no error");
@@ -66,6 +71,7 @@ fn a_zero_sized_or_inconsistent_image_is_an_invalid_region() {
 }
 
 #[test]
+#[ignore = "owner-run: real Vision"]
 fn the_same_image_can_be_recognized_twice() {
     // The vision retry keeps the captured image; recognition must not consume or alter it.
     let image = fixture();
@@ -76,6 +82,7 @@ fn the_same_image_can_be_recognized_twice() {
 }
 
 #[test]
+#[ignore = "owner-run: real Vision"]
 fn recognition_runs_off_the_main_thread() {
     // The gate runs blocking work on worker threads; Vision must work there.
     let image = fixture();
@@ -103,6 +110,7 @@ fn rotate(image: &CapturedImage, quarter_turns: u32) -> CapturedImage {
 }
 
 #[test]
+#[ignore = "owner-run: real Vision"]
 fn rotated_text_is_recognized_by_the_accurate_level() {
     // Vision's accurate level is orientation aware: the fixture turned by 90, 180 and 270
     // degrees is still read, so a screenshot of rotated text (or a rotated display) is not

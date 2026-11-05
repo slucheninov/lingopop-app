@@ -118,19 +118,57 @@ fi
 
 # (6) A release or packaging build never turns on every cargo feature: that would also enable
 # `dev-plaintext` (and any future dev-only feature) in the shipped binary. Discovery is by what
-# a file DOES, not only by its name (`packaging.yml` is not `*package*`): every workflow and
-# script is checked, and `--all-features` on a non-comment line fails when the file also runs a
-# build / bundle command, or when its name says it releases, packages, bundles, signs or
-# notarizes. `cargo tree --all-features` in a pure dependency check stays fine.
-build_pattern='(cargo[[:space:]]+(build|rustc|install|bundle|tauri)|tauri[[:space:]]+(build|bundle)|npm[[:space:]]+run[[:space:]]+tauri|npx[[:space:]]+tauri)'
+# a file DOES, not by its name (`packaging.yml` is not `*package*`): every workflow and script is
+# scanned command by command (backslash continuations are joined; `&&`, `||`, `;` and `|` start
+# a new command; comments are dropped). A command fails the gate only when it is a build
+# invocation (`cargo build|test|clippy|run|check|bench|doc|rustc|install|bundle|tauri ...`,
+# `tauri build|bundle`, `npm run tauri`, `npx tauri`) carrying `--all-features`. Read-only
+# commands such as `cargo tree --all-features` or `cargo metadata --all-features` never fail it,
+# even in a file that also builds; in a file whose NAME says it releases, packages, bundles,
+# signs or notarizes, any other command carrying `--all-features` fails too.
+build_command='(cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?(build|test|clippy|run|check|bench|doc|rustc|install|bundle|tauri)|tauri[[:space:]]+(build|bundle)|npm[[:space:]]+run[[:space:]]+tauri|npx[[:space:]]+tauri)([[:space:]]|$)'
+read_only_cargo='cargo[[:space:]]+(\+[^[:space:]]+[[:space:]]+)?(tree|metadata|pkgid|read-manifest|locate-project|vendor|fetch)([[:space:]]|$)'
+commands_of() {
+  awk '
+    function flush(   n, parts, i, seg) {
+      gsub(/&&|\|\||;|\|/, "\n", acc)
+      n = split(acc, parts, "\n")
+      for (i = 1; i <= n; i++) {
+        seg = parts[i]
+        if (seg ~ /--all-features/) printf "%d:%s\n", start, seg
+      }
+      acc = ""
+    }
+    {
+      line = $0
+      if (line ~ /^[[:space:]]*#/) { next }
+      if (acc == "") start = NR
+      cont = (line ~ /\\[[:space:]]*$/)
+      sub(/\\[[:space:]]*$/, " ", line)
+      acc = acc line
+      if (!cont) flush()
+    }
+    END { if (acc != "") flush() }
+  ' "$1"
+}
 while IFS= read -r file; do
-  hits=$(grep -n -F -e '--all-features' "$file" | grep -v -E '^[0-9]+:[[:space:]]*#' || true)
-  [ -n "$hits" ] || continue
-  if grep -v -E '^[[:space:]]*#' "$file" | grep -q -E "$build_pattern" \
-    || printf '%s' "$(basename "$file")" | grep -q -i -E 'release|packag|bundle|dist|dmg|notar|sign'; then
-    printf '%s: %s\n' "$file" "$hits" >&2
-    fail "$file builds with --all-features"
+  named=0
+  if printf '%s' "$(basename "$file")" | grep -q -i -E 'release|packag|bundle|dist|dmg|notar|sign'; then
+    named=1
   fi
+  hits=""
+  while IFS= read -r command_line; do
+    [ -n "$command_line" ] || continue
+    command=${command_line#*:}
+    if printf '%s' "$command" | grep -q -E "$build_command"; then
+      hits+="$command_line"$'\n'
+    elif [ "$named" -eq 1 ] && ! printf '%s' "$command" | grep -q -E "$read_only_cargo"; then
+      hits+="$command_line"$'\n'
+    fi
+  done < <(commands_of "$file")
+  [ -n "$hits" ] || continue
+  printf '%s: %s' "$file" "$hits" >&2
+  fail "$file builds with --all-features"
 done < <(
   {
     find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null

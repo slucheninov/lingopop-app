@@ -232,6 +232,7 @@ pub fn parse_wait_pid(args: &[String]) -> Option<u32> {
     None
 }
 
+// lifecycle-marker: setup-begin (task5_tests pins what may live between the markers)
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -365,6 +366,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     log::info!("LingoPop started");
     Ok(())
 }
+// lifecycle-marker: setup-end
 
 pub fn run() {
     let data_dir = paths::data_dir();
@@ -381,6 +383,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         // Registered first; callbacks only schedule window creation.
+        // lifecycle-marker: single-instance-first
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::open_settings(app, None)
         }))
@@ -414,6 +417,7 @@ pub fn run() {
             updates::updates_check,
             commands::app_relaunch
         ])
+        // lifecycle-marker: setup-registered
         .setup(move |app| setup(app, &data_dir))
         .build(tauri::generate_context!());
     let app = match app {

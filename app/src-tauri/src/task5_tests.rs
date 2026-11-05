@@ -340,17 +340,27 @@ fn open_login_items_settings_calls_the_platform_and_maps_a_failure_to_a_catalog_
 fn a_second_launch_is_handled_before_any_native_service_exists() {
     // The single-instance plugin is registered first and a second process exits inside its
     // initialisation, so it never reaches `setup`, where the platform (and with it the login
-    // item) is created and the saved launch-at-login flag is applied. Source order pins that.
+    // item) is created and the saved launch-at-login flag is applied.
+    //
+    // This stays a source-order check on purpose: the property is about the order of calls
+    // inside `run()`, which builds a real Tauri application (event loop, windows) and cannot be
+    // exercised in a unit test. It is anchored on named `lifecycle-marker` comments in `lib.rs`
+    // instead of byte offsets or code snippets, so reformatting or renaming code cannot break it
+    // silently and an edit that moves a marker is a visible, deliberate change.
     let src = include_str!("lib.rs");
-    let single = src
-        .find("tauri_plugin_single_instance::init")
-        .expect("plugin");
-    let setup_call = src
-        .find(".setup(move |app| setup(app, &data_dir))")
-        .expect("setup");
-    let setup_fn = src.find("fn setup(").expect("setup fn");
-    let run_fn = src.find("pub fn run()").expect("run fn");
-    assert!(single > run_fn && single < setup_call);
+    let marker = |name: &str| {
+        let tag = format!("// lifecycle-marker: {name}");
+        let at: Vec<_> = src.match_indices(&tag).map(|(i, _)| i).collect();
+        assert_eq!(at.len(), 1, "marker `{name}` must appear exactly once");
+        at[0]
+    };
+    let (setup_begin, setup_end) = (marker("setup-begin"), marker("setup-end"));
+    let (single, registered) = (marker("single-instance-first"), marker("setup-registered"));
+    assert!(setup_end > setup_begin, "setup precedes run");
+    assert!(
+        single > setup_end && single < registered,
+        "the single-instance plugin is registered inside run(), before setup is"
+    );
     for needle in [
         "lingopop_platform::native()",
         "apply_startup_login(hooks.as_ref()",
@@ -358,7 +368,7 @@ fn a_second_launch_is_handled_before_any_native_service_exists() {
         let at: Vec<_> = src.match_indices(needle).map(|(i, _)| i).collect();
         assert_eq!(at.len(), 1, "{needle}");
         assert!(
-            at[0] > setup_fn && at[0] < run_fn,
+            at[0] > setup_begin && at[0] < setup_end,
             "{needle} must live in setup"
         );
     }

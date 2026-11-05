@@ -185,6 +185,42 @@ class MacosProductionGate(unittest.TestCase):
         result = run(self.root)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_cargo_tree_all_features_in_a_file_that_also_builds_is_fine(self):
+        # Detection is per command: a dependency listing next to a normal build is not a build
+        # with every feature, whatever the file is called.
+        for rel, text in [
+            (
+                ".github/workflows/deps.yml",
+                "jobs:\n  b:\n    steps:\n      - run: cargo tree --all-features\n"
+                "      - run: cargo build --release\n",
+            ),
+            (
+                "scripts/package-macos.sh",
+                "#!/usr/bin/env bash\ncargo tree --all-features | grep dev\ncargo build --release\n",
+            ),
+            (
+                "scripts/check-deps.sh",
+                "#!/usr/bin/env bash\ncargo tree --all-features && cargo build --release\n"
+                "cargo metadata --all-features \\\n  --format-version 1\n",
+            ),
+        ]:
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_build_on_a_continued_line_or_after_a_tree_still_fails(self):
+        path = self.root / ".github/workflows/nightly.yml"
+        path.write_text(
+            "jobs:\n  b:\n    steps:\n      - run: |\n"
+            "          cargo tree --all-features\n"
+            "          cargo build --release \\\n            --all-features\n"
+        )
+        self.assert_fails("nightly.yml builds with --all-features")
+        path.write_text("jobs:\n  b:\n    steps:\n      - run: cargo tree && cargo test --all-features\n")
+        self.assert_fails("nightly.yml builds with --all-features")
+
 
 if __name__ == "__main__":
     unittest.main()

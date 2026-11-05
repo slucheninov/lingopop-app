@@ -18,10 +18,16 @@ fn native_bundle_on_macos_capture_never_reaches_the_screen_before_setup() {
         ),
         "{result:?}"
     );
+    // Construction must not access the real login keychain.
+}
+
+#[test]
+#[ignore = "owner-run: real Vision"]
+fn native_bundle_ocr_is_a_real_empty_recognition_without_permission_or_topology() {
     // Vision needs no permission and no topology: a real (empty) recognition, never an error.
+    let platform = native();
     let image = CapturedImage::new(8, 8, vec![255; 8 * 8 * 4]).unwrap();
     assert!(platform.ocr.recognize(&image).unwrap().is_empty());
-    // Construction must not access the real login keychain.
 }
 
 #[test]
