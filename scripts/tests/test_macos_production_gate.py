@@ -249,6 +249,33 @@ class MacosProductionGate(unittest.TestCase):
                 path.write_text("jobs:\n  b:\n    steps:\n" + body)
                 self.assert_fails("nightly.yml builds with --all-features")
 
+    def test_the_reviewer_reproducers_for_mixed_folding_fail(self):
+        path = self.root / ".github/workflows/nightly.yml"
+        for body in [
+            # `>` with a tree, a blank line, then a build whose flag sits on the next line.
+            "      - run: >\n          cargo tree --edges normal\n\n          cargo build --release\n"
+            "          --all-features\n",
+            # `>-` with a more-indented continuation of the tree and a build after it.
+            "      - run: >-\n          cargo tree\n            --edges normal\n"
+            "          cargo build\n          --all-features\n",
+            # A literal block mixes the same way.
+            "      - run: |\n          cargo metadata --format-version 1\n\n"
+            "          cargo test --release\n            --all-features\n",
+        ]:
+            with self.subTest(body=body):
+                path.write_text("jobs:\n  b:\n    steps:\n" + body)
+                self.assert_fails("nightly.yml builds with --all-features")
+
+    def test_a_block_with_only_read_only_cargo_and_no_build_passes(self):
+        (self.root / ".github/workflows/deps.yml").write_text(
+            "jobs:\n  b:\n    steps:\n      - run: |\n"
+            "          cargo tree --all-features\n          cargo metadata --all-features \\\n"
+            "            --format-version 1\n          echo done\n"
+            "      - run: >\n          cargo tree\n          --all-features\n"
+        )
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_cargo_global_options_before_the_subcommand_do_not_hide_a_build(self):
         path = self.root / ".github/workflows/nightly.yml"
         for command in [

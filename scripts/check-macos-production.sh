@@ -119,10 +119,13 @@ fi
 # (6) A release or packaging build never turns on every cargo feature: that would also enable
 # `dev-plaintext` (and any future dev-only feature) in the shipped binary. Discovery is by what
 # a file DOES, not by its name (`packaging.yml` is not `*package*`): every workflow and script is
-# scanned command by command. Before splitting, a workflow `run:` is unfolded: `run: >` and a plain
-# multi-line value are scanned BOTH joined into one command and line by line (YAML keeps a newline
-# at blank and more-indented lines, so either reading may be the real one: fail closed); `run: |` keeps
-# its lines), backslash continuations are joined and `#` comments (outside quotes) are dropped;
+# scanned command by command. A workflow `run:` value that spans several lines (`>`, `|`, `>-` or
+# a plain multi-line scalar) is NOT decoded as YAML (blank lines, indentation and folding are
+# what a hand decoder gets wrong); a fail-closed rule applies to the raw lines instead: an
+# `--all-features` is accepted only when its own physical line segment starts `cargo tree` or
+# `cargo metadata`, any other occurrence fails when the block holds a build-like command
+# anywhere. Shell scripts and one-line values keep the per-command rule: backslash
+# continuations are joined and `#` comments (outside quotes) are dropped;
 # `&&`, `||`, `;` and `|` then start a new command. A command fails the gate only when it is a
 # build invocation carrying `--all-features`: `cargo [+toolchain] [global options] build|test|
 # clippy|run|check|bench|doc|rustc|install|bundle|tauri ...` (`cargo --color always build` is a
@@ -161,62 +164,72 @@ def indent_of(line):
     return len(line) - len(line.lstrip())
 
 
-def both_views(number, stripped, physical):
-    """The joined scalar and then each physical line, separated so they never run together."""
-    joined = [(number, " ".join(stripped)), (0, "")]
-    return joined + [(number + k, line) for k, line in enumerate(physical)] + [(0, "")]
-
-
-def logical_lines(text):
-    """(first line number, line) with YAML `run:` scalars unfolded and `\\` continuations joined."""
+def split_run_blocks(text):
+    """Splits a file into shell lines and workflow `run:` blocks. A `run:` value that spans lines
+    (`>`, `|`, `>-`, a plain multi-line scalar) is a block: its raw lines, key-line value
+    included, are handed to `block_hits` WITHOUT any YAML decoding (blank lines, indentation and
+    folding are exactly the details a hand decoder gets wrong). Every other line is plain shell."""
     lines = text.split("\n")
-    out, i = [], 0
+    shell, blocks, i = [], [], 0
     while i < len(lines):
-        line = lines[i]
-        m = RUN_KEY.match(line)
+        m = RUN_KEY.match(lines[i])
         if not m:
-            out.append((i + 1, line))
+            shell.append((i + 1, lines[i]))
             i += 1
             continue
         key_indent, value = len(m.group(1)), m.group(2).strip()
-        if value.startswith("#"):
-            value = ""
-        block = re.match(r"^([>|])[-+0-9]*\s*(#.*)?$", value)
+        indicator = re.match(r"^[>|][-+0-9]*\s*(#.*)?$", value) is not None
         j = i + 1
         body = []
         while j < len(lines) and (not lines[j].strip() or indent_of(lines[j]) > key_indent):
             body.append(lines[j])
             j += 1
-        while body and not body[-1].strip():
-            body.pop()
-        if block and block.group(1) == "|":
-            out.append((i + 1, ""))
-            out.extend((i + 2 + k, b) for k, b in enumerate(body))
-        elif block:
-            # Folded (`>`): YAML joins consecutive lines with a space but keeps a newline at a
-            # blank line and around a more-indented line, so what the shell runs depends on
-            # details a hand decoder can get wrong. Fail closed: BOTH views are scanned, the
-            # lines joined (one command) and every physical line on its own.
-            out.extend(both_views(i + 2, [b.strip() for b in body if b.strip()], body))
-        elif value and not value.startswith(("'", '"')) and body:
-            # A plain multi-line scalar folds the same way: both views again.
-            out.extend(
-                both_views(
-                    i + 1,
-                    [value] + [b.strip() for b in body if b.strip()],
-                    [value] + body,
-                )
-            )
-        else:
-            out.append((i + 1, line))
-            out.extend((i + 2 + k, b) for k, b in enumerate(body))
+        if not (indicator or any(b.strip() for b in body)):
+            shell.append((i + 1, lines[i]))  # a one-line value is an ordinary command line
+            i = j
+            continue
+        block = ([] if indicator else [value]) + body
+        blocks.append((i + 1, block))
         i = j
-    return out
+    return shell, blocks
 
 
-def commands(text):
+def has_build(text):
+    """True when ANY cargo / tauri build-like command appears anywhere in the text (every cargo
+    token is inspected, not only the first, and separators are ignored)."""
+    tokens = text.split()
+    for k, tok in enumerate(tokens):
+        if tok.rsplit("/", 1)[-1] == "cargo" and cargo_subcommand(tokens[k:]) in BUILD:
+            return True
+    return is_build(text)
+
+
+def block_hits(number, block):
+    """Fail-closed rule for a multi-line workflow `run:` value. After comments are stripped, an
+    `--all-features` is accepted ONLY when the very command segment of its own physical line
+    starts a `cargo tree` / `cargo metadata`; any other occurrence is a hit when the block
+    contains a build-like command anywhere (or the file's name says it releases or packages)."""
+    cleaned = [strip_comment(line) for line in block]
+    build_anywhere = has_build("\n".join(cleaned))
+    for k, line in enumerate(cleaned):
+        for segment in re.split(r"&&|\|\||;|\|", line):
+            if "--all-features" not in segment:
+                continue
+            tokens = segment.split()
+            starts_read_only = (
+                bool(tokens)
+                and tokens[0].rsplit("/", 1)[-1] == "cargo"
+                and cargo_subcommand(tokens) in READ_ONLY
+            )
+            if starts_read_only:
+                continue
+            if build_anywhere or named:
+                yield f"{number + k}:{segment.strip()}"
+
+
+def commands(shell_lines):
     acc, start = "", 0
-    for number, raw in logical_lines(text):
+    for number, raw in shell_lines:
         line = strip_comment(raw)
         if not line.strip():
             if acc:
@@ -275,12 +288,16 @@ def is_read_only(command):
 
 with open(path, encoding="utf-8", errors="replace") as handle:
     text = handle.read()
-for number, command in commands(text):
+shell_lines, run_blocks = split_run_blocks(text)
+for number, command in commands(shell_lines):
     for segment in re.split(r"&&|\|\||;|\|", command):
         if "--all-features" not in segment:
             continue
         if is_build(segment) or (named and not is_read_only(segment)):
             print(f"{number}:{segment.strip()}")
+for number, block in run_blocks:
+    for hit in block_hits(number, block):
+        print(hit)
 PY
 }
 while IFS= read -r file; do
