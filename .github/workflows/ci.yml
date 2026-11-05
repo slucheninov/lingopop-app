@@ -64,7 +64,7 @@ jobs:
         run: |
           # The macOS leg only; a missing shellcheck is installed, never skipped silently.
           command -v shellcheck >/dev/null || brew install shellcheck
-          shellcheck scripts/check-macos-production.sh
+          shellcheck scripts/*.sh
           bash scripts/check-macos-production.sh
           python -m unittest discover -s scripts/tests -p 'test_macos_production_gate.py'
       - name: Test frontend

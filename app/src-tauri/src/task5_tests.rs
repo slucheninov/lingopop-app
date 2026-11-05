@@ -238,7 +238,12 @@ fn a_recheck_does_nothing_while_launch_at_login_is_off_or_other_issues_stand() {
     hooks.launch_at_login(false);
     hooks.recheck_login_issue();
     assert_eq!(item.status_reads(), 0);
-    assert!(changes.load(std::sync::atomic::Ordering::SeqCst) >= before);
+    assert_eq!(hooks.login_issue(), None);
+    // Unavailable -> RequiresApproval -> None: two signalled changes.
+    assert_eq!(
+        changes.load(std::sync::atomic::Ordering::SeqCst),
+        before + 2
+    );
 }
 
 #[test]
