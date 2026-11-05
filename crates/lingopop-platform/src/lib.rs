@@ -27,6 +27,8 @@ pub mod macos_dismiss;
 pub mod macos_geometry;
 #[path = "macos/presentation.rs"]
 pub mod macos_presentation;
+#[path = "macos/screen.rs"]
+pub mod macos_screen;
 #[path = "macos/target_registry.rs"]
 pub mod macos_targets;
 pub mod main_thread;

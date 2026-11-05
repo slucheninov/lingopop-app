@@ -113,6 +113,12 @@ harness = false
 name = "macos_popup"
 harness = false
 
+# Owner-run real-screen capture check: needs the main thread (monitor topology) and the
+# explicit opt-in below, skips unless `--ignored`.
+[[test]]
+name = "macos_screen"
+harness = false
+
 [target.'cfg(windows)'.dev-dependencies]
 windows = { version = "0.62.2", features = [
     "Media_Ocr",

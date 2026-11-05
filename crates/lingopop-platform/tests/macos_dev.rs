@@ -5,11 +5,18 @@
 use lingopop_platform::{native, CapturedImage, Clipboard, MacClipboard, PlatformError, Rect};
 
 #[test]
-fn native_bundle_on_macos_has_unsupported_capture_and_ocr() {
+fn native_bundle_on_macos_capture_never_reaches_the_screen_before_setup() {
     let platform = native();
-    assert_eq!(
-        platform.capture.capture_region(Rect::new(0, 0, 10, 10)),
-        Err(PlatformError::Unsupported("screen capture on macOS"))
+    // Before shell setup the topology cache is empty, so a granted permission ends in
+    // InvalidRegion and a missing one in PermissionDenied: either way nothing is captured
+    // (the state read never prompts).
+    let result = platform.capture.capture_region(Rect::new(0, 0, 10, 10));
+    assert!(
+        matches!(
+            result,
+            Err(PlatformError::InvalidRegion | PlatformError::PermissionDenied(_))
+        ),
+        "{result:?}"
     );
     let image = CapturedImage::new(1, 1, vec![0, 0, 0, 255]).unwrap();
     assert_eq!(
