@@ -441,7 +441,8 @@ CONDITIONS = ("windows", "macos", "macos-adhoc")
 
 def render_install(template: str, conditions: Set[str]) -> Tuple[str, List[str]]:
     """The part of `docs/INSTALL.md` after `<!-- release-notes-start -->` with each
-    `<!-- if NAME -->` ... `<!-- endif -->` block kept only when NAME is true."""
+    `<!-- if NAME -->` ... `<!-- endif -->` block kept only when NAME is true (blocks nest;
+    NAME is `windows`, `macos` or `macos-adhoc`). `render_notes` then replaces `<version>`."""
     if NOTES_START not in template:
         return "", [f"install template: {NOTES_START} marker missing"]
     body = template.split(NOTES_START, 1)[1]
@@ -499,6 +500,7 @@ def render_notes(changelog: str, template: str, version: str, platforms, mode: O
         elif mode != "developer-id":
             errors.append("macOS signing mode unknown")
     install, install_errors = render_install(template, conditions)
+    install = install.replace("<version>", version)
     section = changelog_section(changelog, version) or f"Test pre-release {version} of LingoPop."
     return f"{section}\n\n{install}", errors + install_errors
 

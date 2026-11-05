@@ -310,6 +310,13 @@ class Publish(Base):
         self.assertIn("macOS text.", notes)
         self.assertNotIn("Gatekeeper text.", notes)
 
+    def test_version_placeholder_is_replaced(self):
+        (self.tmp / "INSTALL.md").write_text(INSTALL.replace("Windows text.", "Get LingoPop-<version>.exe"))
+        write_artifacts(self.tmp / "artifacts")
+        self.assertEqual(self.publish(), [])
+        notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
+        self.assertIn(f"Get LingoPop-{VERSION}.exe", notes)
+
     def test_missing_changelog_section_uses_the_fallback_line(self):
         (self.tmp / "CHANGELOG.md").write_text("# Changelog\n\n## Unreleased\n", encoding="utf-8")
         write_artifacts(self.tmp / "artifacts")
@@ -532,6 +539,26 @@ class Verify(Base):
 class Repository(unittest.TestCase):
     def test_committed_release_platforms_file_is_valid(self):
         self.assertIsNotNone(vra.read_release_platforms(REPO_ROOT / "release-platforms.json"))
+
+    def test_committed_install_template_renders_for_every_mode(self):
+        template = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+        for platforms, mode in (({"windows"}, None), (ALL, "adhoc"), (ALL, "developer-id")):
+            notes, errors = vra.render_notes(CHANGELOG, template, VERSION, platforms, mode)
+            self.assertEqual(errors, [])
+            self.assertTrue(notes.startswith("### Added"), notes[:80])
+            self.assertIn("## Installation", notes)
+            self.assertNotIn("<!--", notes)
+            self.assertNotIn("<version>", notes)
+            self.assertNotIn("release-notes-start", notes)
+            self.assertIn("SHA256SUMS.txt", notes)
+            self.assertEqual("### Windows" in notes, True)
+            self.assertEqual(f"LingoPop-{VERSION}-windows-x64-portable.exe" in notes, True)
+            self.assertEqual("### macOS" in notes, "macos" in platforms)
+            self.assertEqual(f"LingoPop-{VERSION}-macos-arm64.dmg" in notes, "macos" in platforms)
+            self.assertEqual("shasum -a 256 -c" in notes, "macos" in platforms)
+            self.assertEqual("Open Anyway" in notes, mode == "adhoc")
+            self.assertEqual("com.apple.quarantine" in notes, mode == "adhoc")
+            self.assertEqual("re-grant" in notes or "add it again" in notes, mode == "adhoc")
 
 
 if __name__ == "__main__":

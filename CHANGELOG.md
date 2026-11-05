@@ -6,6 +6,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Added
+
+- macOS preview builds: each release also carries `LingoPop-<version>-macos-arm64` (Apple silicon) and `-macos-x64` (Intel) as `.dmg` and `.zip` with the menu-bar app `LingoPop Preview` (macOS 13 or newer, ad-hoc signed unless Developer ID secrets are configured). The release notes now end with installation instructions for both platforms ([docs/INSTALL.md](docs/INSTALL.md)).
+- The release is published only after every platform leg succeeded and one combined `SHA256SUMS.txt` was verified against the exact asset set, the executable architectures and the macOS bundle metadata.
+
 ### Changed
 
 - The repository now covers both the Windows and the macOS version; README and AGENTS.md describe the shared codebase and the cross-platform plan.
