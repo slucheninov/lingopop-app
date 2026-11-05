@@ -14,6 +14,8 @@ pub struct FakeCapture {
     regions: Mutex<Vec<Rect>>,
     permissions: Option<Arc<FakePermissions>>,
     failure: Mutex<Option<PlatformError>>,
+    revisions: Mutex<Vec<Option<u64>>>,
+    live_revision: Mutex<Option<u64>>,
 }
 
 impl FakeCapture {
@@ -23,7 +25,24 @@ impl FakeCapture {
             regions: Mutex::new(Vec::new()),
             permissions: None,
             failure: Mutex::new(None),
+            revisions: Mutex::new(Vec::new()),
+            live_revision: Mutex::new(None),
         }
+    }
+
+    /// The topology revision this fake's "display layout" is at. A capture that carries a
+    /// revision (`capture_region_at`) different from it fails like the macOS adapter does:
+    /// `Os { api: "display topology changed" }`. Default `None` = nothing to compare.
+    pub fn set_live_revision(&self, revision: Option<u64>) {
+        *self.live_revision.lock().unwrap_or_else(|p| p.into_inner()) = revision;
+    }
+
+    /// The revision passed with every capture, in order (`None` for a plain `capture_region`).
+    pub fn revisions(&self) -> Vec<Option<u64>> {
+        self.revisions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Like macOS: while Screen Recording is not `Granted`, every capture fails with
@@ -50,10 +69,31 @@ impl FakeCapture {
 
 impl ScreenCapture for FakeCapture {
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError> {
+        self.capture_region_at(region, None)
+    }
+
+    fn capture_region_at(
+        &self,
+        region: Rect,
+        revision: Option<u64>,
+    ) -> Result<CapturedImage, PlatformError> {
         self.regions
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .push(region);
+        self.revisions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(revision);
+        let live = *self.live_revision.lock().unwrap_or_else(|p| p.into_inner());
+        if let (Some(picked), Some(live)) = (revision, live) {
+            if picked != live {
+                return Err(PlatformError::Os {
+                    api: "display topology changed",
+                    code: 0,
+                });
+            }
+        }
         if let Some(p) = &self.permissions {
             if p.peek(PermissionKind::ScreenRecording) != PermissionState::Granted {
                 return Err(PlatformError::PermissionDenied(

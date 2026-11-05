@@ -6,6 +6,15 @@ use crate::{PlatformError, Point, Rect, Size};
 pub trait RegionOverlay: Send + Sync {
     /// Disconnecting or sending on cancel ends the pick after native cleanup.
     fn pick(&self, cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, PlatformError>;
+    /// Like [`pick`](Self::pick), and also the display topology revision the selection was made
+    /// against (macOS: `MacGeometry::topology_revision`), so the capture can refuse a layout
+    /// that changed since. `None` = no revision (Windows has none; the default).
+    fn pick_with_revision(
+        &self,
+        cancel: crossbeam_channel::Receiver<()>,
+    ) -> Result<Option<(Rect, Option<u64>)>, PlatformError> {
+        Ok(self.pick(cancel)?.map(|rect| (rect, None)))
+    }
     /// Hands the overlay the main-thread dispatcher (macOS: native windows live there). Called
     /// once from shell setup, before the first pick; Windows ignores it.
     fn bind_main_thread(&self, _main: std::sync::Arc<dyn crate::MainThread>) {}

@@ -433,3 +433,64 @@ fn rgba_input_passes_through_and_alpha_is_forced_opaque() {
         .unwrap();
     assert!(image.rgba.chunks(4).all(|p| p == [1, 2, 3, 255]));
 }
+
+/// A fractional crop (scale 1.5) asks the OS for the integral points that enclose it and is cut
+/// back to the plan's exact pixel rectangle: no OS-side widening leaks into the image.
+#[test]
+fn a_fractional_crop_requests_integral_points_and_returns_the_exact_pixels() {
+    let screen = FakeScreen::new(&[(1, 1.5)], &[(1, [0, 0, 0, 255])]);
+    let cache = topology(vec![display(1, 0.0, 0.0, 1440.0, 900.0, 1.5)]);
+    let permissions = FakePermissions::new();
+    // Points (0,0,4,4) at scale 1.5 are 6x6 pixels; red = x, green = y of that bitmap.
+    let mut data = Vec::new();
+    for y in 0..6u8 {
+        for x in 0..6u8 {
+            data.extend_from_slice(&[x, y, 0, 0]);
+        }
+    }
+    *screen.override_bitmap.lock().unwrap() = Some(NativeBitmap {
+        width: 6,
+        height: 6,
+        bytes_per_row: 24,
+        format: PixelFormat::Rgba,
+        data,
+    });
+    let image = adapter(&screen, &cache, &permissions)
+        .capture_region(Rect::new(1, 1, 3, 3))
+        .unwrap();
+    assert_eq!(
+        screen.requests(),
+        vec![(1, NativeRect::new(0.0, 0.0, 4.0, 4.0))]
+    );
+    assert_eq!((image.width, image.height), (5, 5));
+    // Pixel (0,0) of the output is the bitmap's (1,1): the crop offset, not the widened origin.
+    assert_eq!(&image.rgba[0..4], &[1, 1, 0, 255]);
+    let last = (4 * 5 + 4) * 4;
+    assert_eq!(&image.rgba[last..last + 4], &[5, 5, 0, 255]);
+}
+
+/// A region picked against an older topology revision is refused before any native call:
+/// its coordinates belong to a layout that is gone. The same revision captures normally.
+#[test]
+fn a_region_picked_against_another_topology_revision_is_not_captured() {
+    let (screen, cache, permissions) = retina();
+    let live = cache.topology_revision();
+    let capture = adapter(&screen, &cache, &permissions);
+    let region = Rect::new(10, 20, 100, 50);
+    assert!(capture.capture_region_at(region, Some(live)).is_ok());
+    assert_eq!(screen.calls(), 1);
+
+    cache
+        .publish(900.0, vec![display(1, 0.0, 0.0, 1440.0, 900.0, 2.0)])
+        .unwrap();
+    assert_eq!(
+        capture.capture_region_at(region, Some(live)),
+        Err(PlatformError::Os {
+            api: "display topology changed",
+            code: 0
+        })
+    );
+    assert_eq!(screen.calls(), 1, "the stale region never reached the OS");
+    // No revision (plain `capture_region`, Windows) is not compared.
+    assert!(capture.capture_region(region).is_ok());
+}

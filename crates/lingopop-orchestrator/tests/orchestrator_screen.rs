@@ -482,6 +482,54 @@ async fn capture_native_failure_names_the_capture_stage_on_macos() {
 }
 
 #[tokio::test]
+async fn the_pick_revision_travels_to_the_capture() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.picker.set_revision(Some(7));
+    r.capture.set_live_revision(Some(7));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(r.capture.revisions(), vec![Some(7)]);
+    assert_eq!(
+        r.ocr.threads.lock().unwrap().len(),
+        1,
+        "capture succeeded, OCR ran"
+    );
+}
+
+#[tokio::test]
+async fn a_topology_change_between_pick_and_capture_fails_the_capture() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.picker.set_revision(Some(7));
+    r.capture.set_live_revision(Some(8)); // the layout changed after the pick
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_SCREEN_CAPTURE_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    assert_ne!(
+        error_key(&m),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL
+    );
+    assert_eq!(r.capture.revisions(), vec![Some(7)]);
+    assert!(
+        r.ocr.threads.lock().unwrap().is_empty(),
+        "no OCR of a stale rect"
+    );
+}
+
+#[tokio::test]
+async fn a_pick_without_a_revision_captures_unchecked() {
+    // Windows: no revision to carry.
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.capture.set_live_revision(Some(8));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(r.capture.revisions(), vec![None]);
+    assert_eq!(r.ocr.threads.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn ocr_gate_timeout_uses_the_screen_message() {
     let r = rig_gated(
         Ok(Some(REGION)),

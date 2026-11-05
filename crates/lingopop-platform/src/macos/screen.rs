@@ -127,25 +127,90 @@ impl<N: NativeScreen> ScreenCaptureAdapter<N> {
     ) -> Result<NativeBitmap, PlatformError> {
         self.guard(plan)?;
         let (c, scale) = (tile.pixel_crop, tile.backing_scale);
-        // Display-local backing pixels -> display-local points (the native API's space).
-        let rect = NativeRect::new(
+        // Display-local backing pixels -> display-local points (the native API's space). The
+        // points can be fractional (scale 1.5, fractional display origins) and the OS widens a
+        // fractional rect on its own (CGRectIntegral-style, by an amount we cannot see), so the
+        // request is widened HERE to the integral points that enclose it, and the result is cut
+        // back to the plan's exact pixel crop below.
+        let wanted = NativeRect::new(
             f64::from(c.x) / scale,
             f64::from(c.y) / scale,
             f64::from(c.width) / scale,
             f64::from(c.height) / scale,
         );
-        let bitmap = self.native.create_image(tile.display_id, rect)?;
+        let enclosing = wanted.enclosing_rect()?;
+        let bitmap = self
+            .native
+            .create_image(tile.display_id, NativeRect::from(enclosing))?;
         // Re-check before the image is used: on failure it is dropped here, never exposed.
         self.guard(plan)?;
-        Ok(bitmap)
+        Ok(crop_to_plan(bitmap, c, enclosing, scale))
+    }
+}
+
+/// Cuts the bitmap of the integral-point rect `enclosing` back to the plan's exact pixel crop
+/// `crop` (display-local backing pixels). The offset is `crop - enclosing * scale` pixels, so a
+/// crop that already is integral in points is returned untouched. A bitmap whose size does not
+/// match the scale (an OS that resampled it) cannot be indexed exactly and is returned whole:
+/// `blit` then resamples it into the destination as before.
+fn crop_to_plan(bitmap: NativeBitmap, crop: Rect, enclosing: Rect, scale: f64) -> NativeBitmap {
+    let expect_w = f64::from(enclosing.width) * scale;
+    let expect_h = f64::from(enclosing.height) * scale;
+    let ox = (f64::from(crop.x) - f64::from(enclosing.x) * scale).round();
+    let oy = (f64::from(crop.y) - f64::from(enclosing.y) * scale).round();
+    let sized = (f64::from(bitmap.width) - expect_w).abs() < 1.0
+        && (f64::from(bitmap.height) - expect_h).abs() < 1.0;
+    let (Ok(cw), Ok(ch)) = (u32::try_from(crop.width), u32::try_from(crop.height)) else {
+        return bitmap;
+    };
+    let fits = ox >= 0.0
+        && oy >= 0.0
+        && cw > 0
+        && ch > 0
+        && ox + f64::from(cw) <= f64::from(bitmap.width)
+        && oy + f64::from(ch) <= f64::from(bitmap.height);
+    if !sized || !fits || validate_bitmap(&bitmap).is_err() {
+        return bitmap;
+    }
+    let (ox, oy) = (ox as usize, oy as usize);
+    if ox == 0 && oy == 0 && cw == bitmap.width && ch == bitmap.height {
+        return bitmap;
+    }
+    let row = cw as usize * 4;
+    let mut data = Vec::with_capacity(row * ch as usize);
+    for y in 0..ch as usize {
+        let start = (oy + y) * bitmap.bytes_per_row + ox * 4;
+        data.extend_from_slice(&bitmap.data[start..start + row]);
+    }
+    NativeBitmap {
+        width: cw,
+        height: ch,
+        bytes_per_row: row,
+        format: bitmap.format,
+        data,
     }
 }
 
 impl<N: NativeScreen> ScreenCapture for ScreenCaptureAdapter<N> {
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError> {
+        self.capture_region_at(region, None)
+    }
+
+    fn capture_region_at(
+        &self,
+        region: Rect,
+        revision: Option<u64>,
+    ) -> Result<CapturedImage, PlatformError> {
         // Never reach the native API unpermitted (it would return a wallpaper-only image).
         self.require_permission()?;
         let geometry = self.geometry.snapshot();
+        // The region was picked against another layout: its coordinates are not ours any more.
+        if revision.is_some_and(|r| r != geometry.topology_revision()) {
+            return Err(PlatformError::Os {
+                api: TOPOLOGY_CHANGED_API,
+                code: 0,
+            });
+        }
         let clipped = validate_region(region, &geometry.monitors())?;
         let plan = geometry.capture_plan(clipped)?;
         let (width, height) = plan.output_size;
@@ -154,10 +219,7 @@ impl<N: NativeScreen> ScreenCapture for ScreenCaptureAdapter<N> {
             .and_then(|n| n.checked_mul(4))
             .ok_or(PlatformError::InvalidRegion)?;
         // The whole output starts opaque black: a gap between displays never shows other content.
-        let mut rgba = Vec::with_capacity(len);
-        for _ in 0..len / 4 {
-            rgba.extend_from_slice(&plan.background_rgba);
-        }
+        let mut rgba = plan.background_rgba.repeat(len / 4);
         for tile in &plan.tiles {
             let bitmap = self.capture_tile(&plan, tile)?;
             blit(&mut rgba, width, height, tile.destination, &bitmap)?;
@@ -270,6 +332,50 @@ mod tests {
             format: PixelFormat::Rgba,
             data: [rgb[0], rgb[1], rgb[2], 0].repeat((w * h) as usize),
         }
+    }
+
+    fn numbered(w: u32, h: u32) -> NativeBitmap {
+        let mut data = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(&[x as u8, y as u8, 0, 0]);
+            }
+        }
+        NativeBitmap {
+            width: w,
+            height: h,
+            bytes_per_row: w as usize * 4,
+            format: PixelFormat::Rgba,
+            data,
+        }
+    }
+
+    #[test]
+    fn crop_cuts_the_enclosing_bitmap_to_the_exact_pixel_rect() {
+        // Scale 1.5: points (0,0,4,4) -> 6x6 pixels; the plan's crop is pixels (1,1,5,5).
+        let out = crop_to_plan(
+            numbered(6, 6),
+            Rect::new(1, 1, 5, 5),
+            Rect::new(0, 0, 4, 4),
+            1.5,
+        );
+        assert_eq!((out.width, out.height, out.bytes_per_row), (5, 5, 20));
+        assert_eq!(rgb_at(&out, 0, 0), [1, 1, 0]);
+        assert_eq!(rgb_at(&out, 4, 4), [5, 5, 0]);
+    }
+
+    #[test]
+    fn an_integral_crop_is_returned_untouched() {
+        let b = numbered(4, 4);
+        let out = crop_to_plan(b.clone(), Rect::new(2, 2, 4, 4), Rect::new(1, 1, 2, 2), 2.0);
+        assert_eq!(out, b);
+    }
+
+    #[test]
+    fn a_bitmap_that_does_not_match_the_scale_is_returned_whole() {
+        let b = numbered(9, 9);
+        let out = crop_to_plan(b.clone(), Rect::new(1, 1, 5, 5), Rect::new(0, 0, 4, 4), 1.5);
+        assert_eq!(out, b);
     }
 
     #[test]

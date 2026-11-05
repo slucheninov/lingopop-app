@@ -19,13 +19,17 @@ impl OverlayPicker {
 #[async_trait]
 impl RegionPicker for OverlayPicker {
     async fn pick(&self) -> Result<Option<Rect>, PlatformError> {
+        Ok(self.pick_with_revision().await?.map(|(rect, _)| rect))
+    }
+
+    async fn pick_with_revision(&self) -> Result<Option<(Rect, Option<u64>)>, PlatformError> {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let done = self.done.clone().lock_owned().await;
         let overlay = self.overlay.clone();
         let task = tauri::async_runtime::spawn_blocking(move || {
             // The worker owns the lock even when its awaiting future is aborted.
             let _done = done;
-            overlay.pick(rx)
+            overlay.pick_with_revision(rx)
         });
         let out = task.await.map_err(|_| PlatformError::Os {
             api: "overlay worker join",

@@ -10,6 +10,11 @@ use lingopop_platform::{PlatformError, Rect};
 pub trait RegionPicker: Send + Sync {
     /// The selected rectangle in physical virtual-screen pixels; `Ok(None)` = the user cancelled.
     async fn pick(&self) -> Result<Option<Rect>, PlatformError>;
+    /// Like [`pick`](Self::pick), plus the display topology revision the selection was made
+    /// against (macOS), which the capture re-checks. `None` = none (Windows; the default).
+    async fn pick_with_revision(&self) -> Result<Option<(Rect, Option<u64>)>, PlatformError> {
+        Ok(self.pick().await?.map(|rect| (rect, None)))
+    }
 }
 
 use std::sync::Arc;
@@ -173,8 +178,8 @@ impl Orchestrator {
         }
 
         // 2. The region (async UI, cancelled by dropping this future).
-        let region = match d.picker.pick().await {
-            Ok(Some(region)) => region,
+        let (region, revision) = match d.picker.pick_with_revision().await {
+            Ok(Some(picked)) => picked,
             Ok(None) => return,
             Err(PlatformError::Unsupported(_)) => {
                 self.log("region picker unsupported");
@@ -194,7 +199,7 @@ impl Orchestrator {
             .run(move || {
                 let list = monitors.monitors()?;
                 let clipped = validate_region(region, &list)?;
-                let image = capture.capture_region(clipped)?;
+                let image = capture.capture_region_at(clipped, revision)?;
                 Ok((list, clipped, image))
             })
             .await;

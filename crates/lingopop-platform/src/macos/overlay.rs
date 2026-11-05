@@ -370,6 +370,13 @@ enum Wait {
 
 impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
     fn pick(&self, cancel: Receiver<()>) -> Outcome {
+        Ok(self.pick_with_revision(cancel)?.map(|(rect, _)| rect))
+    }
+
+    fn pick_with_revision(
+        &self,
+        cancel: Receiver<()>,
+    ) -> Result<Option<(Rect, Option<u64>)>, PlatformError> {
         let main = self.main.get().cloned().ok_or(PlatformError::Unsupported(
             "region overlay without main thread",
         ))?;
@@ -461,7 +468,7 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             }
         };
         let finished = self.finalize(&mut guard);
-        let outcome = match waited {
+        let outcome: Outcome = match waited {
             Wait::Cancelled => Ok(None),
             Wait::TopologyChanged => {
                 platform_log("region overlay cancelled: display topology changed");
@@ -477,6 +484,8 @@ impl<B: OverlayBackend> RegionOverlay for MacOverlay<B> {
             }
             Wait::Done(outcome) => outcome,
         };
+        // The selection travels with the revision it was made against: the capture re-checks it.
+        let outcome = outcome.map(|picked| picked.map(|rect| (rect, Some(revision))));
         // Without a confirmed cleanup the capture could contain the tint: fail instead.
         finished.and(outcome)
     }

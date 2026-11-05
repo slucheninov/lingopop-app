@@ -18,6 +18,8 @@ use core_graphics::color_space::{kCGColorSpaceSRGB, CGColorSpace};
 use core_graphics::context::CGContext;
 use core_graphics::display::CGDisplay;
 use core_graphics::geometry::{CGPoint, CGRect, CGSize};
+use core_graphics::sys::{CGColorSpaceRef, CGContextRef};
+use foreign_types::ForeignType;
 use std::ffi::c_void;
 use std::sync::Arc;
 
@@ -38,6 +40,21 @@ impl GeometrySource for MacMonitors {
     fn snapshot(&self) -> MacGeometry {
         self.geometry()
     }
+}
+
+// The crate's `CGContext::create_bitmap_context` asserts a non-null result (a panic across our
+// FFI-adjacent code), so the constructor is declared here and its null result is an error.
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGBitmapContextCreate(
+        data: *mut c_void,
+        width: usize,
+        height: usize,
+        bits_per_component: usize,
+        bytes_per_row: usize,
+        space: CGColorSpaceRef,
+        bitmap_info: u32,
+    ) -> CGContextRef;
 }
 
 /// The real `NativeScreen`. Stateless; safe to call from any thread (no AppKit).
@@ -80,19 +97,25 @@ impl NativeScreen for CgScreen {
             unsafe { kCGColorSpaceSRGB },
         )
         .unwrap_or_else(CGColorSpace::create_device_rgb);
-        // `create_bitmap_context` asserts a non-null result; keep a failure an error, not a panic.
-        let context = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            CGContext::create_bitmap_context(
-                Some(data.as_mut_ptr().cast::<c_void>()),
+        // SAFETY: `data` is a live buffer of `bytes_per_row * height` bytes (`len`), which is
+        // what the context may write to; `space` is a valid colour space for the call. The
+        // context is dropped below before `data` is read or moved, so it never outlives it.
+        let raw = unsafe {
+            CGBitmapContextCreate(
+                data.as_mut_ptr().cast::<c_void>(),
                 width,
                 height,
                 8,
                 bytes_per_row,
-                &space,
+                space.as_ptr(),
                 kCGImageAlphaPremultipliedLast,
             )
-        }))
-        .map_err(|_| os(CONTEXT_API))?;
+        };
+        if raw.is_null() {
+            return Err(os(CONTEXT_API));
+        }
+        // SAFETY: `raw` is non-null and owned by us (a Create-rule result); `CGContext` releases it.
+        let context = unsafe { CGContext::from_ptr(raw) };
         context.draw_image(
             CGRect::new(
                 &CGPoint::new(0.0, 0.0),

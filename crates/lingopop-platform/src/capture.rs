@@ -52,6 +52,19 @@ pub trait ScreenCapture: Send + Sync {
     /// Captures `region` (desktop coordinates: Windows physical pixels, macOS Quartz points).
     /// The returned image uses physical backing pixels. A partly outside region is clipped.
     fn capture_region(&self, region: Rect) -> Result<CapturedImage, PlatformError>;
+    /// Like [`capture_region`](Self::capture_region), for a region picked against the display
+    /// topology `revision` (`RegionOverlay::pick_with_revision`). When the live topology has a
+    /// different revision the region may be in the coordinates of a layout that is gone, so the
+    /// capture fails (`Os { api: "display topology changed" }`) instead of capturing a stale
+    /// rectangle. `None` = no revision to check (Windows; the default ignores it).
+    fn capture_region_at(
+        &self,
+        region: Rect,
+        revision: Option<u64>,
+    ) -> Result<CapturedImage, PlatformError> {
+        let _ = revision;
+        self.capture_region(region)
+    }
 }
 
 /// Box-filter downsampling for OCR. A zero limit is treated as one pixel.
