@@ -1,6 +1,6 @@
 # Installing LingoPop
 
-LingoPop is published as pre-release builds on the [Releases page](https://github.com/slucheninov/lingopop-app/releases). Everything below the marker comment is also copied into the notes of every release by the release workflow (`scripts/verify-release-assets.py publish`): `<version>` becomes the release version, the Windows or macOS part is left out when the release has no assets for it, and the two ad-hoc-only macOS paragraphs (opening the app past Gatekeeper, and re-granting permissions after an update) are left out when the macOS build is Developer ID signed and notarized. Keep the `<!-- if ... -->` / `<!-- endif -->` markers balanced (the release tests check it).
+LingoPop is published on the [Releases page](https://github.com/slucheninov/lingopop-app/releases). Everything below the marker comment is also copied into the notes of every release by the release workflow (`scripts/verify-release-assets.py publish`): `<version>` becomes the release version, the Windows or macOS part is left out when the release has no assets for it, and the two ad-hoc-only macOS paragraphs (opening the app past Gatekeeper, and re-granting permissions after an update) are left out when the macOS build is Developer ID signed and notarized. Keep the `<!-- if ... -->` / `<!-- endif -->` markers balanced (the release tests check it).
 
 <!-- release-notes-start -->
 ## Installation
@@ -28,7 +28,7 @@ LingoPop is published as pre-release builds on the [Releases page](https://githu
 <!-- if windows -->
 ### Windows
 
-- This is an unsigned pre-release. Windows SmartScreen may show "Windows protected your PC": click **More info**, then **Run anyway**.
+- The exe is not code-signed. Windows SmartScreen may show "Windows protected your PC": click **More info**, then **Run anyway**.
 - It needs the Microsoft Edge WebView2 runtime, which is preinstalled on Windows 10 and 11. If the app does not start, install the WebView2 runtime from Microsoft.
 - It is portable: there is no installer. Put the exe anywhere you like and run it. Settings, history and the encrypted API keys are stored in `%APPDATA%\LingoPop`.
 - LingoPop runs in the notification area (tray); the icon may be in the hidden-icons overflow. Its menu opens Settings, History and About.
