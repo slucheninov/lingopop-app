@@ -16,7 +16,7 @@ Open Settings from the tray icon (Windows) or the menu-bar icon (macOS): **Setti
 ## Main
 
 - **Permissions** (macOS only): the state of **Accessibility** and **Screen Recording**, with **Request**, **Open Settings** and **Re-check**. After granting Screen Recording, LingoPop shows a **Relaunch** button: macOS applies that permission only after a restart. See [Grant Accessibility](../README.md#grant-accessibility-and-screen-recording).
-- **Target language**: the language results are written in. Turn on **Auto-detect input language** to use **language pairs** (source → target): the source language of the selected text is detected on your computer and the matching pair chooses the target; any other source goes to the **Default target**. The defaults are Russian → Ukrainian, Ukrainian → Russian and English → Ukrainian.
+- **Target language**: the language results are written in. Turn on **Auto-detect input language** to use **language pairs** (source → target): the source language of the selected text is detected on your computer and the matching pair chooses the target; any other source goes to the **Default target**. Pairs apply to Translate and to the text Screen Translate recognized; Fix grammar, Rewrite, Explain and Magic always use the Default target. The defaults are Russian → Ukrainian, Ukrainian → Russian and English → Ukrainian.
 - **Popup**: **Result font size**, 11 to 20 pt.
 - **Language**: the interface language (System, English, Polski, Українська, Deutsch). It applies after a restart; LingoPop offers a **Relaunch** button.
 - **Limits**:
@@ -98,4 +98,4 @@ The popup opens next to the cursor without taking the focus from your app.
 | API keys and provider settings | `secrets.dat` (Windows DPAPI) | `secrets.dat` (AES-256-GCM, key in the login keychain) |
 | Log (no text, no keys) | `lingopop.log` | `lingopop.log` |
 
-Deleting the folder resets LingoPop completely.
+Quit LingoPop first (otherwise it may write its settings and history back), then delete the folder to reset LingoPop completely.

@@ -24,6 +24,6 @@ This protects the keys at rest. It does not protect against other processes runn
 Releases are built by GitHub Actions from a tagged commit on `main`. Every release carries `SHA256SUMS.txt` with the SHA-256 checksum of each file; the workflow verifies the files and the uploaded copies against it before the release is published.
 
 - The Windows exe is not code-signed, so SmartScreen warns on first launch.
-- The macOS app is signed ad hoc with the hardened runtime, not notarized, so Gatekeeper asks you to confirm the first launch.
+- The macOS app is signed ad hoc with the hardened runtime and not notarized (the default), so Gatekeeper asks you to confirm the first launch. The release workflow also supports Developer ID signing and notarization; the notes of such a release say so and skip the Gatekeeper steps.
 
 Download LingoPop only from this repository's [Releases page](https://github.com/slucheninov/lingopop-app/releases).
