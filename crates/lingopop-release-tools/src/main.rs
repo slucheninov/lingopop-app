@@ -150,8 +150,16 @@ fn keygen(args: &[String]) -> Result<(), String> {
     let secret = need(&v[0], "secret")?;
     let public = need(&v[1], "public")?;
     let pw = password(&need(&v[2], "password-env")?)?;
-    let sk = fs::File::create(&secret).map_err(|e| format!("{secret}: {e}"))?;
-    let pk = fs::File::create(&public).map_err(|e| format!("{public}: {e}"))?;
+    let sk = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&secret)
+        .map_err(|e| format!("{secret}: {e}"))?;
+    let pk = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&public)
+        .map_err(|e| format!("{public}: {e}"))?;
     minisign::KeyPair::generate_and_write_encrypted_keypair(pk, sk, None, Some(pw))
         .map_err(|_| "key generation failed".to_string())?;
     Ok(())
