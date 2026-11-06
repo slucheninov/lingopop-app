@@ -158,7 +158,7 @@ Core gets pure functions with tests on fixtures:
   - **A non-writable exe folder** (for example `Program Files`) is an error, "LingoPop can't update itself in this folder", with the **Download** link as the fallback.
 - **Checks after the download.** Signature OK and the PE machine is AMD64 (the same check as the release contract).
 - **Swap.**
-  1. Rename the running `<stem>.exe` to `<stem>.old-<token>.exe`. Windows allows renaming a running exe.
+  1. Rename the running `<stem>.exe` to `<stem>.old-<token>.exe`. Windows allows renaming a running exe; a Windows CI test performs this production rename on a running copied executable before any release.
   2. Rename `<stem>.update-<token>.exe` to `<stem>.exe`.
   3. If step 2 fails, rename `<stem>.old-<token>.exe` back.
 
