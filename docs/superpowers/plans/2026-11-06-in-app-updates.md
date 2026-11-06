@@ -200,6 +200,7 @@ Nothing in this task is committed except public values.
 **Files:**
 - Create: `crates/lingopop-platform/src/update_install/mod.rs`
 - Create: `crates/lingopop-platform/src/update_install/exe.rs`
+- Create: `crates/lingopop-platform/src/windows/fs.rs` (`rename_noreplace` over `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`)
 - Test: `crates/lingopop-platform/tests/update_install_exe.rs` (temp dirs, every OS)
 
 **Interfaces:**
@@ -213,13 +214,14 @@ Nothing in this task is committed except public values.
   - `pub fn install_exe(site: &InstallSite, staged: &Path) -> Result<(), UpdateError>`:
     - it checks the PE machine is AMD64 (the same rule as `scripts/verify-release-assets.py` `pe_machine`), then swaps with rollback;
     - after an `Err` where no rename happened or the rollback succeeded, the original exe is byte-identical at its path. When the rollback fails it is at `<stem>.old-<token>.exe`, named by the journal, and `recover` returns it (see below).
-  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf, pub scratch: Vec<PathBuf>, pub phase: Phase, pub new_hash: Option<String>, pub created: Vec<PathBuf> }` and `pub fn new_token() -> String` (32 hex chars from `getrandom`). Every path is created exclusively and appended to `created` (atomic rewrite) right after it was created; `recover` only deletes paths in `created`` with `pub enum Phase { Pending, Committed }` (`pub fn commit_journal(data_dir) -> Result<(), UpdateError>` rewrites it as `Committed`` (serde camelCase, file `update-journal.json` in the data dir).
+  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf, pub scratch: Vec<PathBuf>, pub phase: Phase, pub new_hash: Option<String>, pub created: Vec<PathBuf> }` and `pub fn new_token() -> String` (32 hex chars from `getrandom`). Every path is added to `created` (atomic rewrite) right BEFORE it is created exclusively, after checking it is absent (spec section 3, "Intent first"); `recover` only deletes paths in `created` that exist; a collision first removes the colliding path from `created`, then deletes the attempt's other existing `created` paths, then the journal with `pub enum Phase { Pending, Committed }` (`pub fn commit_journal(data_dir) -> Result<(), UpdateError>` rewrites it as `Committed`` (serde camelCase, file `update-journal.json` in the data dir).
     - `pub fn write_journal(data_dir: &Path, j: &Journal) -> Result<(), UpdateError>` uses core `fsio::atomic_write`.
     - `pub fn remove_journal(data_dir: &Path)`.
   - `pub fn recover(data_dir: &Path, running: &Path) -> Recovery` (`enum Recovery { Nothing, Cleaned, Restored, Kept }`) implements spec section 3 exactly:
     - with no journal it touches nothing;
     - `site` missing and `old` present: restore it;
-    - the decision follows spec section 3: `site` is identified by `item_hash(site) == new_hash` (SHA-256 of the exe; on macOS `<CFBundleShortVersionString>:<SHA-256 of Contents/_CodeSignature/CodeResources>`, through an injected identity function), never by position;
+    - the decision follows spec section 3: `site` is identified by `item_hash(site) == new_hash` (SHA-256 of the exe; on macOS `<CFBundleShortVersionString>:<SHA-256 of Contents/_CodeSignature/CodeResources>:<SHA-256 of the main executable>` (the executable named by `CFBundleExecutable`), the same definition as spec section 3, through an injected identity function), never by position;
+    - `Committed` and `site` does not match `new_hash`: delete nothing, keep the journal, return `Kept` and log `update recovery failed`;
     - new at `site` + `Pending`: put the previous version back (Windows: `site`→`staged`, `old`→`site`; macOS: `BundleTools::swap(old, site)` through an injected swap closure), then clean;
     - `site` present otherwise: delete `staged`, `old` and every `scratch` entry (files, or directories with `remove_dir_all`);
     - it never deletes a path that equals or contains `running` (`running.starts_with(path)`); such a delete is skipped and the journal kept;
@@ -245,9 +247,16 @@ Nothing in this task is committed except public values.
   - `read_only_folder_is_unsupported` (Unix permissions; ignore on Windows);
   - `existing_token_path_aborts_without_deleting` (a pre-existing file at the chosen `<stem>.update-<token>.exe` → `Err(Install)`, that file unchanged, journal removed);
   - `recover_ignores_paths_not_in_created` (a journal naming `old`, but a user file at that path never added to `created` → it survives);
+  - `crash_after_create_before_next_step_is_cleaned` (journal with `staged` in `created`, the file exists, no rename happened → `Cleaned`, the file and the journal gone);
+  - `recorded_but_never_created_path_is_skipped` (`created` names a path that does not exist → `Cleaned`, nothing else touched);
+  - `collision_cleans_attempt_files_but_not_the_colliding_one` (the staged file was created, then the backup name collides → `Err(Install)`, the staged file deleted, the colliding file unchanged, the journal gone);
+  - `crash_during_collision_cleanup_is_finished_by_recover` (stop after the colliding path was dropped from `created` → `recover` deletes the remaining attempt file and the journal, the colliding file survives);
+  - `backup_rename_collision_never_replaces` (a file appears at `<stem>.old-<token>.exe` right before the backup rename, through the test hook → `Err(Install)`, both that file and the running exe byte-identical);
+  - `committed_identity_mismatch_keeps_old` (`Committed`, the item at `site` differs from `new_hash` → `Kept`, `old` and the journal stay);
+  - `macos_identity_includes_the_executable` (two bundles with the same version and `CodeResources` but different main executables → different identities);
   - `stem_comes_from_running_name` (`LingoPop-0.2.1-windows-x64-portable.exe` → `LingoPop-0.2.1-windows-x64-portable.old-<token>.exe`).
 - [ ] **Step 2: Run** `cargo test -p lingopop-platform --test update_install_exe`. Expected: FAIL.
-- [ ] **Step 3: Implement** with `std::fs::rename` only. The module is portable: no `unsafe`, compiled on every OS.
+- [ ] **Step 3: Implement.** The module is portable: no `unsafe`, compiled on every OS. Every rename onto a new name goes through an injected `rename_noreplace(from, to) -> io::Result<()>` that fails when `to` exists: Windows `MoveFileExW(from, to, 0)` (no `MOVEFILE_REPLACE_EXISTING`) in `crates/lingopop-platform/src/windows/fs.rs` (`unsafe` with `// SAFETY:`), macOS `renamex_np(from, to, RENAME_EXCL)` in `crates/lingopop-platform/src/macos/codesign.rs`, and the tests a fake that can be scripted to collide. `std::fs::rename` is not used onto a new name. The restore of `old` onto `site` also uses `rename_noreplace`, since `site` is missing at that point.
 - [ ] **Step 4: Run** the tests on this Mac, then push so the Windows CI leg runs them too. Expected: PASS.
 - [ ] **Step 5: Commit** with the AGENTS.md line.
 
@@ -273,8 +282,9 @@ Nothing in this task is committed except public values.
     - the path passes `is_installed_bundle_path`;
     - the parent is writable;
     - `designated_requirement(app) == Some(pinned_requirement())`.
-  - `pub fn install_bundle(site: &InstallSite, zip: &Path, version: &str, arch: &str, tools: &dyn BundleTools) -> Result<(), UpdateError>`.
+  - `pub fn install_bundle(site: &InstallSite, zip: &Path, version: &str, current: &str, arch: &str, tools: &dyn BundleTools) -> Result<(), UpdateError>`.
     - It stages into `<parent>/.LingoPop-update-<version>-<token>/`.
+    - It takes `current: &str`, the running version `update_plan` was given, and before the swap checks `bundle_info(site.path)` reports exactly that version (a mismatch = `Err(Install)`, nothing swapped).
     - It checks: exactly one `LingoPop.app`, the id, the version, `verify(new, pinned_requirement())`, and that the arch is present.
     - Then it swaps atomically with `BundleTools::swap(staged, site.path)`: afterwards the old bundle sits at the staged path, and a failed late check swaps back.
   - The swap is `BundleTools::swap(&self, a: &Path, b: &Path) -> Result<(), UpdateError>`, an atomic exchange.
@@ -291,6 +301,7 @@ Nothing in this task is committed except public values.
   - `wrong_version_is_refused`;
   - `requirement_mismatch_is_refused`;
   - `two_apps_in_zip_are_refused`;
+  - `installed_version_mismatch_aborts_before_swap` (the bundle at `site` reports `0.2.3` while `current` is `0.2.1` → `Err(Install)`, no swap call, both bundles untouched);
   - `swap_keeps_old_app_until_cleanup`;
   - `failed_swap_leaves_app_untouched`;
   - `bundle_outside_applications_swaps_at_its_own_path` (site `~/Apps/LingoPop.app`, an unrelated `/tmp/x/Applications/LingoPop.app` untouched);
