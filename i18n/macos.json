@@ -154,10 +154,10 @@
     "uk": "Натисніть комбінацію клавіш (⌘ / Option)…",
     "de": "Tastenkombination drücken (⌘ / Option)…"
   },
-  "Quit the Swift LingoPop to enable shortcuts in LingoPop Preview.": {
-    "pl": "Zamknij aplikację LingoPop w Swift, aby włączyć skróty w LingoPop Preview.",
-    "uk": "Закрийте LingoPop на Swift, щоб увімкнути скорочення в LingoPop Preview.",
-    "de": "Beende die Swift-Version von LingoPop, um Kurzbefehle in LingoPop Preview zu aktivieren."
+  "Quit the Swift LingoPop to enable these shortcuts.": {
+    "pl": "Zamknij aplikację LingoPop w Swift, aby włączyć te skróty.",
+    "uk": "Закрийте LingoPop на Swift, щоб увімкнути ці скорочення.",
+    "de": "Beende die Swift-Version von LingoPop, um diese Kurzbefehle zu aktivieren."
   },
   "Suspended while Swift LingoPop is running.": {
     "pl": "Wstrzymano, gdy LingoPop w Swift jest uruchomiony.",

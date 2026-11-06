@@ -39,18 +39,18 @@ LingoPop is published on the [Releases page](https://github.com/slucheninov/ling
 ### macOS
 
 - Requires macOS 13 Ventura or newer.
-- Open the `.dmg`, drag **LingoPop Preview** to **Applications**, then eject the disk image. (With the `.zip`: double-click it and move `LingoPop Preview.app` to Applications.) The installed app is `/Applications/LingoPop Preview.app`.
+- Open the `.dmg`, drag **LingoPop** to **Applications**, then eject the disk image. (With the `.zip`: double-click it and move `LingoPop.app` to Applications.) The installed app is `/Applications/LingoPop.app`.
 <!-- if macos-adhoc -->
-- This build is signed ad hoc, not notarized by Apple, so Gatekeeper blocks the first launch: macOS says it cannot verify the app or check it for malicious software. Close the dialog, then open **System Settings > Privacy & Security** and scroll to **Security**: after one blocked attempt to open the app, an **Open Anyway** button for LingoPop Preview appears there (for about an hour). Click it, confirm with **Open**, and enter your administrator password if macOS asks. On macOS 13 and 14 you can instead Control-click the app in Applications, choose **Open** and confirm. Alternatively, in Terminal: `xattr -dr com.apple.quarantine "/Applications/LingoPop Preview.app"`, then open the app.
+- This build is signed ad hoc, not notarized by Apple, so Gatekeeper blocks the first launch: macOS says it cannot verify the app or check it for malicious software. Close the dialog, then open **System Settings > Privacy & Security** and scroll to **Security**: after one blocked attempt to open the app, an **Open Anyway** button for LingoPop appears there (for about an hour). Click it, confirm with **Open**, and enter your administrator password if macOS asks. On macOS 13 and 14 you can instead Control-click the app in Applications, choose **Open** and confirm. Alternatively, in Terminal: `xattr -dr com.apple.quarantine "/Applications/LingoPop.app"`, then open the app.
 <!-- endif -->
-- LingoPop Preview is a menu-bar app: it has no Dock icon and no main window. Use its menu-bar icon for Settings, History and Quit.
+- LingoPop is a menu-bar app: it has no Dock icon and no main window. Use its menu-bar icon for Settings, History and Quit.
 - Grant the permissions when macOS asks (or from Settings > Main > Permissions):
   - **Accessibility** for the text operations (reading the selected text), Replace and closing the popup with Escape.
-  - **Screen Recording** for Screen Translate. After granting it, fully quit LingoPop Preview (menu-bar icon > Quit) and open it again: macOS applies a new Screen Recording grant only after a relaunch.
-- macOS may ask once for access to the login keychain: LingoPop Preview keeps the key that encrypts your API keys there. Allow it.
+  - **Screen Recording** for Screen Translate. After granting it, fully quit LingoPop (menu-bar icon > Quit) and open it again: macOS applies a new Screen Recording grant only after a relaunch.
+- macOS may ask once for access to the login keychain: LingoPop keeps the key that encrypts your API keys there. Allow it.
 <!-- if macos-adhoc -->
-- After an update, macOS may treat the new ad-hoc build as a different app: if a permission is shown as granted but does not work, remove LingoPop Preview from the list in **System Settings > Privacy & Security** (Accessibility or Screen Recording, the **–** button), then add it again or grant it when asked. The keychain prompt may also appear again.
+- After an update, macOS may treat the new ad-hoc build as a different app: if a permission is shown as granted but does not work, remove LingoPop from the list in **System Settings > Privacy & Security** (Accessibility or Screen Recording, the **–** button), then add it again or grant it when asked. The keychain prompt may also appear again.
 <!-- endif -->
 - Settings, history and the encrypted API keys are stored in `~/Library/Application Support/LingoPop-Tauri`.
-- LingoPop Preview is a separate app from the earlier Swift LingoPop (different bundle identifier, `app.lingopop.tauri.macos`): both can be installed side by side. It does not import the Swift app's settings, history or API keys; enter your API keys again in Settings > Providers.
+- This LingoPop is a separate app from the earlier Swift LingoPop (different bundle identifier, `app.lingopop.tauri.macos`, and data folder). Both are named `LingoPop.app`, so installing this one into Applications replaces the Swift app there (Finder asks first); quit the Swift app before that. It does not import the Swift app's settings, history or API keys; enter your API keys again in Settings > Providers.
 <!-- endif -->

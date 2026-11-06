@@ -81,15 +81,15 @@ Good to know:
 ## Install on macOS
 
 1. Download the `.dmg` for your Mac and open it.
-2. Drag **LingoPop Preview** into **Applications**, then eject the disk image.
+2. Drag **LingoPop** into **Applications**, then eject the disk image.
 3. **First launch.** The app is not notarized by Apple, so the first time macOS refuses to open it ("cannot verify that it is free of malware"). Close the dialog, then:
-   - open **System Settings → Privacy & Security**, scroll down to **Security** and click **Open Anyway** next to LingoPop Preview (the button appears after one blocked attempt and stays for about an hour), confirm with **Open** and enter your password if asked;
+   - open **System Settings → Privacy & Security**, scroll down to **Security** and click **Open Anyway** next to LingoPop (the button appears after one blocked attempt and stays for about an hour), confirm with **Open** and enter your password if asked;
    - or, on macOS 13 and 14: Control-click the app in **Applications** → **Open** → **Open**;
-   - or, in Terminal: `xattr -dr com.apple.quarantine "/Applications/LingoPop Preview.app"`, then open the app normally.
+   - or, in Terminal: `xattr -dr com.apple.quarantine "/Applications/LingoPop.app"`, then open the app normally.
 4. LingoPop lives in the menu bar: it has no Dock icon and no main window. Click its icon for Settings, History and Quit.
 5. Grant the permissions (next section).
 
-When macOS asks whether LingoPop Preview may use the login keychain, click **Always Allow**: the key that encrypts your API keys is stored there.
+When macOS asks whether LingoPop may use the login keychain, click **Always Allow**: the key that encrypts your API keys is stored there.
 
 ### Grant Accessibility (and Screen Recording)
 
@@ -102,22 +102,22 @@ macOS asks for two permissions. LingoPop asks for each one only when an operatio
 
 **Accessibility**
 
-1. Select some text and press **⌥T** (or click **Request** in **Settings → Main → Permissions**). macOS shows "LingoPop Preview would like to control this computer using accessibility features": click **Open System Settings**.
-2. In **System Settings → Privacy & Security → Accessibility**, turn on the switch next to **LingoPop Preview**. If it isn't in the list, click **+**, choose `/Applications/LingoPop Preview.app` and turn it on.
+1. Select some text and press **⌥T** (or click **Request** in **Settings → Main → Permissions**). macOS shows "LingoPop would like to control this computer using accessibility features": click **Open System Settings**.
+2. In **System Settings → Privacy & Security → Accessibility**, turn on the switch next to **LingoPop**. If it isn't in the list, click **+**, choose `/Applications/LingoPop.app` and turn it on.
 3. Go back to LingoPop and try again. If it still says the permission is missing, quit LingoPop (menu-bar icon → **Quit LingoPop**) and open it again.
 
 **Screen Recording**
 
 1. Start Screen Translate (or click **Request** next to Screen Recording). macOS shows the Screen Recording prompt: click **Open System Settings**.
-2. In **System Settings → Privacy & Security → Screen & System Audio Recording** (**Screen Recording** on macOS 13 and 14), turn on **LingoPop Preview**.
+2. In **System Settings → Privacy & Security → Screen & System Audio Recording** (**Screen Recording** on macOS 13 and 14), turn on **LingoPop**.
 3. **Fully quit LingoPop and open it again**: macOS applies a new Screen Recording permission only after a relaunch. Settings shows a **Relaunch** button for this.
 
 > [!NOTE]
-> **After an update** macOS may treat the new build as a different app: the switch is still on, but the permission doesn't work. Select **LingoPop Preview** in the Accessibility (or Screen Recording) list, remove it with **−**, then add it again with **+** or grant it when asked. The keychain question may also come back once.
+> **After an update** macOS may treat the new build as a different app: the switch is still on, but the permission doesn't work. Select **LingoPop** in the Accessibility (or Screen Recording) list, remove it with **−**, then add it again with **+** or grant it when asked. The keychain question may also come back once.
 
 Good to know:
 
-- LingoPop Preview is a separate app from the earlier Swift [LingoPop](https://github.com/slucheninov/lingopop) and can be installed next to it. It does not import that app's settings, history or API keys.
+- This LingoPop is a separate app from the earlier Swift [LingoPop](https://github.com/slucheninov/lingopop) (a different bundle identifier and data folder). Both are named `LingoPop.app`, so dragging this one into Applications replaces the Swift app there (Finder asks first); quit the Swift app before that. It does not import that app's settings, history or API keys.
 - To start LingoPop at login, turn on **Settings → Main → Startup → Launch at login**.
 - To update, replace the app in **Applications** with the new one (quit LingoPop first). Your settings stay in `~/Library/Application Support/LingoPop-Tauri`.
 
@@ -178,7 +178,7 @@ If the original app is no longer in front, LingoPop leaves the result on the cli
 **Settings → About → Check for updates**. LingoPop also checks GitHub releases in the background every three hours and shows a banner when a new version is out.
 
 **How do I uninstall?**
-Quit LingoPop and delete the exe (Windows) or `LingoPop Preview.app` (macOS). To remove your settings, history and keys too, delete `%APPDATA%\LingoPop` or `~/Library/Application Support/LingoPop-Tauri`. On macOS you can also remove LingoPop Preview from the Accessibility and Screen Recording lists.
+Quit LingoPop and delete the exe (Windows) or `LingoPop.app` (macOS). To remove your settings, history and keys too, delete `%APPDATA%\LingoPop` or `~/Library/Application Support/LingoPop-Tauri`. On macOS you can also remove LingoPop from the Accessibility and Screen Recording lists.
 
 ## Feedback
 

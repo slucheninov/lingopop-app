@@ -80,7 +80,7 @@ The app is not sandboxed, so it could read user files in principle, though it do
 
 ## Removing your data
 
-Quit LingoPop, delete the app (the portable exe on Windows, `LingoPop Preview.app` on macOS), then delete the data folder listed above. On macOS you can also delete the `app.lingopop.tauri.macos` item in Keychain Access and remove LingoPop Preview from the Accessibility and Screen Recording lists in System Settings.
+Quit LingoPop, delete the app (the portable exe on Windows, `LingoPop.app` on macOS), then delete the data folder listed above. On macOS you can also delete the `app.lingopop.tauri.macos` item in Keychain Access and remove LingoPop from the Accessibility and Screen Recording lists in System Settings.
 
 ## Contact
 
