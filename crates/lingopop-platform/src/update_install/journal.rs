@@ -104,12 +104,17 @@ pub fn remove_journal(data_dir: &Path) {
 /// succeeded.
 pub fn commit_journal(data_dir: &Path) -> Result<(), UpdateError> {
     let mut j = read_journal(data_dir)?.ok_or(UpdateError::Install("no update journal"))?;
+    // Only a finished swap of this attempt can be committed: pending, the new identity recorded
+    // and the previous version not moved back.
+    if j.phase != Phase::Pending || j.new_hash.is_none() || j.old_restored {
+        return Err(UpdateError::Install("update journal cannot be committed"));
+    }
     j.phase = Phase::Committed;
     write_journal(data_dir, &j)
 }
 
-/// `Ok(false)` only for `NotFound`; anything else (present, or an error reading the entry)
-/// counts as present, so it is never treated as free.
+/// True only when looking the path up fails with `NotFound`; anything else (present, or an
+/// error reading the entry) counts as present, so it is never treated as free.
 pub(crate) fn is_absent(path: &Path) -> bool {
     matches!(std::fs::symlink_metadata(path), Err(e) if e.kind() == io::ErrorKind::NotFound)
 }

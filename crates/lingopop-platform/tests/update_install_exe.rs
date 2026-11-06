@@ -155,8 +155,8 @@ fn stem_comes_from_running_name() {
 
 #[test]
 fn new_token_is_32_lowercase_hex_and_fresh() {
-    let a = new_token();
-    let b = new_token();
+    let a = new_token().unwrap();
+    let b = new_token().unwrap();
     assert_eq!(a.len(), 32);
     assert!(a
         .chars()
@@ -478,7 +478,7 @@ fn failed_rewrite_after_collision_keeps_colliding_file() {
         env.journal_path().exists(),
         "the failed rewrite leaves the journal"
     );
-    env.recover();
+    assert_eq!(env.recover(), Recovery::Cleaned);
     assert_eq!(read(&env.old()), b"colliding");
     assert_eq!(env.site_bytes().unwrap(), old_bytes());
     assert!(!env.journal_path().exists());
@@ -602,6 +602,66 @@ fn crash_between_renames_is_restored() {
     assert!(!env.old().exists());
     assert!(!env.folder().exists());
     assert!(!env.journal_path().exists());
+}
+
+#[test]
+fn committed_site_missing_restores_old_and_closes() {
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    commit_journal(&env.data).unwrap();
+    fs::remove_file(&env.site.path).unwrap();
+    assert_eq!(env.recover(), Recovery::Restored);
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    assert!(!env.old().exists());
+    assert!(!env.folder().exists());
+    assert!(!env.journal_path().exists());
+}
+
+#[test]
+fn committed_old_version_at_site_without_a_restore_is_kept() {
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    commit_journal(&env.data).unwrap();
+    fs::write(&env.site.path, old_bytes()).unwrap();
+    assert_eq!(env.recover(), Recovery::Kept);
+    assert_eq!(read(&env.old()), old_bytes());
+    assert!(env.journal_path().exists());
+}
+
+#[test]
+fn commit_is_refused_unless_a_finished_swap_is_pending() {
+    let env = Env::new();
+    assert!(matches!(
+        commit_journal(&env.data),
+        Err(UpdateError::Install(_))
+    ));
+    let j = env.stage();
+    // No swap yet: `newHash` is missing.
+    assert!(matches!(
+        commit_journal(&env.data),
+        Err(UpdateError::Install(_))
+    ));
+    assert_eq!(env.journal().unwrap().phase, Phase::Pending);
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    // The previous version was moved back.
+    let mut restored = env.journal().unwrap();
+    restored.old_restored = true;
+    write_journal(&env.data, &restored).unwrap();
+    assert!(matches!(
+        commit_journal(&env.data),
+        Err(UpdateError::Install(_))
+    ));
+    restored.old_restored = false;
+    write_journal(&env.data, &restored).unwrap();
+    commit_journal(&env.data).unwrap();
+    // Already committed.
+    assert!(matches!(
+        commit_journal(&env.data),
+        Err(UpdateError::Install(_))
+    ));
+    assert_eq!(env.journal().unwrap().phase, Phase::Committed);
 }
 
 #[test]
@@ -1178,14 +1238,17 @@ fn macos_bundle_with_missing_site_is_never_restored_from_staged() {
         phase: Phase::Pending,
         old_hash: "0.2.1:x:y".into(),
         old_restored: false,
-        new_hash: None,
-        intended: vec![],
-        created: vec![],
+        // Every other guard of the restore rule holds (a swap may have happened, `old` is
+        // tracked and exists): only the bundle kind stops the rename from the staged path.
+        new_hash: Some(bundle_identity(&staged).unwrap()),
+        intended: vec![folder.clone()],
+        created: vec![folder.clone()],
     };
     write_journal(&data, &j).unwrap();
     assert_eq!(recover(&data, &tmp.path().join("x")), Recovery::Kept);
     assert!(!site.exists());
     assert!(staged.exists());
+    assert!(data.join(JOURNAL_FILE).exists());
 }
 
 // ---------------------------------------------------------------- Windows production rename

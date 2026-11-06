@@ -158,6 +158,11 @@ fn run(
                 }
             }
         }
+        // When the NEW exe runs this (it crashed or quit before the commit), its image now sits
+        // at `staged` inside the owned folder: Windows refuses to delete a mapped image, so the
+        // cleanup below fails, logs `update recovery failed` and keeps the folder and the journal
+        // (`Kept`). Harmless: the previous version is back at `site`, and the next start (which
+        // runs the previous version) finds `oldHash` at `site` and removes the leftover folder.
         ctx.at(Step::AfterSwapBack)?;
         j.old_restored = true;
         if ctx.write(&j).is_err() {
@@ -168,6 +173,14 @@ fn run(
     }
 
     if j.phase == Phase::Committed {
+        if restored && id.is_some() && id.as_deref() == Some(j.old_hash.as_str()) {
+            // `site` vanished after the commit and this run moved the previous version back
+            // onto it: an unexpected state (logged), but the remaining copies are the new or
+            // unchecked download, so close it like the old-version rule below instead of
+            // blocking updates forever.
+            log("update recovery failed");
+            return Ok(finish(cleanup(ctx, &mut j, Scope::All)?, restored));
+        }
         // Committed but `site` is not the checked new version: keep `old` and the journal.
         return failed();
     }

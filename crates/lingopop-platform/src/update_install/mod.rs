@@ -60,12 +60,12 @@ pub enum Support {
     Unsupported(&'static str),
 }
 
-/// A fresh 128-bit random token: 32 lowercase hex characters from `getrandom`. Panics only
-/// when the OS random source is unavailable, in which case nothing could be done safely.
-pub fn new_token() -> String {
+/// A fresh 128-bit random token: 32 lowercase hex characters from `getrandom`. An unavailable
+/// OS random source is `Err(Install("random source unavailable"))`: no attempt starts.
+pub fn new_token() -> Result<String, UpdateError> {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).expect("OS random source");
-    to_hex(&bytes)
+    getrandom::fill(&mut bytes).map_err(|_| UpdateError::Install("random source unavailable"))?;
+    Ok(to_hex(&bytes))
 }
 
 pub(crate) fn to_hex(bytes: &[u8]) -> String {

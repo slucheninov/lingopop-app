@@ -98,7 +98,8 @@ pub fn stage_exe(
     site: &InstallSite,
     version: &str,
 ) -> Result<Journal, UpdateError> {
-    stage_exe_with(data_dir, site, version, &new_token(), &InstallOps::native())
+    let token = new_token()?;
+    stage_exe_with(data_dir, site, version, &token, &InstallOps::native())
 }
 
 /// [`stage_exe`] with a given token and operations (tests).
@@ -182,6 +183,8 @@ pub fn stage_exe_with(
 }
 
 fn create_private_dir(path: &Path) -> io::Result<()> {
+    // `mode` exists on Unix only, so the builder is mutated only there.
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
