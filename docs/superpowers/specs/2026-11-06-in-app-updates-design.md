@@ -116,11 +116,20 @@ Core gets pure functions with tests on fixtures:
 - **Update journal.** Before the first file of an attempt is created (the signature and asset downloads included), the updater writes `update-journal.json` atomically in the data folder (`fsio::atomic_write`).
   - It names every path this attempt creates or moves: `{"version", "site", "staged", "old", "scratch": [..]}`. `site` is the install path recorded at startup; `scratch` lists the download files and, on macOS, the staging folder `<parent>/.LingoPop-update-<version>/`. Recovery deletes `scratch` entries like `staged` (never `running` or `site`).
   - Startup acts only on this file and never matches names alone, so a user file that happens to be called `<stem>.old.exe` is never touched. Without a journal, startup deletes nothing.
-  - **Recovery** (any copy of the app, at startup):
+  - **Phase.** The journal also has a `phase`.
+    - `pending` when it is first written.
+    - It becomes `committed` (rewritten atomically) only after the swap AND every check after it succeeded.
+    - Only a `committed` journal means the version at `site` is the one to keep.
+  - **Recovery** (any copy of the app, at startup, and before every new update attempt):
     - `site` is missing and `old` exists: rename `old` back to `site` (it is the previous version), delete `staged` if present, delete the journal, and log `update recovered`.
-    - `site` exists: delete `staged` and `old` when present, then the journal. The file or bundle the current process runs from is never deleted: that delete is skipped and the journal stays for the next start.
+    - `site` exists, `old` exists and `phase` is `pending`: the swap happened but was never committed. This includes a macOS late check whose swap-back failed. Put `old` back at `site`:
+      - macOS: one more `RENAME_SWAP` of `old` and `site`;
+      - Windows: rename `site` to `staged`, then `old` to `site`.
+      - Then clean up as below.
+    - `site` exists otherwise (`committed`, or `old` absent): delete `staged` and `old` when present, then the journal. The file or bundle the current process runs from is never deleted: that delete is skipped and the journal stays for the next start.
     - Every error is logged only; the journal then stays so the next start tries again.
   - A completed update leaves the journal for that cleanup. A failed or cancelled attempt whose files never moved, or whose rollback succeeded, deletes its own files and the journal at once. When a rollback FAILS, nothing is deleted: the journal and the file or bundle it names as `old` stay, so the next start restores them.
+  - **No new attempt over an open journal.** `updates_install` first runs recovery. If a journal is still present afterwards, it is Failed with the install error and writes nothing: no new journal, no download. The open journal is never overwritten or removed by a retry or a cancel.
 
 ### 4. Windows install (portable exe)
 
