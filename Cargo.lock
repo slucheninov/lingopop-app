@@ -2239,6 +2239,7 @@ dependencies = [
  "lingopop-orchestrator",
  "lingopop-platform",
  "log",
+ "muda",
  "serde",
  "serde_json",
  "tauri",
