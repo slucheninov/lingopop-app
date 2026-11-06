@@ -287,7 +287,7 @@ Nothing in this task is committed except public values.
 - Consumes: `InstallSite`, `Support`, `UpdateError` (Task 5), `RELEASE_CERT_SHA1` (Task 1) and `is_installed_bundle_path`.
 - Produces:
   - `pub trait BundleTools: Send + Sync` with:
-    - `designated_requirement(&self, app: &Path) -> Option<String>` (`codesign -d -r-`, the text after `designated => `);
+    - `designated_requirement(&self, app: &Path) -> Option<String>` (`codesign -d -r-`, the text after `designated =>` and its space);
     - `verify(&self, app: &Path, requirement: &str) -> bool` (`codesign --verify --strict --deep -R=<req>`);
     - `extract_zip(&self, zip: &Path, into: &Path) -> Result<(), UpdateError>` (`ditto -x -k --noqtn`);
     - `bundle_info(&self, app: &Path) -> Option<(String, String)>` (`CFBundleIdentifier`, `CFBundleShortVersionString` from `Info.plist`, read with the `plist`-free parser already used by the shell, or `defaults read`, the builder's call);
