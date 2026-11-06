@@ -57,7 +57,7 @@
 1. **Update pressed twice, or Check pressed during a download.** Exactly one update runs; a second `updates_install` returns the current state and does not start a second download (Task 7: `install_is_single_flight`).
 2. **Download cut off midway, disk full, or a body shorter or longer than `size`.** The state becomes Failed, the staging files are gone, and the installed app is byte-identical (Task 4: `truncated_or_oversized_body_fails`; Task 5: `failed_stage_leaves_exe_untouched`).
 3. **GitHub answers 403 or 404 or HTML** (rate limit, a release without `.minisig`, for example Mac assets left off). Check shows the Download-only state for this platform, never an Update button that cannot work (Task 3: `release_without_signature_has_no_plan`).
-4. **The language-change Relaunch is pressed after an update installed but before Restart.** It must start the installed new version, not the moved `old.app` or `<stem>.old.exe` (Task 7: `relaunch_after_swap_uses_install_path`).
+4. **The language-change Relaunch is pressed after an update installed but before Restart.** It must start the installed new version, not the old bundle left in the staging folder or `<stem>.old.exe` (Task 7: `relaunch_after_swap_uses_install_path`).
 5. **The app runs from a folder it cannot write to, from a dmg, or as an ad-hoc dev build.** It shows Download only, and nothing is written next to the app (Task 5: `read_only_folder_is_unsupported`; Task 6: `adhoc_running_app_is_unsupported`).
 
 ---
@@ -212,14 +212,26 @@ Nothing in this task is committed except public values.
   - `pub fn install_exe(site: &InstallSite, staged: &Path) -> Result<(), UpdateError>`:
     - it checks the PE machine is AMD64 (the same rule as `scripts/verify-release-assets.py` `pe_machine`), then swaps with rollback;
     - after an `Err`, the original exe is byte-identical at its path.
-  - `pub fn cleanup_exe_leftovers(exe: &Path)` deletes `<stem>.old.exe` and `<stem>.update.exe` and logs only.
+  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf }` (serde camelCase, file `update-journal.json` in the data dir).
+    - `pub fn write_journal(data_dir: &Path, j: &Journal) -> Result<(), UpdateError>` uses core `fsio::atomic_write`.
+    - `pub fn remove_journal(data_dir: &Path)`.
+  - `pub fn recover(data_dir: &Path, running: &Path) -> Recovery` (`enum Recovery { Nothing, Cleaned, Restored, Kept }`) implements spec section 3 exactly:
+    - with no journal it touches nothing;
+    - `site` missing and `old` present: restore it;
+    - `site` present: delete `staged` / `old`;
+    - it never deletes `running`; such a delete is skipped and the journal kept;
+    - errors keep the journal.
+  - `install_exe` takes `data_dir` and writes the journal before the first rename. On a failure or rollback it deletes its files and the journal.
 
 - [ ] **Step 1: Write the failing tests:**
   - `swap_replaces_exe_and_keeps_name`;
+  - `no_journal_deletes_nothing` (user files `<stem>.old.exe` and `<stem>.update.exe` survive);
+  - `crash_between_renames_is_restored` (site missing, old present, journal → `Restored`, site has the old bytes);
+  - `completed_swap_is_cleaned` (journal + old → `Cleaned`, old and journal gone);
+  - `running_old_file_is_kept` (`running == old` → `Kept`, journal stays);
   - `failed_stage_leaves_exe_untouched` (non-PE bytes, `Install`);
   - `rollback_when_second_rename_fails` (staged path removed between the steps through a test hook `#[doc(hidden)] install_exe_with(.., before_second_rename: impl FnOnce())`);
   - `read_only_folder_is_unsupported` (Unix permissions; ignore on Windows);
-  - `cleanup_removes_leftovers`;
   - `stem_comes_from_running_name` (`LingoPop-0.2.1-windows-x64-portable.exe` → `LingoPop-0.2.1-windows-x64-portable.old.exe`).
 - [ ] **Step 2: Run** `cargo test -p lingopop-platform --test update_install_exe`. Expected: FAIL.
 - [ ] **Step 3: Implement** with `std::fs::rename` only. The module is portable: no `unsafe`, compiled on every OS.
@@ -251,8 +263,12 @@ Nothing in this task is committed except public values.
   - `pub fn install_bundle(site: &InstallSite, zip: &Path, version: &str, arch: &str, tools: &dyn BundleTools) -> Result<(), UpdateError>`.
     - It stages into `<parent>/.LingoPop-update-<version>/`.
     - It checks: exactly one `LingoPop.app`, the id, the version, `verify(new, pinned_requirement())`, and that the arch is present.
-    - Then it swaps: the old bundle goes to `<staging>/old.app`, the new one to `site.path`, with rollback.
-  - `pub fn cleanup_bundle_leftovers(app: &Path)` removes every `<parent>/.LingoPop-update-*` folder.
+    - Then it swaps atomically with `BundleTools::swap(staged, site.path)`: afterwards the old bundle sits at the staged path, and a failed late check swaps back.
+  - The swap is `BundleTools::swap(&self, a: &Path, b: &Path) -> Result<(), UpdateError>`, an atomic exchange.
+    - The production version is `renamex_np(a, b, RENAME_SWAP)` through `libc` in `macos/codesign.rs`: the only new `unsafe`, with a `// SAFETY:` comment.
+    - The rollback is the same swap again.
+    - `site.path`, the validated running bundle path, is used for the swap, the rollback and the restart; `/Applications` is never hard-coded.
+  - `install_bundle` takes `data_dir` and writes the Task 5 `Journal` before the swap. `recover` from Task 5 also handles bundles: directories are removed with `remove_dir_all`. No separate cleanup function exists.
   - `macos::codesign::SystemBundleTools` implements `BundleTools`.
 
 - [ ] **Step 1: Write the failing tests** (fake tools, temp dir with a fake `LingoPop.app` folder tree):
@@ -263,8 +279,10 @@ Nothing in this task is committed except public values.
   - `requirement_mismatch_is_refused`;
   - `two_apps_in_zip_are_refused`;
   - `swap_keeps_old_app_until_cleanup`;
-  - `rollback_when_second_rename_fails`;
-  - `cleanup_removes_staging_folders`;
+  - `failed_swap_leaves_app_untouched`;
+  - `bundle_outside_applications_swaps_at_its_own_path` (site `~/Apps/LingoPop.app`, an unrelated `/tmp/x/Applications/LingoPop.app` untouched);
+  - `failed_late_check_swaps_back`;
+  - in `macos_update_bundle.rs`: `real_rename_swap_exchanges_two_folders`;
   - in `macos_update_bundle.rs`: `real_codesign_reads_the_adhoc_requirement` (ad-hoc-signed fake bundle → `cdhash`) and `real_verify_rejects_the_pinned_requirement_for_adhoc`.
 - [ ] **Step 2: Run** `cargo test -p lingopop-platform --test update_install_bundle --test macos_update_bundle`. Expected: FAIL.
 - [ ] **Step 3: Implement** `bundle.rs` and `macos/codesign.rs`.
@@ -300,7 +318,10 @@ Nothing in this task is committed except public values.
   - Event `updates://state` carries the payload `UpdateView`.
   - The `UpdateView` wire shape (camelCase) is `{ state: "idle" | "checking" | "available" | "downloading" | "installing" | "ready" | "failed" | "unsupported", version?: string, received?: number, total?: number, error?: string }`.
   - `app_relaunch` uses `Installer::relaunch`, never `current_exe()` after setup.
-  - Startup calls `cleanup_exe_leftovers` or `cleanup_bundle_leftovers` on the site.
+  - Startup calls `update_install::recover(data_dir, current_exe)` before the install site is computed.
+    - After a `Restored` result the site is the journal's `site`.
+    - The result is logged with fixed text.
+  - `updates_state() -> UpdateView` is a read only. `UpdateView` also carries `revision: number`, which grows with every state change.
   - `UpdateTarget` is chosen by `cfg(target_os, target_arch)`.
 
 - [ ] **Step 1: Write the failing tests** (`FakeTransport` for the release JSON, a local file server is not needed: inject a fake downloader closure and a fake `Installer`):
@@ -310,6 +331,8 @@ Nothing in this task is committed except public values.
   - `signature_failure_is_failed_and_installer_not_called`;
   - `unsupported_site_shows_download_only`;
   - `relaunch_after_swap_uses_install_path`;
+  - `state_read_returns_ready_after_settings_reopen`;
+  - `revision_grows_on_every_change`;
   - `progress_events_are_throttled` (at most 10 per second with `ManualClock`).
 - [ ] **Step 2: Run** `cargo test -p lingopop-app update_install`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
@@ -331,7 +354,7 @@ Nothing in this task is committed except public values.
 **Interfaces:**
 - Consumes: the Task 7 commands, the event and `UpdateView`.
 - Produces:
-  - IPC wrappers `checkUpdate()`, `installUpdate()`, `cancelUpdate()`, `restartForUpdate()`;
+  - IPC wrappers `checkUpdate()`, `installUpdate()`, `cancelUpdate()`, `restartForUpdate()`, `getUpdateState()`;
   - the type `UpdateView`.
 
 - [ ] **Step 1: Write the failing tests** (mocked invoke / listen):
@@ -340,7 +363,9 @@ Nothing in this task is committed except public values.
   - `ready_shows_restart`;
   - `failed_shows_try_again_and_download`;
   - `unsupported_shows_download_only`;
-  - `listener_removed_on_unmount`.
+  - `listener_removed_on_unmount`;
+  - `mount_registers_listener_before_reading_state` (`updates_state` is invoked only after `listen` resolved; a `ready` read shows Restart);
+  - `stale_read_does_not_overwrite_newer_event` (an event with revision 5 arrives, then a read with revision 4 → still the revision 5 state).
 - [ ] **Step 2: Run** `npm test --prefix app`. Expected: FAIL.
 - [ ] **Step 3: Implement** the states from the spec section 7 table. The new shared catalog keys, with pl / uk / de:
   - `Update`;
@@ -401,9 +426,13 @@ Nothing in this task is committed except public values.
   2. `cargo build -p lingopop-release-tools --release --locked`.
   3. Download the artifacts.
   4. Run `assemble`.
-  5. **Sign** with `UPDATE_SIGNING_KEY` from a temp file (deleted in an `always()` step) and `UPDATE_SIGNING_KEY_PASSWORD`.
-  6. Run `verify` against the committed `UPDATE_PUBLIC_KEY`.
-  7. Run `verify_assets` on the full set, then create the draft.
+  5. **Pre-signing check:** `verify_assets` on the unsigned set, without `.minisig`, against its manifest.
+  6. **Sign** with `UPDATE_SIGNING_KEY` from a temp file (deleted in an `always()` step) and `UPDATE_SIGNING_KEY_PASSWORD`.
+  7. **Post-signing check:**
+     - run `verify` cryptographically against the committed `UPDATE_PUBLIC_KEY`;
+     - regenerate `SHA256SUMS.txt` with the `.minisig` files;
+     - run `verify_assets` on the full set.
+  8. Create the draft.
   - The order is pinned by `test_release_workflow_publishes_a_checked_draft`.
 - Modify: `scripts/verify-release-assets.py` `publish`. A `--sign-command` hook runs between `assemble` and `verify_assets`, or the workflow splits `publish` into `assemble` / `verify-and-create` subcommands (builder's call; keep "gh only after zero errors").
 - Test: `scripts/tests/test_release_assets.py`

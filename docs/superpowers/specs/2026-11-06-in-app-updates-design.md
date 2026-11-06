@@ -112,7 +112,15 @@ Core gets pure functions with tests on fixtures:
 - **Size checks.** The download is aborted when the body exceeds the planned size.
 - **Cancel.** Cancel is possible while downloading.
 - **Signature first.** The signature file is downloaded first. The asset bytes are verified with `verify_update` before any install step. A failure deletes the staging files.
-- **Temporary files.** The staging location is described per OS below. Leftovers of a previous attempt are removed at startup.
+- **Temporary files.** The staging location is described per OS below. Leftovers of a previous attempt are removed at startup, but only through the update journal.
+- **Update journal.** Before the first file is created next to the app, the updater writes `update-journal.json` atomically in the data folder (`fsio::atomic_write`).
+  - It names the exact paths of this attempt: `{"version", "site", "staged", "old"}`. `site` is the install path recorded at startup.
+  - Startup acts only on this file and never matches names alone, so a user file that happens to be called `<stem>.old.exe` is never touched. Without a journal, startup deletes nothing.
+  - **Recovery** (any copy of the app, at startup):
+    - `site` is missing and `old` exists: rename `old` back to `site` (it is the previous version), delete `staged` if present, delete the journal, and log `update recovered`.
+    - `site` exists: delete `staged` and `old` when present, then the journal. The file or bundle the current process runs from is never deleted: that delete is skipped and the journal stays for the next start.
+    - Every error is logged only; the journal then stays so the next start tries again.
+  - A completed update leaves the journal for that cleanup; a failed or cancelled attempt deletes its own files and the journal at once.
 
 ### 4. Windows install (portable exe)
 
@@ -127,7 +135,9 @@ Core gets pure functions with tests on fixtures:
   1. Rename the running `<stem>.exe` to `<stem>.old.exe`. Windows allows renaming a running exe.
   2. Rename `<stem>.update.exe` to `<stem>.exe`.
   3. If step 2 fails, rename `<stem>.old.exe` back.
-- **Cleanup.** At startup the app deletes `<stem>.old.exe` and `<stem>.update.exe` next to the running exe when they exist. Errors are logged only. The process still running from the old file never deletes it.
+
+  The journal (section 3) is written before step 1. If the process dies between steps 1 and 2, or the rollback in step 3 fails, the journal remains. The user's shortcut is then broken, but `<stem>.old.exe` is still a visible, runnable file in the same folder. Starting it, or any copy of the app, recovers through the journal. Windows cannot replace a running exe in one step, so this short gap cannot be closed.
+- **Cleanup.** At startup the paths named in the journal are deleted (section 3); nothing is deleted by name. Errors are logged only. The process still running from the old file never deletes it.
 - **What the user sees.** The About tab enters the **ready** state: **Restart** relaunches the exe at the original path through the existing `--wait-for-pid` path.
 - **Not restarting.** If the user quits without pressing Restart, the next start is the new version, which is fine.
 - **Launch at login.** The Run value already points to the original path, so nothing changes.
@@ -149,14 +159,15 @@ Core gets pure functions with tests on fixtures:
   - pass `codesign --verify --strict --deep`;
   - **satisfy that same pinned designated requirement** (`codesign --verify -R="<pinned DR>"`). This check guarantees TCC continuity: an update the system would treat as a different app is refused.
   - have an executable that contains the running architecture.
+- **Install path.** `<app>` below is the validated running bundle path recorded at startup (the journal's `site`), wherever it is. It is never a hard-coded `/Applications/LingoPop.app`. The swap, the rollback and the restart all use this same path.
 - **Swap.**
-  1. Rename `/Applications/LingoPop.app` into the staging folder as `old.app`.
-  2. Rename the new bundle to `/Applications/LingoPop.app`.
-  3. If step 2 fails, move `old.app` back.
-  4. The old bundle stays in the staging folder until the next start, because the process still running from it may load resources from it. At startup the app deletes every `<parent>/.LingoPop-update-*` folder; errors are logged only.
+  1. Write the journal: `site` = `<app>`, `staged` = the extracted `<staging>/LingoPop.app`, `old` = that same staged path after the swap.
+  2. Exchange `<app>` and the extracted bundle in one atomic call: `renamex_np(staged, app, RENAME_SWAP)` (macOS 10.12+, same volume). There is no moment without an app at `<app>`. Afterwards the old bundle sits in the staging folder.
+  3. If the swap fails, nothing has moved. If a later check fails, the same swap is made again to roll back.
+  4. The old bundle stays in the staging folder until the next start, because the process still running from it may load resources from it. Startup cleanup then deletes the staging folder named by the journal; errors are logged only.
 
-  A running macOS app can be moved; the running process keeps its open files.
-- **Restart.** **Restart** relaunches through `/usr/bin/open -n /Applications/LingoPop.app --args --wait-for-pid <pid>` and exits.
+  A running macOS app can be moved; the running process keeps its open files. The `renamex_np` call is the only new `unsafe` and lives under `crates/lingopop-platform/src/macos/`.
+- **Restart.** **Restart** relaunches through `/usr/bin/open -n <app> --args --wait-for-pid <pid>` and exits.
   - Going through LaunchServices makes the new bundle the responsible process.
   - **(Builder: confirm the existing `--wait-for-pid` + single-instance path still works when started through `open`.)**
 - **Keychain.** The keychain item `app.lingopop.tauri.macos` / `secrets-key-v1` is untouched.
@@ -169,9 +180,12 @@ Core gets pure functions with tests on fixtures:
   - `updates_check`, which exists today; it returns the plan, or the version when only the Download fallback applies;
   - `updates_install`, which starts the download and install;
   - `updates_cancel`;
-  - `updates_restart`.
+  - `updates_restart`;
+  - `updates_state`, a read of the current state that changes nothing.
 - **Event.** `updates://state` carries the state; progress events are throttled to about 10 per second.
-- **Ready survives closing Settings.** `Ready` is kept in memory while the app runs.
+  - Every state value carries a `revision` that grows with each change.
+  - The About tab first registers the listener, then calls `updates_state`. It applies a value, from the event or the read, only when its revision is higher than the last one applied. So a change during registration or during the read is never missed, and a stale read never overwrites a newer event.
+- **Ready survives closing Settings.** `Ready` is kept in memory while the app runs. Reopening Settings shows **Restart** through `updates_state`.
 - **After a swap, every relaunch uses the original install path.**
   - The old process's `current_exe()` may point at the moved bundle (`.LingoPop-update-*/old.app`) or at `<stem>.old.exe`.
   - So both the language-change Relaunch (`app_relaunch`) and `updates_restart` start the installed path recorded before the swap; on macOS they go through `open -n <app>`.
@@ -209,7 +223,17 @@ Core gets pure functions with tests on fixtures:
   - **A tag run whose release includes the Mac assets (`macosPreview: true`) must be `selfsigned` with the pinned certificate, or it fails.** An ad-hoc or Developer ID release changes the designated requirement, and every installed copy would refuse it.
   - `adhoc` stays allowed on `workflow_dispatch` and when the Mac assets are left off the release.
   - The Developer ID code path stays in the script, but tag runs never select it. A later switch to Developer ID is a deliberate change of this spec and costs every user one more permission grant.
-- **Update signatures.** **Only the publish job holds the update key**: one Ubuntu job, and no third-party npm or cargo build runs there before signing. After `assemble` and `verify_assets`, it signs the three updatable assets with the trusted comment from section 1, then verifies them.
+- **Update signatures.** **Only the publish job holds the update key**: one Ubuntu job, and no third-party npm or cargo build runs there before signing. The order is fixed, and each step stops the release on any error:
+  1. `assemble` the build-leg artifacts.
+  2. **Pre-signing check.** `verify_assets` on the unsigned set, the build assets plus their manifest, without `.minisig` files.
+  3. **Sign** the three updatable assets with the trusted comment from section 1.
+  4. **Post-signing check.**
+     - The cryptographic verification of each `.minisig` against the committed public key.
+     - Then the manifest is regenerated to include the `.minisig` files.
+     - Then `verify_assets` runs on the complete set: names, sizes, checksums and trusted-comment lines.
+  5. Only then is the draft created.
+
+  The details of the checks:
   - `verify-release-assets.py` learns the three `.minisig` names in the exact file set.
   - Their trusted-comment line must name the matching asset, a text check in Python.
   - The **cryptographic** verification against the committed public key runs before the draft is created, in the publish job, with a small verifier built from the same `minisign-verify` code. It is either a workspace binary built in the job with `--locked`, or a build leg's artifact checked by its SHA-256. Python's stdlib has no Ed25519. The signing tool is the builder's call: a pinned binary with a checked SHA-256, or the same workspace binary.
