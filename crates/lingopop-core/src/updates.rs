@@ -15,6 +15,15 @@ pub const RELEASES_PAGE_URL: &str = "https://github.com/slucheninov/lingopop-app
 pub const CHECK_INTERVAL_SECONDS: f64 = 10_800.0;
 pub const UPDATE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The minisign (Ed25519) public key that signs every update asset (`<asset>.minisig`).
+/// Rotating it breaks updates for every installed copy: they can never accept an update again.
+pub const UPDATE_PUBLIC_KEY: &str = "RWSfFicENCknt5zLwsSazNoe+KYxLfJt8HaJQMPtLQAOSZEp8w90h11V";
+
+/// SHA-1 of the self-signed macOS release signing certificate (40 lowercase hex). It is pinned in
+/// the designated requirement, so it keeps Accessibility and Screen Recording across updates.
+/// Rotating it breaks macOS permissions for every user. Must equal `release-signing.json`.
+pub const RELEASE_CERT_SHA1: &str = "fed8ca55ad74676a130508b87ea9d7051a2bc0f8";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Version {
     pub major: u64,
@@ -259,5 +268,22 @@ mod tests {
             fetch_latest_version_with(&PendingTransport, std::future::ready(())).await,
             None
         );
+    }
+
+    #[test]
+    fn release_cert_sha1_matches_release_signing_json() {
+        let json: serde_json::Value =
+            serde_json::from_str(include_str!("../../../release-signing.json")).unwrap();
+        assert_eq!(json["macosCertificateSha1"], RELEASE_CERT_SHA1);
+        assert_eq!(RELEASE_CERT_SHA1.len(), 40);
+        assert!(RELEASE_CERT_SHA1
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+    }
+
+    #[test]
+    fn update_public_key_is_a_minisign_key_line() {
+        assert!(UPDATE_PUBLIC_KEY.starts_with("RW"));
+        assert_eq!(UPDATE_PUBLIC_KEY.len(), 56);
     }
 }
