@@ -215,6 +215,19 @@ pub fn menu_row_text(index: usize, original: &str, host: HostKind) -> String {
     }
 }
 
+/// Label of an app item (History, Settings, Quit). On Windows the key the item answers to in
+/// the open menu sits at the right edge, after a tab, as the item's mnemonic (`\t&H`), like the
+/// quick-pick digits: a Win32 tray menu runs its own modal loop, so a `Ctrl` chord shown there
+/// would do nothing, and the text after the tab cannot be drawn grey. macOS keeps the plain
+/// label and shows the native key equivalent (`⌘H`, `⌘,`, `⌘Q`).
+pub fn app_item_label(label: &str, key: char, host: HostKind) -> String {
+    let text = menu_label(label);
+    match host {
+        HostKind::Windows => format!("{text}\t&{key}"),
+        HostKind::Unix => text,
+    }
+}
+
 /// macOS key equivalent of history row `index`: `Cmd+1`..`Cmd+9`, `Cmd+0` (Swift parity).
 pub fn history_accelerator(index: usize, host: HostKind) -> Option<String> {
     (host == HostKind::Unix && index < 10).then(|| format!("Cmd+{}", (index + 1) % 10))
@@ -390,15 +403,20 @@ impl TrayController {
         }
         menu.append(&target)?;
         let mac = host == HostKind::Unix;
-        for (id, key, accel) in [
-            ("history", "History…", mac.then_some("Cmd+H")),
-            ("settings", "Settings…", mac.then_some("Cmd+Comma")),
-            ("about", "About LingoPop", None),
+        for (id, key, letter, accel) in [
+            ("history", "History…", 'H', mac.then_some("Cmd+H")),
+            ("settings", "Settings…", ',', mac.then_some("Cmd+Comma")),
         ] {
-            add_with(id, &t(key), true, accel)?;
+            add_with(id, &app_item_label(&t(key), letter, host), true, accel)?;
         }
+        add("about", &t("About LingoPop"), true)?;
         menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
-        add_with("quit", &t("Quit LingoPop"), true, mac.then_some("Cmd+Q"))?;
+        add_with(
+            "quit",
+            &app_item_label(&t("Quit LingoPop"), 'Q', host),
+            true,
+            mac.then_some("Cmd+Q"),
+        )?;
         self.tray.set_menu(Some(menu))
     }
 }
@@ -583,6 +601,15 @@ mod tests {
         ] {
             assert!(a.parse::<muda::accelerator::Accelerator>().is_ok(), "{a}");
         }
+    }
+    #[test]
+    fn app_items_show_their_key_at_the_right_edge_on_windows_only() {
+        let w = HostKind::Windows;
+        assert_eq!(app_item_label("History…", 'H', w), "History…\t&H");
+        assert_eq!(app_item_label("Settings…", ',', w), "Settings…\t&,");
+        assert_eq!(app_item_label("Quit LingoPop", 'Q', w), "Quit LingoPop\t&Q");
+        assert_eq!(app_item_label("A & B", 'Q', w), "A && B\t&Q");
+        assert_eq!(app_item_label("History…", 'H', HostKind::Unix), "History…");
     }
     #[test]
     fn menu_label_escapes_ampersand() {
