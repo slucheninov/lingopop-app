@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.9] - 2026-11-06
+
 ### Changed
 
 - Windows tray menu: History, Settings and Quit show their key at the right edge (`H`, `,`, `Q`, like the quick-pick digits); pressing it while the menu is open picks the item.
