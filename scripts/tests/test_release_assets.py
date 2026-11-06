@@ -29,7 +29,7 @@ spec.loader.exec_module(vra)
 
 VERSION = "0.3.0-alpha.1"
 ALL = {"windows", "macos"}
-APP = "LingoPop Preview.app"
+APP = "LingoPop.app"
 INSTALL = """# Installing LingoPop
 
 Intro shown only in the docs.
@@ -515,7 +515,7 @@ class Verify(Base):
         self.assertIn("macos-arm64.zip: executable architecture is not arm64", self.zip_errors(fat=True))
 
     def test_foreign_top_level_entry(self):
-        self.assertIn("macos-arm64.zip: archive must contain only LingoPop Preview.app", self.zip_errors(extra_top="Other.app/x"))
+        self.assertIn("macos-arm64.zip: archive must contain only LingoPop.app", self.zip_errors(extra_top="Other.app/x"))
 
     def test_garbage_zip(self):
         write_assets(self.dir, **{f"LingoPop-{VERSION}-macos-arm64.zip": b"PK not really"})

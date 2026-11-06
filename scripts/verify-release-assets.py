@@ -46,7 +46,7 @@ ALIASES = {
 }
 MANIFEST = "SHA256SUMS.txt"
 BUNDLE_ID = "app.lingopop.tauri.macos"
-APP_DIR = "LingoPop Preview.app"
+APP_DIR = "LingoPop.app"
 MIN_MACOS = "13.0"
 SIGNING_MODES = ("adhoc", "developer-id")
 MAX_ASSET_BYTES = 1 << 30  # 1 GiB; a real asset is a few MB, an empty one is always wrong
