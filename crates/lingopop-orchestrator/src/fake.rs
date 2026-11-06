@@ -235,6 +235,7 @@ pub struct FakePicker {
     blocked: std::sync::atomic::AtomicBool,
     cancelled: AtomicUsize,
     result: Mutex<Result<Option<Rect>, PlatformError>>,
+    revision: Mutex<Option<u64>>,
     calls: AtomicUsize,
 }
 
@@ -244,8 +245,14 @@ impl FakePicker {
             blocked: false.into(),
             cancelled: 0.into(),
             result: Mutex::new(result),
+            revision: Mutex::new(None),
             calls: AtomicUsize::new(0),
         }
+    }
+
+    /// The topology revision a successful pick reports (default `None`, like Windows).
+    pub fn set_revision(&self, revision: Option<u64>) {
+        *lock(&self.revision) = revision;
     }
 
     pub fn set_result(&self, result: Result<Option<Rect>, PlatformError>) {
@@ -266,6 +273,10 @@ impl FakePicker {
 #[async_trait::async_trait]
 impl RegionPicker for FakePicker {
     async fn pick(&self) -> Result<Option<Rect>, PlatformError> {
+        Ok(self.pick_with_revision().await?.map(|(rect, _)| rect))
+    }
+
+    async fn pick_with_revision(&self) -> Result<Option<(Rect, Option<u64>)>, PlatformError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.blocked.load(Ordering::SeqCst) {
             struct Cancel<'a>(&'a AtomicUsize);
@@ -277,7 +288,10 @@ impl RegionPicker for FakePicker {
             let _guard = Cancel(&self.cancelled);
             std::future::pending::<()>().await;
         }
-        lock(&self.result).clone()
+        let revision = *lock(&self.revision);
+        lock(&self.result)
+            .clone()
+            .map(|picked| picked.map(|rect| (rect, revision)))
     }
 }
 

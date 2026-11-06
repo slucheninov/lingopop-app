@@ -44,7 +44,7 @@ jobs:
       - name: Build frontend
         shell: bash
         run: npm run build --prefix app
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Check localization catalogs
@@ -52,6 +52,21 @@ jobs:
         run: |
           python scripts/gen-localizations.py check
           python -m unittest discover -s scripts/tests -p 'test_localizations.py'
+      - name: Check versions and release scripts
+        shell: bash
+        run: |
+          python scripts/check-version.py
+          python -m unittest discover -s scripts/tests -p 'test_check_version.py'
+          python -m unittest discover -s scripts/tests -p 'test_release_assets.py'
+      - name: Check macOS production readiness
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # The macOS leg only; a missing shellcheck is installed, never skipped silently.
+          command -v shellcheck >/dev/null || brew install shellcheck
+          shellcheck scripts/*.sh
+          bash scripts/check-macos-production.sh
+          python -m unittest discover -s scripts/tests -p 'test_macos_production_gate.py'
       - name: Test frontend
         shell: bash
         run: npm test --prefix app

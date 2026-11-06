@@ -6,6 +6,18 @@ use crate::{PlatformError, Point, Rect, Size};
 pub trait RegionOverlay: Send + Sync {
     /// Disconnecting or sending on cancel ends the pick after native cleanup.
     fn pick(&self, cancel: crossbeam_channel::Receiver<()>) -> Result<Option<Rect>, PlatformError>;
+    /// Like [`pick`](Self::pick), and also the display topology revision the selection was made
+    /// against (macOS: `MacGeometry::topology_revision`), so the capture can refuse a layout
+    /// that changed since. `None` = no revision (Windows has none; the default).
+    fn pick_with_revision(
+        &self,
+        cancel: crossbeam_channel::Receiver<()>,
+    ) -> Result<Option<(Rect, Option<u64>)>, PlatformError> {
+        Ok(self.pick(cancel)?.map(|rect| (rect, None)))
+    }
+    /// Hands the overlay the main-thread dispatcher (macOS: native windows live there). Called
+    /// once from shell setup, before the first pick; Windows ignores it.
+    fn bind_main_thread(&self, _main: std::sync::Arc<dyn crate::MainThread>) {}
 }
 #[doc(hidden)]
 pub const MIN_SELECTION_PX: i32 = 10;
@@ -78,6 +90,19 @@ pub fn fold_input_batch(
     rendered: Option<Rect>,
     events: impl IntoIterator<Item = OverlayInput>,
 ) -> InputBatch {
+    fold_input_batch_with(start, rendered, events, selection_accepted)
+}
+
+/// [`fold_input_batch`] with the acceptance rule of a finishing `Up` injected: Windows uses
+/// ten desktop units (physical pixels); macOS ten backing pixels on the display where the drag
+/// started, which is not a function of the desktop-point size alone.
+#[doc(hidden)]
+pub fn fold_input_batch_with(
+    start: &mut Option<Point>,
+    rendered: Option<Rect>,
+    events: impl IntoIterator<Item = OverlayInput>,
+    accepted: impl Fn(Rect) -> bool,
+) -> InputBatch {
     let mut pending = None;
     for event in events {
         let current = match event {
@@ -90,7 +115,7 @@ pub fn fold_input_batch(
             OverlayInput::Up(p) => {
                 if let Some(anchor) = *start {
                     let r = selection_rect(anchor, p);
-                    return InputBatch::Finish(selection_accepted(r).then_some(r));
+                    return InputBatch::Finish(accepted(r).then_some(r));
                 }
                 continue;
             }

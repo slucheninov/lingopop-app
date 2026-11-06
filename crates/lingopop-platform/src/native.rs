@@ -71,8 +71,8 @@ pub fn native() -> Platform {
     }
 }
 
-/// The macOS dev implementations: text-only clipboard, no screen capture or OCR, and the
-/// Keychain-backed secret protection.
+/// The macOS implementations: lossless pasteboard, permission-gated screen capture, Vision OCR
+/// and the Keychain-backed secret protection.
 #[cfg(target_os = "macos")]
 pub fn native() -> Platform {
     use crate::macos::{MacCapture, MacClipboard, MacForeground, MacKeys, MacMonitors, MacOcr};
@@ -80,31 +80,50 @@ pub fn native() -> Platform {
     use crate::MacProtector;
 
     // This is the one shared monitor/cache instance. Shell setup initializes it through
-    // Monitors; Task 15 must also give MacCapture a clone of this instance.
+    // Monitors; MacCapture reads capture plans from a clone of the same cache.
     let monitors = Arc::new(MacMonitors::new());
+    // One permission service: its process memory (a request already ran) is shared by the
+    // adapters that check Screen Recording and by the operation gate.
+    let permissions: Arc<dyn crate::Permissions> = Arc::new(crate::macos::MacPermissions::new());
     // One target registry: handles from the last-foreground tracker must resolve in `foreground`.
     let foreground = MacForeground::new();
     let last_foreground = crate::macos::MacLastForeground::new(&foreground);
+    let capture =
+        MacCapture::with_services(MacMonitors::clone(&monitors), Arc::clone(&permissions));
+    let sleeper: Arc<dyn Sleeper> = Arc::new(SystemSleeper::new());
+    // One flag shared by the region overlay (set while a pick is active) and the dismiss
+    // watcher (ignores every event meanwhile): the overlay's own clicks never close a popup.
+    let overlay_active = crate::macos_dismiss::OverlayActive::new();
     Platform {
-        overlay: Arc::new(crate::MacOverlay),
+        // Needs `RegionOverlay::bind_main_thread` from shell setup before the first pick; the
+        // overlay shares the one topology cache with the popup and capture.
+        overlay: Arc::new(
+            crate::MacOverlay::new(
+                Arc::new(crate::macos::AppKitOverlay::new()),
+                Arc::new(MacMonitors::clone(&monitors)),
+                sleeper.clone(),
+            )
+            .with_overlay_active(overlay_active.clone()),
+        ),
         system: native_system(),
-        login_item: Arc::new(crate::macos::MacLoginItem),
+        login_item: Arc::new(crate::macos::MacLoginItem::new(crate::macos::SmMainApp)),
         // Main thread only: the shell's presenter dispatches every call (macos/presentation.rs).
         popup_window: Arc::new(crate::MacPopupWindow::new(MacMonitors::clone(&monitors))),
         // Needs `DismissWatcher::bind_main_thread` from shell setup before the first start.
-        dismiss: Arc::new(crate::MacDismissWatcher::new(Arc::new(
-            crate::AppKitMonitors,
-        ))),
+        dismiss: Arc::new(crate::MacDismissWatcher::with_overlay_active(
+            Arc::new(crate::AppKitMonitors),
+            overlay_active,
+        )),
         clipboard: Arc::new(MacClipboard::new()),
         keys: Arc::new(MacKeys::new()),
         foreground: Arc::new(foreground),
         last_foreground: Arc::new(last_foreground),
         monitors,
-        capture: Arc::new(MacCapture::new()),
+        capture: Arc::new(capture),
         ocr: Arc::new(MacOcr::new()),
-        permissions: Arc::new(crate::macos::MacPermissions::new()),
+        permissions,
         protector: Arc::new(MacProtector::new()),
-        sleeper: Arc::new(SystemSleeper::new()),
+        sleeper,
     }
 }
 

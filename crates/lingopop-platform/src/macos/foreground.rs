@@ -22,7 +22,7 @@ use crate::sleeper::SystemSleeper;
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct SystemApps;
 
-fn identity(app: &NSRunningApplication) -> Option<AppIdentity> {
+pub(super) fn identity(app: &NSRunningApplication) -> Option<AppIdentity> {
     let pid = app.processIdentifier();
     (pid > 0).then(|| AppIdentity {
         pid,

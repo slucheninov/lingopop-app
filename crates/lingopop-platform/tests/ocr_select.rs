@@ -137,3 +137,40 @@ fn ocr_is_object_safe_send_sync() {
     check::<dyn Ocr>();
     let _boxed: Box<dyn Ocr> = Box::new(FakeOcr::new(Err(PlatformError::OcrUnavailable)));
 }
+
+#[test]
+fn reading_order_puts_the_highest_line_first_and_is_stable() {
+    // Vision-style Y-up coordinates: a larger value is higher on screen.
+    let text = lingopop_platform::text_in_reading_order(vec![
+        (0.10, "third".to_string()),
+        (0.80, "first".to_string()),
+        (0.45, "second".to_string()),
+        (0.45, "second, same height".to_string()),
+    ]);
+    assert_eq!(text.text, "first\nsecond\nsecond, same height\nthird");
+    assert_eq!(text.language, None);
+}
+
+#[test]
+fn reading_order_drops_blank_lines_and_an_empty_result_is_real() {
+    let text = lingopop_platform::text_in_reading_order(vec![
+        (0.9, "  \t".to_string()),
+        (0.5, "kept".to_string()),
+        (0.1, String::new()),
+    ]);
+    assert_eq!(text.text, "kept");
+    let empty = lingopop_platform::text_in_reading_order(vec![]);
+    assert!(empty.is_empty());
+    assert_eq!(empty.text, "");
+    let blanks = lingopop_platform::text_in_reading_order(vec![(0.2, " ".to_string())]);
+    assert!(blanks.is_empty());
+}
+
+#[test]
+fn reading_order_tolerates_non_finite_positions() {
+    let text = lingopop_platform::text_in_reading_order(vec![
+        (f64::NAN, "unknown".to_string()),
+        (0.3, "known".to_string()),
+    ]);
+    assert_eq!(text.text, "known\nunknown");
+}

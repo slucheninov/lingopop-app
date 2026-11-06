@@ -2230,7 +2230,7 @@ dependencies = [
 
 [[package]]
 name = "lingopop-app"
-version = "0.2.0-alpha.7"
+version = "0.2.0-alpha.8"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2239,6 +2239,7 @@ dependencies = [
  "lingopop-orchestrator",
  "lingopop-platform",
  "log",
+ "muda",
  "serde",
  "serde_json",
  "tauri",
@@ -2252,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "lingopop-core"
-version = "0.2.0-alpha.7"
+version = "0.2.0-alpha.8"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2271,9 +2272,10 @@ dependencies = [
 
 [[package]]
 name = "lingopop-orchestrator"
-version = "0.2.0-alpha.7"
+version = "0.2.0-alpha.8"
 dependencies = [
  "async-trait",
+ "crossbeam-channel",
  "lingopop-core",
  "lingopop-platform",
  "serde",
@@ -2284,13 +2286,14 @@ dependencies = [
 
 [[package]]
 name = "lingopop-platform"
-version = "0.2.0-alpha.7"
+version = "0.2.0-alpha.8"
 dependencies = [
  "aes-gcm",
  "block2",
  "core-foundation 0.10.1",
  "core-graphics",
  "crossbeam-channel",
+ "foreign-types",
  "getrandom 0.4.3",
  "global-hotkey",
  "keyboard-types",
@@ -2299,6 +2302,8 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "objc2-service-management",
+ "objc2-vision",
  "png",
  "raw-window-handle",
  "security-framework",
@@ -2672,6 +2677,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-security"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "709fe137109bd1e8b5a99390f77a7d8b2961dafc1a1c5db8f2e60329ad6d895a"
+dependencies = [
+ "bitflags 2.13.2",
+ "objc2",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-service-management"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b213642d6959cc6023ceb1217aa595eaaf09b8094ce95127c103cab611fe65e8"
+dependencies = [
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "objc2-security",
+]
+
+[[package]]
 name = "objc2-ui-kit"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2699,6 +2727,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
  "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
+name = "objc2-vision"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc194758a2d5d7540b1ad283bfb9ca318ec608991892326e95b428230b2689b"
+dependencies = [
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation",
 ]
 

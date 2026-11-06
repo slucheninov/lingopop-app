@@ -2,6 +2,7 @@
   import { t } from '../lib/i18n';
   import type { AppLanguage, SettingsPatch, SettingsView, UiPatch } from '../lib/settingsTypes';
   import LanguagePairs from './LanguagePairs.svelte';
+  import LoginItemNotice from './LoginItemNotice.svelte';
   import PermissionsSection from './PermissionsSection.svelte';
   import Relaunch from './Relaunch.svelte';
   let { view, onPatch, onUiPatch }: { view: SettingsView; onPatch: (patch: SettingsPatch) => Promise<boolean>; onUiPatch: (patch: UiPatch) => Promise<boolean> } = $props();
@@ -87,6 +88,7 @@
   <section>
     <h3>{t('Startup')}</h3>
     <label class="row switch"><input type="checkbox" role="switch" checked={view.launchAtLogin} onchange={event => { const box = event.currentTarget; revert(onPatch({ field: 'launchAtLogin', value: box.checked }), () => { box.checked = view.launchAtLogin; }); }} /><span>{t('Launch at login')}</span></label>
+    {#if view.loginItemIssue}<LoginItemNotice issue={view.loginItemIssue} />{/if}
     <label class="row switch"><input type="checkbox" role="switch" checked={view.autoCopyOCR} onchange={event => { const box = event.currentTarget; revert(onPatch({ field: 'autoCopyOCR', value: box.checked }), () => { box.checked = view.autoCopyOCR; }); }} /><span>{t('Auto-copy OCR/translation results to clipboard')}</span></label>
   </section>
 </div>

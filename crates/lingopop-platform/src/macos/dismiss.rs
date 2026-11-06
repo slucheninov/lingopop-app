@@ -23,7 +23,7 @@
 use crate::error::platform_log;
 use crate::main_thread::{post_to_main, MainThread};
 use crate::{DismissEvent, DismissWatcher, PlatformError, Point, Rect};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
@@ -36,6 +36,72 @@ pub const SHUTDOWN_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 pub const OWN_EVENT_MARKER: i64 = 0x4C50_4F50;
 /// `kVK_Escape`.
 pub const ESCAPE_KEY_CODE: u16 = 53;
+
+/// "A region-selection overlay is up": shared between the overlay engine (takes one
+/// [`OverlayLease`] per pick before the native overlay exists, releases it only after that
+/// pick's cleanup ran) and the dismiss sink (drops every event while any lease is held). The
+/// overlay's own drag-start click and Escape are events to our own app, so the dismiss
+/// watcher's LOCAL monitors see them too, and AppKit does not document the order of local
+/// monitors: relying on it could make a Screen Translate started with a popup open cancel
+/// itself on its first click.
+///
+/// Ownership is per pick, not a single boolean: a cleanup that timed out stays queued on the
+/// main thread and may run after the next pick started, and it must only give back ITS lease.
+/// A lease also releases when its last owner is dropped, so no abandoned teardown can leave
+/// dismissal suppressed.
+#[derive(Debug, Clone, Default)]
+pub struct OverlayActive(Arc<AtomicUsize>);
+
+impl OverlayActive {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Takes a lease for one pick; the flag reads set until every lease was released.
+    pub fn begin(&self) -> OverlayLease {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        OverlayLease(Arc::new(LeaseInner {
+            count: self.0.clone(),
+            released: AtomicBool::new(false),
+        }))
+    }
+    pub fn is_set(&self) -> bool {
+        self.0.load(Ordering::SeqCst) > 0
+    }
+}
+
+/// One pick's claim on [`OverlayActive`]. Clones share the claim; it is released exactly once,
+/// by an explicit [`release`](Self::release) from any clone or, at the latest, when the LAST
+/// clone is dropped. That last-owner drop is what recovers dismissal when a teardown that the
+/// waiter already gave up on (cleanup timeout) is later dropped unrun by the main loop or
+/// unwinds before it reaches its explicit release.
+#[derive(Debug, Clone)]
+pub struct OverlayLease(Arc<LeaseInner>);
+
+#[derive(Debug)]
+struct LeaseInner {
+    count: Arc<AtomicUsize>,
+    released: AtomicBool,
+}
+
+impl LeaseInner {
+    fn release(&self) {
+        if !self.released.swap(true, Ordering::SeqCst) {
+            self.count.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for LeaseInner {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+impl OverlayLease {
+    pub fn release(&self) {
+        self.0.release();
+    }
+}
 
 /// What a native monitor saw, reduced to the fields the decision needs (no characters).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +161,7 @@ pub trait MonitorBackend: Send + Sync + 'static {
 /// The callback side: filters an observed event and emits at most one dismissal per start.
 pub struct DismissSink {
     active: AtomicBool,
+    overlay: OverlayActive,
     rect: Mutex<Rect>,
     sender: crossbeam_channel::Sender<DismissEvent>,
 }
@@ -105,7 +172,9 @@ impl DismissSink {
     }
     /// Called from monitor callbacks (main thread). Never blocks beyond the rect read.
     pub fn observe(&self, event: ObservedEvent) {
-        if !self.active.load(Ordering::SeqCst) {
+        // While a region overlay is up every dismiss event (mouse and Escape, local and global)
+        // belongs to the overlay; the watcher stays armed and resumes afterwards.
+        if !self.active.load(Ordering::SeqCst) || self.overlay.is_set() {
             return;
         }
         let dismissal = match event {
@@ -204,12 +273,19 @@ pub struct MacDismissWatcher<B: MonitorBackend> {
 
 impl<B: MonitorBackend> MacDismissWatcher<B> {
     pub fn new(backend: Arc<B>) -> Self {
+        Self::with_overlay_active(backend, OverlayActive::new())
+    }
+
+    /// `overlay` is the flag the region overlay engine sets while a pick is active
+    /// (`native()` shares one between both).
+    pub fn with_overlay_active(backend: Arc<B>, overlay: OverlayActive) -> Self {
         let (sender, receiver) = crossbeam_channel::bounded(8);
         Self {
             inner: Arc::new(Inner {
                 backend,
                 sink: Arc::new(DismissSink {
                     active: AtomicBool::new(false),
+                    overlay,
                     rect: Mutex::new(Rect::new(0, 0, 0, 0)),
                     sender,
                 }),

@@ -1,6 +1,17 @@
+<script lang="ts" module>
+  import { invoke as invoke } from '@tauri-apps/api/core';
+  // Suspend calls of ALL recorders are chained (the shell has one suspension flag): each waits for the
+  // previous one to settle, so a `false` (blur, Esc, unmount) can never reach the shell after a later `true`,
+  // of this row or of another row, whatever order the async Tauri tasks would run in.
+  let inFlight: Promise<unknown> = Promise.resolve();
+  function suspend(suspended: boolean): Promise<unknown> {
+    const run = inFlight.then(() => invoke('hotkeys_suspend', { suspended }));
+    inFlight = run.catch(() => {});
+    return run;
+  }
+</script>
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
   import { classifyKeydown } from '../lib/hotkeyRecorder';
   import { currentHost } from '../lib/bootstrap';
   import { t } from '../lib/i18n';
@@ -13,14 +24,7 @@
   let busy = $state(false);
   let failure = $state<string | null>(null);
   let disposed = false;
-  // Suspend calls are chained: each waits for the previous one to settle, so a `false` (blur, Esc, unmount)
-  // can never reach the shell before the `true` it undoes, whatever order the async Tauri tasks would run in.
-  let inFlight: Promise<unknown> = Promise.resolve();
-  function suspend(suspended: boolean): Promise<unknown> {
-    const run = inFlight.then(() => invoke('hotkeys_suspend', { suspended }));
-    inFlight = run.catch(() => {});
-    return run;
-  }
+  let button: HTMLButtonElement | undefined = $state();
   async function stop() {
     if (!recording) return;
     recording = false;
@@ -31,6 +35,9 @@
     if (busy) return;
     if (recording) { await stop(); return; }
     recording = true;
+    // WebKit (macOS WKWebView) does not focus a <button> on click, so its keydown would never
+    // fire; focus it explicitly so the recorder receives the chord on every engine.
+    button?.focus();
     failure = null;
     busy = true;
     try { await suspend(true); }
@@ -49,7 +56,7 @@
   }
   onDestroy(() => { disposed = true; void stop(); });
 </script>
-<button class:recording aria-label={label} aria-pressed={recording} title={recording ? prompt() : hotkey?.display ?? ''}
+<button bind:this={button} class:recording aria-label={label} aria-pressed={recording} title={recording ? prompt() : hotkey?.display ?? ''}
   onclick={() => { void toggle(); }} onkeydown={keydown} onblur={() => { void stop(); }}>
   {recording ? prompt() : hotkey?.display ?? '—'}
 </button>

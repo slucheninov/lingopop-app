@@ -277,3 +277,13 @@ test('header_font_size_follows_result_font_size_like_mac', async () => {
   expect(headerFontSize(13)).toBe(11);
   expect(headerFontSize(7)).toBe(8);
 });
+test('result_header_shows_the_provider_glyph_in_its_colour_and_a_borderless_language_menu', () => {
+  const { container } = render(ResultView, { model: { ...result, provider: 'Claude', providerName: 'Claude' } });
+  const glyph = container.querySelector('header .provider-icon') as HTMLElement;
+  expect(glyph.querySelector('svg')).not.toBeNull();
+  expect(glyph.style.color).toBe('rgb(217, 119, 87)');
+  expect(container.querySelector('header .provider')?.textContent).toBe('Claude');
+  // The language stays a real <select> (keyboard and screen readers), drawn as header text.
+  expect(screen.getByRole('combobox', { name: 'Target language' })).toBeTruthy();
+  expect(container.querySelector('header strong')).toBeNull();
+});

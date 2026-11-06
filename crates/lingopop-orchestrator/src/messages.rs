@@ -4,6 +4,7 @@
 
 use lingopop_core::errors::TranslationError;
 use lingopop_core::provider::ProviderType;
+use lingopop_platform::login_item::{UNSUPPORTED_LOGIN_ITEM, UNSUPPORTED_LOGIN_ITEM_NOT_FOUND};
 use lingopop_platform::pasteboard::UNSUPPORTED_SNAPSHOT;
 use lingopop_platform::{PermissionKind, PlatformError};
 
@@ -39,6 +40,13 @@ pub const KEY_PLATFORM_GENERIC: &str = "Something went wrong on this PC (%@). Tr
 /// NEW (Windows only).
 pub const KEY_SCREEN_TIMEOUT: &str = "Screen capture or text recognition took too long. Try again.";
 
+/// NEW (macOS only): the screenshot itself failed (a native capture error, not a missing
+/// permission, not a timeout). Shown by `capture_gate_message` on macOS only.
+pub const KEY_SCREEN_CAPTURE_FAILED: &str = "Screen capture failed. Try again.";
+/// NEW (macOS only): Vision failed on the captured image (a native recognition error, not an
+/// empty result, not a timeout). Shown by `ocr_gate_message` on macOS only.
+pub const KEY_TEXT_RECOGNITION_FAILED: &str = "Text recognition failed. Try again.";
+
 /// NEW (macOS only): Accessibility is missing, so the selection cannot be read or pasted.
 pub const KEY_PERMISSION_ACCESSIBILITY: &str = "LingoPop needs Accessibility access to read selected text. Grant it in Settings → Main → Permissions.";
 /// NEW (macOS only): Replace needs Accessibility to look at the foreground and send the paste.
@@ -56,6 +64,19 @@ pub const KEY_PERMISSION_SCREEN_RECORDING: &str = "LingoPop needs Screen Recordi
 /// clipboard.
 pub const KEY_PASTEBOARD_UNSUPPORTED: &str =
     "Clipboard content can't be preserved. Nothing was changed.";
+/// NEW (macOS only, `i18n/macos.json`): the login item is registered but the user still has to
+/// allow it in System Settings, so it will not start at login yet (never a silent success). The
+/// Main tab shows it under the Launch at login switch with an `Open Login Items settings` button.
+pub const KEY_LOGIN_REQUIRES_APPROVAL: &str =
+    "Allow LingoPop in System Settings > Login Items to start it at login.";
+/// NEW (macOS only): launch at login cannot work from here: LingoPop is not an installed `.app`
+/// (a plain binary, a Gatekeeper-translocated copy, an app run from a mounted disk image), so
+/// moving it to Applications is the right advice.
+pub const KEY_LOGIN_UNAVAILABLE: &str = "Launch at login isn't available until LingoPop runs from the Applications folder. Move it there and open it again.";
+/// NEW (macOS only): the system cannot find the login item service of an app that is already in
+/// an installed bundle; moving the app would not help, so the advice is another one.
+pub const KEY_LOGIN_SERVICE_NOT_FOUND: &str =
+    "Launch at login isn't available for this copy of LingoPop. Reinstall it in the Applications folder and open it again.";
 /// Mac catalog key (`MainSettingsTab.swift`). Conditional wording, never a claim that access was
 /// granted: macOS reads a new Screen Recording grant only after a relaunch, so this process cannot
 /// tell. Detail line of the denied message on a retry after `request` already ran, and the line
@@ -111,6 +132,13 @@ pub fn platform_message(e: &PlatformError) -> UserMessageView {
         PlatformError::Unsupported(what) if *what == UNSUPPORTED_SNAPSHOT => {
             plain(KEY_PASTEBOARD_UNSUPPORTED)
         }
+        PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM => {
+            plain(KEY_LOGIN_UNAVAILABLE)
+        }
+        PlatformError::Unsupported(what) if *what == UNSUPPORTED_LOGIN_ITEM_NOT_FOUND => {
+            plain(KEY_LOGIN_SERVICE_NOT_FOUND)
+        }
+        PlatformError::LoginItemRequiresApproval => plain(KEY_LOGIN_REQUIRES_APPROVAL),
         PlatformError::Unsupported(_)
         | PlatformError::HotkeyConflict
         | PlatformError::InvalidHotkey
@@ -146,6 +174,29 @@ pub fn screen_gate_message(e: &GateError) -> UserMessageView {
     match e {
         GateError::Busy | GateError::TimedOut => plain(KEY_SCREEN_TIMEOUT),
         other => gate_message(other),
+    }
+}
+
+/// `screen_gate_message` for the CAPTURE stage of Screen Translate. On macOS a native capture
+/// failure (`Os` / `Unsupported`) says the screenshot failed; permission denial keeps its own
+/// key (`platform_message`), `Busy` / `TimedOut` keep the screen timeout, and Windows is
+/// unchanged (the generic platform text).
+pub fn capture_gate_message(e: &GateError) -> UserMessageView {
+    stage_gate_message(e, cfg!(target_os = "macos"), KEY_SCREEN_CAPTURE_FAILED)
+}
+
+/// `screen_gate_message` for the OCR stage: on macOS a native recognition failure says text
+/// recognition failed; everything else is as in `screen_gate_message`.
+pub fn ocr_gate_message(e: &GateError) -> UserMessageView {
+    stage_gate_message(e, cfg!(target_os = "macos"), KEY_TEXT_RECOGNITION_FAILED)
+}
+
+fn stage_gate_message(e: &GateError, macos: bool, failed_key: &'static str) -> UserMessageView {
+    match e {
+        GateError::Platform(PlatformError::Os { .. } | PlatformError::Unsupported(_)) if macos => {
+            plain(failed_key)
+        }
+        other => screen_gate_message(other),
     }
 }
 
@@ -189,6 +240,30 @@ mod tests {
                 UNSUPPORTED_SNAPSHOT
             ))),
             plain(KEY_PASTEBOARD_UNSUPPORTED)
+        );
+    }
+
+    #[test]
+    fn platform_message_login_item_has_its_own_keys() {
+        assert_eq!(
+            platform_message(&PlatformError::LoginItemRequiresApproval),
+            plain(KEY_LOGIN_REQUIRES_APPROVAL)
+        );
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported(UNSUPPORTED_LOGIN_ITEM)),
+            plain(KEY_LOGIN_UNAVAILABLE)
+        );
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported(
+                UNSUPPORTED_LOGIN_ITEM_NOT_FOUND
+            )),
+            plain(KEY_LOGIN_SERVICE_NOT_FOUND)
+        );
+        assert!(!KEY_LOGIN_SERVICE_NOT_FOUND.contains("Move it"));
+        // Any other Unsupported keeps the generic key.
+        assert_eq!(
+            platform_message(&PlatformError::Unsupported("ocr")).key,
+            KEY_PLATFORM_GENERIC
         );
     }
 
@@ -321,6 +396,69 @@ mod tests {
         assert_eq!(
             platform_message(&PlatformError::HotkeyConflict).key,
             KEY_PLATFORM_GENERIC
+        );
+    }
+
+    #[test]
+    fn stage_messages_name_the_failed_stage_on_macos_only() {
+        let os = GateError::Platform(PlatformError::Os {
+            api: "CGDisplayCreateImageForRect",
+            code: 0,
+        });
+        let unsupported = GateError::Platform(PlatformError::Unsupported("OCR on macOS"));
+        for e in [&os, &unsupported] {
+            assert_eq!(
+                stage_gate_message(e, true, KEY_SCREEN_CAPTURE_FAILED),
+                plain(KEY_SCREEN_CAPTURE_FAILED)
+            );
+            assert_eq!(
+                stage_gate_message(e, true, KEY_TEXT_RECOGNITION_FAILED),
+                plain(KEY_TEXT_RECOGNITION_FAILED)
+            );
+            // Windows text is unchanged.
+            assert_eq!(
+                stage_gate_message(e, false, KEY_SCREEN_CAPTURE_FAILED),
+                screen_gate_message(e)
+            );
+        }
+        assert_eq!(
+            stage_gate_message(&os, false, KEY_SCREEN_CAPTURE_FAILED).key,
+            KEY_PLATFORM_GENERIC
+        );
+        // Permission denial, timeouts, empty regions and panics keep their own messages.
+        for macos in [true, false] {
+            let denied = GateError::Platform(PlatformError::PermissionDenied(
+                PermissionKind::ScreenRecording,
+            ));
+            assert_eq!(
+                stage_gate_message(&denied, macos, KEY_SCREEN_CAPTURE_FAILED),
+                plain(KEY_PERMISSION_SCREEN_RECORDING)
+            );
+            assert_eq!(
+                stage_gate_message(&GateError::TimedOut, macos, KEY_TEXT_RECOGNITION_FAILED),
+                plain(KEY_SCREEN_TIMEOUT)
+            );
+            assert_eq!(
+                stage_gate_message(
+                    &GateError::Platform(PlatformError::InvalidRegion),
+                    macos,
+                    KEY_SCREEN_CAPTURE_FAILED
+                ),
+                selection_too_small()
+            );
+            assert_eq!(
+                stage_gate_message(&GateError::Panicked, macos, KEY_SCREEN_CAPTURE_FAILED).key,
+                KEY_PLATFORM_GENERIC
+            );
+        }
+        assert_eq!(
+            stage_gate_message(
+                &GateError::Platform(PlatformError::OcrUnavailable),
+                true,
+                KEY_TEXT_RECOGNITION_FAILED
+            )
+            .key,
+            KEY_OCR_UNAVAILABLE
         );
     }
 

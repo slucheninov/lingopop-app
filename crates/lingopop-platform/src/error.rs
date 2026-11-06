@@ -36,6 +36,8 @@ pub enum PlatformError {
     InvalidRegion,
     #[error("{} permission was denied", .0.display_name())]
     PermissionDenied(crate::permissions::PermissionKind),
+    #[error("launch at login needs approval in System Settings")]
+    LoginItemRequiresApproval,
     #[error("{api} failed (code {code})")]
     Os { api: &'static str, code: i32 },
 }
@@ -57,6 +59,7 @@ mod tests {
             PlatformError::InvalidRegion,
             PlatformError::PermissionDenied(PermissionKind::Accessibility),
             PlatformError::PermissionDenied(PermissionKind::ScreenRecording),
+            PlatformError::LoginItemRequiresApproval,
             PlatformError::Os {
                 api: "CryptProtectData",
                 code: 5,
@@ -73,6 +76,7 @@ mod tests {
                 | PlatformError::InvalidHotkey
                 | PlatformError::InvalidRegion
                 | PlatformError::PermissionDenied(_)
+                | PlatformError::LoginItemRequiresApproval
                 | PlatformError::Os { .. } => {}
             }
         }

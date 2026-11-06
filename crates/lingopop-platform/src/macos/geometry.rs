@@ -183,6 +183,40 @@ impl MacGeometry {
     pub fn appkit_to_desktop(&self, r: NativeRect) -> Result<Rect, PlatformError> {
         Self::appkit_frame_to_desktop(self.primary_height, r).enclosing_rect()
     }
+    /// An AppKit global point (bottom-left, Y-up, e.g. `NSEvent.mouseLocation`) as a Quartz
+    /// desktop point, floored like the cursor reads. Non-finite input maps to the origin.
+    pub fn appkit_point_to_desktop(&self, x: f64, y: f64) -> crate::Point {
+        let floor = |v: f64| if v.is_finite() { v.floor() as i32 } else { 0 };
+        crate::Point {
+            x: floor(x),
+            y: floor(self.primary_height - y),
+        }
+    }
+    /// The display a desktop point belongs to: the one whose half-open bounds contain it, else
+    /// the nearest (a pointer exactly on a far edge is outside every display's bounds).
+    pub fn display_at(&self, p: crate::Point) -> Option<u32> {
+        let (px, py) = (f64::from(p.x), f64::from(p.y));
+        let contains =
+            |b: &NativeRect| px >= b.x && px < b.x + b.width && py >= b.y && py < b.y + b.height;
+        if let Some(d) = self.displays.iter().find(|d| contains(&d.desktop_bounds)) {
+            return Some(d.id);
+        }
+        let distance = |b: &NativeRect| {
+            let dx = (b.x - px).max(px - (b.x + b.width)).max(0.0);
+            let dy = (b.y - py).max(py - (b.y + b.height)).max(0.0);
+            dx * dx + dy * dy
+        };
+        self.displays
+            .iter()
+            .fold(None, |best: Option<(f64, u32)>, d| {
+                let c = (distance(&d.desktop_bounds), d.id);
+                match best {
+                    Some(b) if b.0 <= c.0 => Some(b),
+                    _ => Some(c),
+                }
+            })
+            .map(|(_, id)| id)
+    }
     /// Task 15 must call this immediately before every native capture. Revision changes fail
     /// closed even if the same display IDs remain (scale/work-area/origin may have changed).
     pub fn ensure_current(&self, plan: &CapturePlan) -> Result<(), PlatformError> {
