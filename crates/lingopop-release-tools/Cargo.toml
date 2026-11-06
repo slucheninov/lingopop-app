@@ -1,0 +1,17 @@
+[package]
+name = "lingopop-release-tools"
+description = "Release tooling: sign and verify LingoPop update assets (minisign)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "lingopop-release-tools"
+path = "src/main.rs"
+
+[dependencies]
+lingopop-core = { path = "../lingopop-core" }
+minisign = "=0.10.0"

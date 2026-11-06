@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 async-trait = "0.1.92"
 base64 = "0.23.1"
+minisign-verify = "=0.3.0"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 reqwest = { version = "0.12.28", default-features = false, features = ["rustls-tls-webpki-roots", "http2"] }
 serde = { version = "1", features = ["derive"] }
