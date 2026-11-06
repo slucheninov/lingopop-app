@@ -40,9 +40,26 @@ fn hash_file(path: &Path) -> io::Result<String> {
 /// not a plain file name gives `None`.
 pub fn bundle_identity(app: &Path) -> Option<String> {
     let contents = app.join("Contents");
-    let plist = std::fs::read(contents.join("Info.plist")).ok()?;
-    let plist = std::str::from_utf8(&plist).ok()?;
-    let version = plist_string(plist, "CFBundleShortVersionString")?;
+    let plist = info_plist(app)?;
+    let version = plist_string(&plist, "CFBundleShortVersionString")?;
+    let executable = bundle_executable_in(app, &plist)?;
+    let resources = file_sha256(&contents.join("_CodeSignature").join("CodeResources"))?;
+    let main = file_sha256(&executable)?;
+    Some(format!("{version}:{resources}:{main}"))
+}
+
+/// The bundle's XML `Contents/Info.plist` as text; `None` when missing or not UTF-8.
+pub(crate) fn info_plist(app: &Path) -> Option<String> {
+    let bytes = std::fs::read(app.join("Contents").join("Info.plist")).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// `Contents/MacOS/<CFBundleExecutable>`; `None` when the name is not a plain file name.
+pub(crate) fn bundle_executable(app: &Path) -> Option<std::path::PathBuf> {
+    bundle_executable_in(app, &info_plist(app)?)
+}
+
+fn bundle_executable_in(app: &Path, plist: &str) -> Option<std::path::PathBuf> {
     let executable = plist_string(plist, "CFBundleExecutable")?;
     if executable.is_empty()
         || executable == "."
@@ -51,9 +68,7 @@ pub fn bundle_identity(app: &Path) -> Option<String> {
     {
         return None;
     }
-    let resources = file_sha256(&contents.join("_CodeSignature").join("CodeResources"))?;
-    let main = file_sha256(&contents.join("MacOS").join(&executable))?;
-    Some(format!("{version}:{resources}:{main}"))
+    Some(app.join("Contents").join("MacOS").join(executable))
 }
 
 /// The identity function recovery uses for a site kind.

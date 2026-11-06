@@ -53,7 +53,7 @@ mod windows;
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
     MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPermissions, MacPopupWindow, MacProtector,
-    NsPasteboard, SmMainApp,
+    NsPasteboard, SmMainApp, SystemBundleTools,
 };
 #[cfg(windows)]
 pub use crate::windows::{

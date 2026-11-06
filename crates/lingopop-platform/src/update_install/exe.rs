@@ -127,7 +127,7 @@ pub fn stage_exe_with(
     }
     let old_hash =
         (ops.identity)(&site.path).ok_or(UpdateError::Install("installed app unreadable"))?;
-    let mut j = Journal {
+    let j = Journal {
         version: version.to_owned(),
         kind: SiteKind::WindowsExe,
         token: token.to_owned(),
@@ -149,14 +149,29 @@ pub fn stage_exe_with(
         ops.rename_noreplace,
         ops.hook,
     );
+    begin_attempt(&ctx, j, &folder)
+}
+
+/// Writes the first `pending` journal, then creates the owned staging folder `folder`
+/// exclusively (0700 on Unix) with its owner marker holding `j.token`, recording it in
+/// `intended` before and in `created` after. Any failure removes what this attempt created and
+/// the journal (nothing has moved). Shared by the exe and the bundle staging.
+pub(crate) fn begin_attempt(
+    ctx: &Ctx<'_>,
+    mut j: Journal,
+    folder: &Path,
+) -> Result<Journal, UpdateError> {
+    let folder = folder.to_owned();
+    let token = j.token.clone();
+    let token = token.as_str();
     ctx.write(&j)?;
 
     if !is_absent(&folder) {
-        return abort(&ctx, &mut j, "staging folder exists");
+        return abort(ctx, &mut j, "staging folder exists");
     }
     j.intended.push(folder.clone());
     if ctx.write(&j).is_err() {
-        return abort(&ctx, &mut j, "update journal could not be written");
+        return abort(ctx, &mut j, "update journal could not be written");
     }
     match create_private_dir(&folder) {
         Ok(()) => {}
@@ -166,23 +181,23 @@ pub fn stage_exe_with(
                 log("update install failed");
                 return Err(UpdateError::Install("update journal could not be written"));
             }
-            return abort(&ctx, &mut j, "staging folder exists");
+            return abort(ctx, &mut j, "staging folder exists");
         }
-        Err(_) => return abort(&ctx, &mut j, "staging folder could not be created"),
+        Err(_) => return abort(ctx, &mut j, "staging folder could not be created"),
     }
     if write_marker(&folder, token).is_err() {
         // The folder is ours (create_dir succeeded) but not yet owned: remove it only if empty.
         let _ = fs::remove_dir(&folder);
-        return abort(&ctx, &mut j, "staging folder could not be created");
+        return abort(ctx, &mut j, "staging folder could not be created");
     }
     j.created.push(folder);
     if ctx.write(&j).is_err() {
-        return abort(&ctx, &mut j, "update journal could not be written");
+        return abort(ctx, &mut j, "update journal could not be written");
     }
     Ok(j)
 }
 
-fn create_private_dir(path: &Path) -> io::Result<()> {
+pub(crate) fn create_private_dir(path: &Path) -> io::Result<()> {
     // `mode` exists on Unix only, so the builder is mutated only there.
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut builder = fs::DirBuilder::new();
@@ -211,7 +226,11 @@ fn write_marker(folder: &Path, token: &str) -> io::Result<()> {
 }
 
 /// Nothing moved: delete this attempt's created paths and the journal.
-fn abort<T>(ctx: &Ctx<'_>, j: &mut Journal, why: &'static str) -> Result<T, UpdateError> {
+pub(crate) fn abort<T>(
+    ctx: &Ctx<'_>,
+    j: &mut Journal,
+    why: &'static str,
+) -> Result<T, UpdateError> {
     log("update install failed");
     let _ = cleanup(ctx, j, Scope::All);
     Err(UpdateError::Install(why))

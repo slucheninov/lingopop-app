@@ -1,5 +1,5 @@
-//! In-app update install: the install site, the update journal, startup recovery and the
-//! Windows exe swap (spec "In-app updates" sections 3 and 4). Portable: no `unsafe`, compiled
+//! In-app update install: the install site, the update journal, startup recovery, the
+//! Windows exe swap and the macOS bundle swap (spec "In-app updates" sections 3, 4 and 5). Portable: no `unsafe`, compiled
 //! on every OS; the no-replace / swap renames come from `src/windows/fs.rs` and
 //! `src/macos/fs.rs` through [`native_rename_noreplace`] / [`native_rename_swap`] and are
 //! injected everywhere, so tests can script failures.
@@ -13,6 +13,7 @@
 //!
 //! Log lines are fixed text, never paths.
 
+mod bundle;
 mod exe;
 mod identity;
 mod journal;
@@ -22,10 +23,16 @@ use std::cell::Cell;
 use std::io;
 use std::path::Path;
 
+pub use bundle::{
+    bundle_staging_folder, bundle_support, bundle_zip_path, install_bundle, install_bundle_with,
+    pinned_requirement, read_bundle_info, stage_bundle, stage_bundle_with, BundleTools, BUNDLE_ID,
+    BUNDLE_NAME, BUNDLE_ZIP_FILE,
+};
 pub use exe::{
     exe_support, install_exe, install_exe_with, old_exe_path, stage_exe, stage_exe_with,
     staged_exe_path, staging_folder, InstallOps,
 };
+pub(crate) use identity::bundle_executable;
 pub use identity::{bundle_identity, file_sha256, identity_for};
 pub use journal::{
     commit_journal, confirm, intend, read_journal, remove_journal, write_journal, Journal, Phase,
@@ -136,15 +143,20 @@ pub enum Step {
     BeforeSecondRename,
     /// After `site` was checked and recorded, right before the staged exe is renamed onto it.
     BeforeStagedRename,
-    /// Before the rollback rename of `old` onto `site`.
+    /// Bundle: after `newHash` and the pre-swap checks, right before the `RENAME_SWAP`.
+    BeforeBundleSwap,
+    /// Bundle: right after the swap succeeded, before the late check.
+    AfterBundleSwap,
+    /// Before the rollback (exe: rename of `old` onto `site`; bundle: the swap back).
     BeforeRollback,
     /// After the rollback rename succeeded, before `oldRestored` is written.
     AfterRollbackMove,
-    /// After `oldRestored` of the rollback was written, before the cleanup.
+    /// After `oldRestored` of the rollback / bundle swap back was written, before the cleanup.
     AfterRollback,
     /// Recovery: after `old` was renamed onto a missing `site`, before `oldRestored` is written.
     AfterRestore,
-    /// Recovery: after the swap-back of a pending swap, before `oldRestored` is written.
+    /// After the swap back of a pending swap (recovery) or after a failed late check (bundle
+    /// install), before `oldRestored` is written.
     AfterSwapBack,
     /// Cleanup: after a file was deleted.
     AfterDelete,
