@@ -42,7 +42,7 @@ For the selected provider:
 
 Fix grammar, Rewrite, Explain and Magic need an AI provider: Claude, OpenAI, Gemini or Grok. Google (Free), Google Translate, DeepL and Microsoft Translator translate only.
 
-If the encrypted key file cannot be read (for example after it was copied from another computer, or on macOS after the keychain item was removed), the form says so and offers **Reset stored secrets**: it clears all stored keys and provider settings so you can enter them again.
+If the encrypted key file cannot be decrypted (for example after it was copied from another computer), LingoPop moves it aside as `secrets.dat.bak-<time>` and starts with no keys: enter them again. On macOS, when the keychain item that holds the encryption key is missing or cannot be read, the file is kept locked instead and the form offers **Reset stored secrets**: it clears all stored keys and provider settings so you can enter them again.
 
 ## Shortcuts
 

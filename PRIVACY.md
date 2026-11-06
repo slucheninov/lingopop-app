@@ -11,13 +11,13 @@ All local data lives in one folder:
 
 In that folder:
 
-- **API keys and provider settings** (base URL, model, referer, region) are stored in `secrets.dat`, encrypted. On Windows the file is protected with Windows DPAPI (current user scope), so only the same Windows user on the same machine can decrypt it. On macOS it is encrypted with AES-256-GCM; the 256-bit key is a random key kept in your login keychain as a non-synchronizable item that stays on this Mac. Both protect the keys at rest; neither is a security boundary against other processes running as your user.
+- **API keys and provider settings** (base URL, model, referer, region) are stored in `secrets.dat`, encrypted. On Windows the file is protected with Windows DPAPI (current user scope), so normally only the same Windows user on the same machine can decrypt it (a roaming profile or a domain DPAPI backup key can also decrypt it). On macOS it is encrypted with AES-256-GCM; the 256-bit key is a random key kept in your login keychain as a non-synchronizable item that stays on this Mac. Both protect the keys at rest; neither is a security boundary against other processes running as your user.
 - **Settings** (active provider, target language, hotkeys, history size limit, etc.) are stored in `settings.json` and `ui.json`. They never contain API keys.
 - **Translation history** (last N entries) is stored in `history.json`. It includes the original text, the result, and metadata (timestamp, operation, provider, target language).
 - **Usage statistics** (token counts per provider and day, never any text) are stored in `usage.json`.
 - **A log file** `lingopop.log` with fixed technical messages (errors, permission states). It never contains your text, clipboard contents or API keys.
 
-Nothing is synced: there is no iCloud, no cloud folder and no account. Every file stays on your computer. You can limit or clear history and reset usage statistics in the app, or delete the whole folder at any time.
+LingoPop syncs nothing itself: there is no iCloud, no cloud folder and no account. Note that system features outside LingoPop, such as a Windows roaming profile, OneDrive folder backup, Time Machine or other backups, may copy the data folder, including the plain-text history. You can limit or clear history and reset usage statistics in the app, or delete the whole folder at any time.
 
 ## Data sent to third parties
 
@@ -53,7 +53,7 @@ When you trigger an operation, LingoPop briefly uses the system clipboard to cap
 
 On Windows, formats that cannot be read immediately (for example delayed-rendering formats) are skipped and not restored; this is logged locally without any clipboard content. On macOS, if the clipboard holds something that cannot be saved and restored exactly (for example a file promise), LingoPop stops the operation and changes nothing.
 
-The temporary clipboard entry that LingoPop writes itself for Replace is marked so they are left out of clipboard history: on Windows it is excluded from Clipboard history (`Win+V`) and the cloud clipboard; on macOS it carries the `org.nspasteboard` transient and concealed markers that clipboard managers honour.
+The temporary clipboard entry that LingoPop writes itself for Replace is marked to be left out of clipboard history: on Windows it is excluded from Clipboard history (`Win+V`) and the cloud clipboard; on macOS it carries the advisory `org.nspasteboard` transient and concealed markers, so it is skipped only by clipboard managers that honour them.
 
 The text you select is copied by the app you are in (LingoPop only presses the copy keys), so that copy carries no LingoPop marker: if you use a clipboard history tool, it may keep the selected text unless the app marks its copies itself.
 

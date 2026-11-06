@@ -12,9 +12,9 @@ You can expect an acknowledgement as soon as the maintainer is able to look at t
 
 ## How API keys are stored
 
-API keys and provider settings are stored only on your computer, in `secrets.dat` inside the app's data folder. They are never synced, never shown again after saving and never written to logs or error messages.
+API keys and provider settings are stored only on your computer, in `secrets.dat` inside the app's data folder. LingoPop never syncs them (system backups or a roaming profile may copy the data folder), never shows them again after saving and never writes them to logs or error messages.
 
-- **Windows:** `%APPDATA%\LingoPop\secrets.dat`, protected with Windows DPAPI (current user scope), so it can only be decrypted by the same Windows user on the same machine.
+- **Windows:** `%APPDATA%\LingoPop\secrets.dat`, protected with Windows DPAPI (current user scope), so normally only the same Windows user on the same machine can decrypt it (a roaming profile or a domain DPAPI backup key can also decrypt it).
 - **macOS:** `~/Library/Application Support/LingoPop-Tauri/secrets.dat`, an authenticated AES-256-GCM container with a random nonce per write. The 256-bit key is generated randomly and kept in your login keychain (service `app.lingopop.tauri.macos`, non-synchronizable, so it is not copied to iCloud Keychain). The files are written with owner-only permissions.
 
 This protects the keys at rest. It does not protect against other processes running as the same user. See [PRIVACY.md](PRIVACY.md) for what the app sends over the network.
