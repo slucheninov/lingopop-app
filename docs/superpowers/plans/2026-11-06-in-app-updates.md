@@ -213,16 +213,16 @@ Nothing in this task is committed except public values.
   - `pub fn install_exe(site: &InstallSite, staged: &Path) -> Result<(), UpdateError>`:
     - it checks the PE machine is AMD64 (the same rule as `scripts/verify-release-assets.py` `pe_machine`), then swaps with rollback;
     - after an `Err`, the original exe is byte-identical at its path.
-  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf }` (serde camelCase, file `update-journal.json` in the data dir).
+  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf, pub scratch: Vec<PathBuf> }` (serde camelCase, file `update-journal.json` in the data dir).
     - `pub fn write_journal(data_dir: &Path, j: &Journal) -> Result<(), UpdateError>` uses core `fsio::atomic_write`.
     - `pub fn remove_journal(data_dir: &Path)`.
   - `pub fn recover(data_dir: &Path, running: &Path) -> Recovery` (`enum Recovery { Nothing, Cleaned, Restored, Kept }`) implements spec section 3 exactly:
     - with no journal it touches nothing;
     - `site` missing and `old` present: restore it;
-    - `site` present: delete `staged` / `old`;
+    - `site` present: delete `staged`, `old` and every `scratch` entry (files, or directories with `remove_dir_all`);
     - it never deletes `running`; such a delete is skipped and the journal kept;
     - errors keep the journal.
-  - `install_exe` takes `data_dir` and writes the journal before the first rename. On a failure or rollback it deletes its files and the journal.
+  - `install_exe` takes `data_dir` and expects the journal Task 7 wrote before the download. On a failure before the first rename, or after a successful rollback, it deletes its files and the journal. When the rollback fails it deletes NOTHING and returns `Err(Install)`: the journal and `<stem>.old.exe` stay for `recover`.
 
 - [ ] **Step 1: Write the failing tests:**
   - `swap_replaces_exe_and_keeps_name`;
@@ -231,6 +231,7 @@ Nothing in this task is committed except public values.
   - `completed_swap_is_cleaned` (journal + old → `Cleaned`, old and journal gone);
   - `running_old_file_is_kept` (`running == old` → `Kept`, journal stays);
   - `failed_stage_leaves_exe_untouched` (non-PE bytes, `Install`);
+  - `failed_rollback_keeps_journal_and_old` is covered by `both_renames_fail_leaves_old_exe_and_journal`, which also asserts nothing was deleted;
   - `both_renames_fail_leaves_old_exe_and_journal` (second rename and rollback both forced to fail → `Err(Install)`, `<stem>.old.exe` holds the original bytes, the journal names it, and `recover` then restores it to the site);
   - `rollback_when_second_rename_fails` (staged path removed between the steps through a test hook `#[doc(hidden)] install_exe_with(.., before_second_rename: impl FnOnce())`);
   - `read_only_folder_is_unsupported` (Unix permissions; ignore on Windows);
@@ -331,6 +332,8 @@ Nothing in this task is committed except public values.
   - `install_is_single_flight`;
   - `cancel_returns_to_available_and_removes_files`;
   - `signature_failure_is_failed_and_installer_not_called`;
+  - `journal_written_before_first_download` (the fake downloader sees the journal on disk, naming its destination in `scratch`);
+  - `cancel_after_download_removes_scratch_and_journal`;
   - `size_mismatch_is_failed` (the downloader returns fewer bytes than `asset_size` → Failed, installer not called, files removed);
   - `unsupported_site_shows_download_only`;
   - `relaunch_after_swap_uses_install_path`;
@@ -339,6 +342,7 @@ Nothing in this task is committed except public values.
   - `progress_events_are_throttled` (at most 10 per second with `ManualClock`).
 - [ ] **Step 2: Run** `cargo test -p lingopop-app update_install`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
+  - BEFORE any download, write the Task 5 `Journal` with `site`, `staged`, `old` and `scratch` = the signature file, the download file and, on macOS, the staging folder.
   - The download goes to a temp file next to the site: Windows `stage_exe`, macOS `<parent>/.LingoPop-update-<v>/download.zip`.
   - The signature is downloaded first, then the asset, then `verify_update(read(file), sig, plan.expected_comment)`, then `Installer::install`.
   - The existing background loop and `SettingsView.latestVersion` stay unchanged.

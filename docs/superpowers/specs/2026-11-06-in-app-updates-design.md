@@ -113,14 +113,14 @@ Core gets pure functions with tests on fixtures:
 - **Cancel.** Cancel is possible while downloading.
 - **Signature first.** The signature file is downloaded first. The asset bytes are verified with `verify_update` before any install step. A failure deletes the staging files.
 - **Temporary files.** The staging location is described per OS below. Leftovers of a previous attempt are removed at startup, but only through the update journal.
-- **Update journal.** Before the first file is created next to the app, the updater writes `update-journal.json` atomically in the data folder (`fsio::atomic_write`).
-  - It names the exact paths of this attempt: `{"version", "site", "staged", "old"}`. `site` is the install path recorded at startup.
+- **Update journal.** Before the first file of an attempt is created (the signature and asset downloads included), the updater writes `update-journal.json` atomically in the data folder (`fsio::atomic_write`).
+  - It names every path this attempt creates or moves: `{"version", "site", "staged", "old", "scratch": [..]}`. `site` is the install path recorded at startup; `scratch` lists the download files and, on macOS, the staging folder `<parent>/.LingoPop-update-<version>/`. Recovery deletes `scratch` entries like `staged` (never `running` or `site`).
   - Startup acts only on this file and never matches names alone, so a user file that happens to be called `<stem>.old.exe` is never touched. Without a journal, startup deletes nothing.
   - **Recovery** (any copy of the app, at startup):
     - `site` is missing and `old` exists: rename `old` back to `site` (it is the previous version), delete `staged` if present, delete the journal, and log `update recovered`.
     - `site` exists: delete `staged` and `old` when present, then the journal. The file or bundle the current process runs from is never deleted: that delete is skipped and the journal stays for the next start.
     - Every error is logged only; the journal then stays so the next start tries again.
-  - A completed update leaves the journal for that cleanup; a failed or cancelled attempt deletes its own files and the journal at once.
+  - A completed update leaves the journal for that cleanup. A failed or cancelled attempt whose files never moved, or whose rollback succeeded, deletes its own files and the journal at once. When a rollback FAILS, nothing is deleted: the journal and the file or bundle it names as `old` stay, so the next start restores them.
 
 ### 4. Windows install (portable exe)
 
