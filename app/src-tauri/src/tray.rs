@@ -192,9 +192,11 @@ pub fn menu_label(text: &str) -> String {
 pub const MENU_ROW_CHARS: usize = 50;
 
 /// One history row: the copied (original) text only, whitespace and control runs collapsed to
-/// one space, cut to `MENU_ROW_CHARS` with `…`. Windows prefixes the first ten rows with the
-/// mnemonic `&1`..`&0`; macOS shows `⌘1`..`⌘0` as native key equivalents instead
-/// (`history_accelerator`), right-aligned by AppKit.
+/// one space, cut to `MENU_ROW_CHARS` with `…`. The quick-pick digit of the first ten rows
+/// sits at the right edge on both systems: Windows appends `\t&1`..`\t&0` (Win32 draws the
+/// text after a tab right-aligned, like the operation chords; the `&` makes the digit the
+/// item's mnemonic, so pressing it in the open menu picks the row); macOS shows `⌘1`..`⌘0` as
+/// native key equivalents (`history_accelerator`), right-aligned by AppKit.
 pub fn menu_row_text(index: usize, original: &str, host: HostKind) -> String {
     let s = original
         .split(|c: char| c.is_whitespace() || c.is_control())
@@ -207,7 +209,7 @@ pub fn menu_row_text(index: usize, original: &str, host: HostKind) -> String {
     }
     let text = menu_label(&out);
     if host == HostKind::Windows && index < 10 {
-        format!("&{} {text}", (index + 1) % 10)
+        format!("{text}\t&{}", (index + 1) % 10)
     } else {
         text
     }
@@ -531,11 +533,11 @@ mod tests {
         let w = HostKind::Windows;
         assert_eq!(
             menu_row_text(0, &"a".repeat(60), w),
-            format!("&1 {}…", "a".repeat(MENU_ROW_CHARS))
+            format!("{}…\t&1", "a".repeat(MENU_ROW_CHARS))
         );
         assert_eq!(menu_row_text(10, "a\r\nb", w), "a b");
         assert_eq!(menu_row_text(10, " a\t \r\nb\0\x07c ", w), "a b c");
-        assert!(menu_row_text(9, "a", w).starts_with("&0 "));
+        assert_eq!(menu_row_text(9, "a", w), "a\t&0");
         assert_eq!(menu_row_text(0, "a", HostKind::Unix), "a");
         assert_eq!(menu_row_text(9, "a", HostKind::Unix), "a");
     }
