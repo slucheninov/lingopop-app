@@ -236,7 +236,7 @@ Core gets pure functions with tests on fixtures:
   The details of the checks:
   - `verify-release-assets.py` learns the three `.minisig` names in the exact file set.
   - Their trusted-comment line must name the matching asset, a text check in Python.
-  - The **cryptographic** verification against the committed public key runs before the draft is created, in the publish job, with a small verifier built from the same `minisign-verify` code. It is either a workspace binary built in the job with `--locked`, or a build leg's artifact checked by its SHA-256. Python's stdlib has no Ed25519. The signing tool is the builder's call: a pinned binary with a checked SHA-256, or the same workspace binary.
+  - The **cryptographic** verification against the committed public key runs before the draft is created, in the publish job, with a small verifier built from the same `minisign-verify` code. It is a workspace binary built with `--locked` in a separate job without secrets; the publish job checks the transferred file's SHA-256 against that job's output (a transfer check, not a trust check) and builds nothing itself. Python's stdlib has no Ed25519. The signing tool is the builder's call: a pinned binary with a checked SHA-256, or the same workspace binary.
   - `SHA256SUMS.txt` lists the `.minisig` files too.
 - **Gatekeeper.** The certificate is untrusted, so the first manual install still needs Open Anyway. The `macos-adhoc` blocks in `docs/INSTALL.md` become "not notarized" blocks, used for both `adhoc` and `selfsigned`.
 - **Docs.**
