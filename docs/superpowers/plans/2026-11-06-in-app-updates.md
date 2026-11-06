@@ -173,7 +173,7 @@ Nothing in this task is committed except public values.
     - `#[doc(hidden)] pub fn for_tests(allowed: &[&str]) -> Self`: allows `http://127.0.0.1`.
   - `pub async fn download(&self, url: &str, max_bytes: u64, dest: &Path, progress: &(dyn Fn(u64, Option<u64>) + Send + Sync)) -> Result<u64, UpdateError>`.
     - It streams with `Response::chunk()` into `dest`, then calls `sync_all`.
-    - It returns the bytes written.
+    - It returns the bytes written. The caller (Task 7) fails with `Download` when the count differs from `UpdatePlan.asset_size`, shorter or longer.
     - It removes `dest` on any error.
     - A redirect outside the allowlist, or more than 5 hops, is `Network`.
     - A body over `max_bytes` is `TooLarge`.
@@ -185,6 +185,7 @@ Nothing in this task is committed except public values.
   - `redirect_to_allowed_host_is_followed`;
   - `redirect_to_foreign_host_is_rejected`;
   - `truncated_or_oversized_body_fails` (dest absent afterwards);
+  - `short_content_length_returns_its_own_count` (`Content-Length` 10 with a plan size of 20 → `Ok(10)`; Task 7 `size_mismatch_is_failed` rejects it);
   - `http_error_fails`;
   - `cancel_removes_partial_file` (drop the future mid-body).
 - [ ] **Step 2: Run** `cargo test -p lingopop-core --test update_download`. Expected: FAIL.
@@ -230,6 +231,7 @@ Nothing in this task is committed except public values.
   - `completed_swap_is_cleaned` (journal + old → `Cleaned`, old and journal gone);
   - `running_old_file_is_kept` (`running == old` → `Kept`, journal stays);
   - `failed_stage_leaves_exe_untouched` (non-PE bytes, `Install`);
+  - `both_renames_fail_leaves_old_exe_and_journal` (second rename and rollback both forced to fail → `Err(Install)`, `<stem>.old.exe` holds the original bytes, the journal names it, and `recover` then restores it to the site);
   - `rollback_when_second_rename_fails` (staged path removed between the steps through a test hook `#[doc(hidden)] install_exe_with(.., before_second_rename: impl FnOnce())`);
   - `read_only_folder_is_unsupported` (Unix permissions; ignore on Windows);
   - `stem_comes_from_running_name` (`LingoPop-0.2.1-windows-x64-portable.exe` → `LingoPop-0.2.1-windows-x64-portable.old.exe`).
@@ -329,6 +331,7 @@ Nothing in this task is committed except public values.
   - `install_is_single_flight`;
   - `cancel_returns_to_available_and_removes_files`;
   - `signature_failure_is_failed_and_installer_not_called`;
+  - `size_mismatch_is_failed` (the downloader returns fewer bytes than `asset_size` → Failed, installer not called, files removed);
   - `unsupported_site_shows_download_only`;
   - `relaunch_after_swap_uses_install_path`;
   - `state_read_returns_ready_after_settings_reopen`;
@@ -401,11 +404,13 @@ Nothing in this task is committed except public values.
     - `MACOS_SIGNING_P12` and `MACOS_SIGNING_P12_PASSWORD` both set → `selfsigned`;
     - only one of them set → fail, naming the missing one;
     - neither set → `adhoc`.
+  - The workflow sets `RELEASE_TAG_RUN=1` only on tag runs AND only when `release-platforms.json` (read with `verify-release-assets.py`'s `read_release_platforms`, which fails closed) has `macosPreview: true`. With `macosPreview: false` the leg still builds and may be `adhoc`.
+  - Tauri's environment: `MACOS_SIGNING_P12` and `MACOS_SIGNING_P12_PASSWORD` are removed from the `tauri build` invocation (`env -u`), exactly like the `APPLE_*` variables today; only the signing step reads them.
   - With `RELEASE_TAG_RUN=1` and the mode not `selfsigned` → fail with the message `tag releases must be signed with the pinned certificate`. The Developer ID path is never chosen when `RELEASE_TAG_RUN=1`.
   - Native checks for `selfsigned`: the imported identity SHA-1 equals `release-signing.json`, and `codesign -d -r-` equals the pinned DR.
 
 - [ ] **Step 1: Write the failing tests:**
-  - mode selection for none / one / both / tag-run (by sourcing the selection function with `PACKAGE_MACOS_SELECT_ONLY=1`, which prints the mode and exits);
+  - mode selection for none / one / both / tag-run with `macosPreview` true (no p12 → fail) and false (no `RELEASE_TAG_RUN`, `adhoc` accepted), and a check that the `tauri build` line in `package-macos.sh` unsets both p12 variables (by sourcing the selection function with `PACKAGE_MACOS_SELECT_ONLY=1`, which prints the mode and exits);
   - `selfsigned` is accepted in `assemble`;
   - `render_notes` for `selfsigned` contains the Open Anyway paragraph but not the ad-hoc re-grant paragraph;
   - `test_committed_install_template_renders_for_every_mode` covers `selfsigned`.
@@ -418,13 +423,13 @@ Nothing in this task is committed except public values.
 
 **Files:**
 - Modify: `scripts/verify-release-assets.py`:
-  - `asset_names` gets the three `.minisig` names;
+  - `asset_names` stays the UNSIGNED build set (used by the build legs and by `assemble`); a new `signed_asset_names` = that set plus the three `.minisig` names, used only by the post-signing check;
   - the manifest lists them;
   - a new check that the trusted-comment line of each `.minisig` is `trusted comment: lingopop-update <asset>`.
 - Modify: `.github/workflows/release.yml` publish job:
-  1. Set up Rust, the pinned toolchain.
-  2. `cargo build -p lingopop-release-tools --release --locked`.
-  3. Download the artifacts.
+  1. (A separate job `build-release-tools`, ubuntu, no secrets, runs before publish: `cargo build -p lingopop-release-tools --release --locked`, uploads the binary as an artifact, and exposes its SHA-256 as a job output.)
+  2. In the publish job: download the tool artifact and compare its SHA-256 with that job output; a mismatch stops the release. The hash only proves the file was not swapped in transit; it does not make the binary or its dependencies trusted. The publish job builds nothing itself.
+  3. Download the build artifacts.
   4. Run `assemble`.
   5. **Pre-signing check:** `verify_assets` on the unsigned set, without `.minisig`, against its manifest.
   6. **Sign** with `UPDATE_SIGNING_KEY` from a temp file (deleted in an `always()` step) and `UPDATE_SIGNING_KEY_PASSWORD`.
