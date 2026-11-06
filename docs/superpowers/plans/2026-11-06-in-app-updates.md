@@ -219,11 +219,12 @@ Nothing in this task is committed except public values.
     - `pub fn remove_journal(data_dir: &Path)`.
   - `pub fn recover(data_dir: &Path, running: &Path) -> Recovery` (`enum Recovery { Nothing, Cleaned, Restored, Kept }`) implements spec section 3 exactly:
     - with no journal it touches nothing;
-    - `site` missing and `old` present: restore it;
+    - `old_restored` takes precedence: once true, `old` is never restored, deleted or treated as the backup;
+    - `site` missing, `old` present and `old_restored` false: restore it; `site` missing with `old_restored` true: touch nothing, keep the journal, log `update recovery failed`;
     - the decision follows spec section 3: `site` is identified by `item_hash(site) == new_hash` (SHA-256 of the exe; on macOS `<CFBundleShortVersionString>:<SHA-256 of Contents/_CodeSignature/CodeResources>:<SHA-256 of the main executable>` (the executable named by `CFBundleExecutable`), the same definition as spec section 3, through an injected identity function), never by position;
     - `Committed` and `site` does not match `new_hash`: delete nothing, keep the journal, return `Kept` and log `update recovery failed`;
     - new at `site` + `Pending`: put the previous version back (Windows: `site`→`staged`, `old`→`site`; macOS: `BundleTools::swap(old, site)` through an injected swap closure), then clean;
-    - `old` outside an owned folder is deleted only when its identity equals `old_hash`; anything else there is kept (log `update leftover kept`);
+    - `old` outside an owned folder is deleted only when `old_restored` is false and its identity equals `old_hash`; anything else there is kept (log `update leftover kept`);
     - `site` matches `old_hash`: delete `staged`, `old` and every `scratch` entry (files, or directories with `remove_dir_all`);
     - `site` matches neither `new_hash` nor `old_hash` (a foreign file, a changed item, unreadable): while `old` exists and `old_restored` is false (it is the backup, whatever its identity) delete nothing, keep the journal, return `Kept`; when `old` no longer exists or `old_restored` is true (set by an atomic rewrite right after every successful move of `old` back onto `site`) remove only the owned staging folder and the journal; log `update recovery failed` in both cases;
     - it never deletes a path that equals or contains `running` (`running.starts_with(path)`); such a delete is skipped and the journal kept;
@@ -261,6 +262,8 @@ Nothing in this task is committed except public values.
   - `change_between_check_and_rename_is_restored_and_closed` (hook swaps the bytes at `site` after the check, then the process "crashes" after the first rename → `recover` moves `old` back to `site`, finds it unknown with no `old` left, removes the staging folder and the journal, `site` keeps the changed bytes);
   - `reused_vacated_old_path_is_kept` (rollback moved `old` back and set `old_restored`, then a foreign file appears at `old` before recovery → `recover` keeps that file, removes the staging folder and the journal);
   - `changed_backup_before_restore_keeps_journal` (`old_restored` false, `old` holds bytes matching neither hash, a foreign file at `site` → `Kept`, `old`, the foreign file and the journal unchanged);
+  - `restored_flag_blocks_restore_of_foreign_old` (`old_restored` true, `site` missing, a foreign file at `old` → it is not moved to `site`, nothing deleted, `Kept`);
+  - `restored_flag_keeps_foreign_old_with_old_bytes` (`old_restored` true, `site` matches `old_hash`, a foreign file at `old` with the same bytes → it survives, staging folder and journal removed);
   - `crash_between_restore_and_flag_is_closed` (`old` moved back, `old_restored` still false, `old` missing → staging folder and journal removed);
   - `unknown_item_at_site_keeps_everything` (`Pending` journal, `site` holds bytes matching neither `old_hash` nor `new_hash` → `Kept`, nothing deleted);
   - `site_collision_before_second_rename_with_successful_rollback_cleans` (the foreign file is gone again before the rollback → the rollback succeeds, then the staged file and the journal are deleted);
