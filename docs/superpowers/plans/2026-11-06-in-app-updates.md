@@ -287,6 +287,7 @@ Nothing in this task is committed except public values.
   - `failed_swap_leaves_app_untouched`;
   - `bundle_outside_applications_swaps_at_its_own_path` (site `~/Apps/LingoPop.app`, an unrelated `/tmp/x/Applications/LingoPop.app` untouched);
   - `failed_late_check_swaps_back`;
+  - `failed_late_check_and_failed_swap_back_is_restored_by_recover` (both swaps fail after the first one → the journal stays `Pending`, and `recover` returns the old bundle to the site);
   - in `macos_update_bundle.rs`: `real_rename_swap_exchanges_two_folders`;
   - in `macos_update_bundle.rs`: `real_codesign_reads_the_adhoc_requirement` (ad-hoc-signed fake bundle → `cdhash`) and `real_verify_rejects_the_pinned_requirement_for_adhoc`.
 - [ ] **Step 2: Run** `cargo test -p lingopop-platform --test update_install_bundle --test macos_update_bundle`. Expected: FAIL.
