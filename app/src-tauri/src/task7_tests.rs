@@ -361,7 +361,7 @@ fn task7_platform_identity_is_separate_and_windows_unchanged() {
     assert_eq!(base["identifier"], "app.lingopop.windows");
     assert_eq!(base["productName"], "LingoPop");
     assert_eq!(mac["identifier"], "app.lingopop.tauri.macos");
-    assert_eq!(mac["productName"], "LingoPop Preview");
+    assert_eq!(mac["productName"], "LingoPop");
     let path = crate::paths::data_dir_from(Some("home".into()));
     assert!(path.ends_with(if cfg!(windows) {
         "LingoPop"

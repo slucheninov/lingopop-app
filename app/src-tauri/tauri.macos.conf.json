@@ -1,6 +1,6 @@
 {
   "identifier": "app.lingopop.tauri.macos",
-  "productName": "LingoPop Preview",
+  "productName": "LingoPop",
   "bundle": {
     "active": true,
     "targets": ["app"],

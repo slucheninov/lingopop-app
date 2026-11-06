@@ -51,7 +51,7 @@ const WINDOWS_ONLY_LITERALS = [
 // windows.json. Same guard as above: each must be a real t() literal, in macos.json, not shared.
 const MACOS_ONLY_LITERALS = [
   "Press a key combo (⌘ / Option)…",
-  "Quit the Swift LingoPop to enable shortcuts in LingoPop Preview.",
+  "Quit the Swift LingoPop to enable these shortcuts.",
   "Suspended while Swift LingoPop is running.",
   "Click a shortcut field, then press a key combination. Use ⌘, Option, Control or Shift plus a key. Esc cancels recording. ✕ removes the shortcut.",
 

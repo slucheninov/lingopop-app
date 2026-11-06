@@ -17,7 +17,7 @@
 #     `beforeBuildCommand` and enables `custom-protocol`), the Mac override
 #     `app/src-tauri/tauri.macos.conf.json` and MACOSX_DEPLOYMENT_TARGET=13.0. Tauri itself never
 #     signs here: the Apple variables are removed from its environment.
-#  5. Sign `LingoPop Preview.app`: ad-hoc `codesign -s - --options runtime --timestamp=none`, or
+#  5. Sign `LingoPop.app`: ad-hoc `codesign -s - --options runtime --timestamp=none`, or
 #     Developer ID with the hardened runtime and a secure timestamp from a temporary keychain,
 #     then notarytool + stapler.
 #  6. Stage DIRECTORY/LingoPop-VERSION-macos-ARCH.zip (ditto, the app only) and .dmg (hdiutil
@@ -66,7 +66,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 
 readonly bundle_id=app.lingopop.tauri.macos
-readonly app_name="LingoPop Preview.app"
+readonly app_name="LingoPop.app"
 readonly min_os=13.0
 readonly name="LingoPop-$version-$slug"
 
@@ -206,7 +206,7 @@ ditto "$app" "$work/dmg/$app_name"
 ln -s /Applications "$work/dmg/Applications"
 created=0
 for attempt in 1 2 3; do
-  if hdiutil create -quiet -volname "LingoPop Preview" -srcfolder "$work/dmg" -fs HFS+ \
+  if hdiutil create -quiet -volname "LingoPop" -srcfolder "$work/dmg" -fs HFS+ \
     -format UDZO -ov "$out/$name.dmg"; then
     created=1
     break

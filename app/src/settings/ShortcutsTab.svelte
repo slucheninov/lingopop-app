@@ -24,7 +24,7 @@
 </script>
 <section>
   {#if view.platform === 'macos' && view.swiftRunning}
-    <p role="status">{t('Quit the Swift LingoPop to enable shortcuts in LingoPop Preview.')}</p>
+    <p role="status">{t('Quit the Swift LingoPop to enable these shortcuts.')}</p>
   {/if}
   {#each rows as row}
     <div class="row">

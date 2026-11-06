@@ -43,7 +43,22 @@ pub fn parse_version(text: &str) -> Version {
     }
 }
 
+/// The version of a stable release tag: `X.Y.Z` with an optional leading `v`
+/// and nothing else. Pre-release (`-alpha.1`, `-preview`, `-rc1`), build
+/// metadata (`+build`) and any other shape is `None`, so the update check
+/// never offers such a release.
+pub fn stable_version(tag: &str) -> Option<String> {
+    let text = tag.strip_prefix('v').unwrap_or(tag);
+    let parts: Vec<&str> = text.split('.').collect();
+    let numeric = |p: &&str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    (parts.len() == 3 && parts.iter().all(numeric)).then(|| text.to_owned())
+}
+
+/// `latest` counts only when it is a stable `X.Y.Z` version.
 pub fn is_newer(latest: &str, current: &str) -> bool {
+    if stable_version(latest).is_none() {
+        return false;
+    }
     let latest = parse_version(latest);
     let current = parse_version(current);
     let l = (latest.major, latest.minor, latest.patch);
@@ -78,9 +93,16 @@ pub async fn fetch_latest_version_with(
         #[derive(Deserialize)]
         struct Release {
             tag_name: String,
+            #[serde(default)]
+            prerelease: bool,
+            #[serde(default)]
+            draft: bool,
         }
         let release: Release = serde_json::from_slice(&bytes).ok()?;
-        Some(parse_tag(&release.tag_name))
+        if release.prerelease || release.draft {
+            return None;
+        }
+        stable_version(&release.tag_name)
     };
     let mut request = pin!(request);
     let mut deadline = pin!(deadline);
@@ -137,6 +159,34 @@ mod tests {
     }
 
     #[test]
+    fn only_stable_versions_count() {
+        for tag in ["v0.3.0", "0.3.0", "v10.20.30"] {
+            assert_eq!(
+                stable_version(tag).as_deref(),
+                Some(tag.trim_start_matches('v'))
+            );
+        }
+        for tag in [
+            "v0.3.0-alpha.1",
+            "0.3.0-preview",
+            "0.3.0-rc1",
+            "0.3.0+build.5",
+            "0.3",
+            "0.3.0.1",
+            "v0.3.x",
+            "vv0.3.0",
+            "",
+            "preview",
+        ] {
+            assert_eq!(stable_version(tag), None, "{tag}");
+        }
+        assert!(!is_newer("0.3.0-preview", "0.2.0"));
+        assert!(!is_newer("0.3.0+build", "0.2.0"));
+        assert!(!is_newer("0.3", "0.2.0"));
+        assert!(is_newer("v0.3.0", "0.2.0"));
+    }
+
+    #[test]
     fn should_check_respects_three_hours() {
         let now = 1_700_000_000.0;
         assert!(should_check(None, now));
@@ -152,7 +202,10 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_latest_reads_tag_name() {
-        let fake = FakeTransport::json(200, r#"{"tag_name":"v0.3.0"}"#);
+        let fake = FakeTransport::json(
+            200,
+            r#"{"tag_name":"v0.3.0","prerelease":false,"draft":false}"#,
+        );
         assert_eq!(fetch_latest_version(&fake).await, Some("0.3.0".into()));
         let requests = fake.requests();
         assert_eq!(requests.len(), 1);
@@ -174,7 +227,16 @@ mod tests {
         );
         let fake = FakeTransport::new(|_| Err(TranslationError::Network("offline".into())));
         assert_eq!(fetch_latest_version(&fake).await, None);
-        for body in ["bad", "{}", r#"{"tag_name":3}"#] {
+        for body in [
+            "bad",
+            "{}",
+            r#"{"tag_name":3}"#,
+            r#"{"tag_name":"v0.3.0","prerelease":true}"#,
+            r#"{"tag_name":"v0.3.0","draft":true}"#,
+            r#"{"tag_name":"v0.3.0-preview"}"#,
+            r#"{"tag_name":"v0.3.0-alpha.1","prerelease":false}"#,
+            r#"{"tag_name":"v0.3.0+build"}"#,
+        ] {
             assert_eq!(
                 fetch_latest_version(&FakeTransport::json(200, body)).await,
                 None

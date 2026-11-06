@@ -6,6 +6,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Changed
+
+- macOS: the app is now called `LingoPop` (was `LingoPop Preview`): `LingoPop.app` in the dmg and zip, in the menu bar and in System Settings. It still has its own bundle identifier and data folder, but it has the same file name as the earlier Swift app, so installing it into Applications replaces that app there. After updating from `LingoPop Preview.app`, delete the old app and grant Accessibility and Screen Recording to `LingoPop` again.
+- The update check offers only stable `X.Y.Z` releases: a release marked pre-release or draft, or a tag with a suffix such as `-alpha.1`, `-preview`, `-rc1` or `+build`, is ignored.
+
 ## [0.2.0] - 2026-11-06
 
 The first stable release of LingoPop for Windows and macOS.
