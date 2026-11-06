@@ -200,7 +200,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: publish-prerelease
+    name: publish-release
     if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: [build, build-macos]
     runs-on: ubuntu-latest
@@ -239,13 +239,18 @@ jobs:
       # again and compared byte for byte with the verified ones, and only then is it published.
       # A failure anywhere leaves at most a draft (never a public release with missing files);
       # delete it by hand before re-running.
-      - name: Assemble, verify and create the draft pre-release
+      - name: Assemble, verify and create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
+          # A version with a SemVer pre-release part (0.3.0-alpha.1) is published as a
+          # pre-release; a plain version (0.3.0) becomes the repository's Latest release, which
+          # /releases/latest (the in-app update check and the README download links) points to.
+          channel=()
+          if [[ "$VERSION" == *-* ]]; then channel=(--prerelease); fi
           # Reads release-platforms.json (fails closed), copies the selected assets into
           # release/, writes and verifies SHA256SUMS.txt, writes notes.md (CHANGELOG section +
           # the Installation section of docs/INSTALL.md) and only then runs gh with the assets.
@@ -257,7 +262,7 @@ jobs:
             --changelog CHANGELOG.md \
             --install docs/INSTALL.md \
             --notes-out notes.md \
-            -- gh release create "$TAG" --draft --prerelease --title "LingoPop $VERSION" --notes-file notes.md
+            -- gh release create "$TAG" --draft "${channel[@]}" --title "LingoPop $VERSION" --notes-file notes.md
       - name: Check the uploaded assets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -276,8 +281,15 @@ jobs:
             cmp -s "$file" "uploaded/$name" || { echo "::error::$name differs from the verified file"; exit 1; }
           done
           (cd uploaded && sha256sum --strict -c SHA256SUMS.txt)
-      - name: Publish the pre-release
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release edit "$TAG" --draft=false --prerelease
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "$VERSION" == *-* ]]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --prerelease=false --latest
+          fi

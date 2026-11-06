@@ -540,11 +540,15 @@ class Verify(Base):
 class Repository(unittest.TestCase):
     def test_release_workflow_publishes_a_checked_draft(self):
         workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        create = workflow.index('gh release create "$TAG" --draft --prerelease')
+        channel = workflow.index('if [[ "$VERSION" == *-* ]]; then channel=(--prerelease); fi')
+        create = workflow.index('gh release create "$TAG" --draft "${channel[@]}"')
         check = workflow.index('gh release download "$TAG" --dir uploaded')
-        publish = workflow.index('gh release edit "$TAG" --draft=false --prerelease')
+        publish_pre = workflow.index('gh release edit "$TAG" --draft=false --prerelease\n')
+        publish_latest = workflow.index('gh release edit "$TAG" --draft=false --prerelease=false --latest')
+        self.assertLess(channel, create)
         self.assertLess(create, check)
-        self.assertLess(check, publish)
+        self.assertLess(check, publish_pre)
+        self.assertLess(check, publish_latest)
         # Every version capture strips a Windows CR.
         captures = re.findall(r"version=\$\(python scripts/check-version.py[^)]*\)", workflow)
         self.assertEqual(len(captures), 5)
