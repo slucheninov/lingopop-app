@@ -55,10 +55,12 @@ impl Allowlist {
         if !url.username().is_empty() || url.password().is_some() {
             return false;
         }
+        // `Url` normalises a default port to `None`, so a bare entry matches only that.
         let with_port = url.port().map(|p| format!("{host}:{p}"));
-        self.entries
-            .iter()
-            .any(|e| *e == host || with_port.as_deref() == Some(e.as_str()))
+        self.entries.iter().any(|e| match url.port() {
+            None => *e == host,
+            Some(_) => with_port.as_deref() == Some(e.as_str()),
+        })
     }
 }
 
@@ -142,12 +144,13 @@ impl UpdateDownloader {
             }
             Err(_) => return Err(UpdateError::Download),
         };
+        // Declared before `file`, so the handle closes before the guard removes the path.
         let mut guard = PartialFile {
             path: dest.to_owned(),
-            file: Some(file),
             keep: false,
         };
-        let written = self.stream(parsed, max_bytes, &mut guard, progress).await?;
+        let mut file = file;
+        let written = self.stream(parsed, max_bytes, &mut file, progress).await?;
         guard.keep = true;
         Ok(written)
     }
@@ -156,7 +159,7 @@ impl UpdateDownloader {
         &self,
         url: Url,
         max_bytes: u64,
-        guard: &mut PartialFile,
+        file: &mut File,
         progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<u64, UpdateError> {
         let mut response = self
@@ -178,11 +181,9 @@ impl UpdateDownloader {
             if received > max_bytes {
                 return Err(UpdateError::TooLarge);
             }
-            let file = guard.file.as_mut().ok_or(UpdateError::Download)?;
             file.write_all(&chunk).map_err(|_| UpdateError::Download)?;
             progress(received, length);
         }
-        let file = guard.file.as_mut().ok_or(UpdateError::Download)?;
         file.flush().map_err(|_| UpdateError::Download)?;
         file.sync_all().map_err(|_| UpdateError::Download)?;
         Ok(received)
@@ -192,15 +193,62 @@ impl UpdateDownloader {
 /// Removes the file this call created unless `keep` was set.
 struct PartialFile {
     path: PathBuf,
-    file: Option<File>,
     keep: bool,
 }
 
 impl Drop for PartialFile {
     fn drop(&mut self) {
-        self.file.take();
         if !self.keep {
             let _ = std::fs::remove_file(&self.path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prod() -> Allowlist {
+        Allowlist {
+            entries: PRODUCTION_HOSTS.iter().map(|h| (*h).to_owned()).collect(),
+            loopback_http: false,
+        }
+    }
+    fn ok(l: &Allowlist, u: &str) -> bool {
+        l.permits(&Url::parse(u).unwrap())
+    }
+
+    #[test]
+    fn production_hosts_and_default_https_port() {
+        let l = prod();
+        assert!(ok(&l, "https://github.com/a"));
+        assert!(ok(&l, "https://GitHub.COM:443/a"));
+        assert!(ok(&l, "https://release-assets.githubusercontent.com/a"));
+        assert!(!ok(&l, "https://github.com:8443/a"));
+    }
+
+    #[test]
+    fn production_refuses_downgrade_userinfo_and_lookalikes() {
+        let l = prod();
+        assert!(!ok(&l, "http://github.com/a"));
+        assert!(!ok(&l, "http://objects.githubusercontent.com/a"));
+        assert!(!ok(&l, "https://user@github.com/a"));
+        assert!(!ok(&l, "https://user:pw@github.com/a"));
+        assert!(!ok(&l, "https://github.com.evil.example/a"));
+        assert!(!ok(&l, "https://evilgithub.com/a"));
+        assert!(!ok(&l, "https://evil.example/github.com"));
+        assert!(!ok(&l, "ftp://github.com/a"));
+    }
+
+    #[test]
+    fn test_list_http_only_for_loopback() {
+        let l = Allowlist {
+            entries: vec!["127.0.0.1:9".into(), "github.com".into()],
+            loopback_http: true,
+        };
+        assert!(ok(&l, "http://127.0.0.1:9/a"));
+        assert!(!ok(&l, "http://127.0.0.1:10/a"));
+        assert!(!ok(&l, "http://github.com/a"));
+        assert!(!ok(&l, "http://user@127.0.0.1:9/a"));
     }
 }

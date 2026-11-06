@@ -227,11 +227,68 @@ async fn cancel_removes_partial_file() {
     let dest = dir.path().join("a.bin");
     let dl = UpdateDownloader::for_tests(&[&addr.to_string()]);
     let seen = AtomicU64::new(0);
+    let notify = tokio::sync::Notify::new();
     let url = format!("http://{addr}/a");
-    let report = |r: u64, _: Option<u64>| seen.store(r, Ordering::SeqCst);
+    let report = |r: u64, _: Option<u64>| {
+        seen.store(r, Ordering::SeqCst);
+        notify.notify_one();
+    };
     let fut = dl.download(&url, 10_000, &dest, &report);
-    // Dropped as soon as the first chunk was reported.
-    let _ = tokio::time::timeout(Duration::from_secs(2), fut).await;
+    // Drop the future as soon as the first progress callback fired.
+    tokio::select! {
+        _ = fut => panic!("download must not finish"),
+        _ = notify.notified() => {}
+    }
     assert_eq!(seen.load(Ordering::SeqCst), 5);
     assert!(!dest.exists());
+}
+
+#[tokio::test]
+async fn bare_entries_match_default_port_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("a.bin");
+    let prod = UpdateDownloader::new();
+    assert_eq!(
+        prod.download("https://github.com:8443/x", 10, &dest, &noop)
+            .await,
+        Err(UpdateError::Network)
+    );
+    let server = MockServer::start().await;
+    let dl = UpdateDownloader::for_tests(&["127.0.0.1"]);
+    assert_eq!(
+        dl.download(&format!("{}/", server.uri()), 10, &dest, &noop)
+            .await,
+        Err(UpdateError::Network)
+    );
+    assert!(server.received_requests().await.unwrap().is_empty());
+    assert!(!dest.exists());
+}
+
+async fn redirect_chain(hops: usize) -> Result<u64, UpdateError> {
+    let server = MockServer::start().await;
+    for i in 0..hops {
+        Mock::given(method("GET"))
+            .and(path(format!("/h{i}")))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", format!("/h{}", i + 1)),
+            )
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("/h{hops}")))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(&b"ok"[..]))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("a.bin");
+    let dl = UpdateDownloader::for_tests(&[&host_port(&server)]);
+    dl.download(&format!("{}/h0", server.uri()), 10, &dest, &noop)
+        .await
+}
+
+#[tokio::test]
+async fn five_redirects_succeed_and_six_fail() {
+    assert_eq!(redirect_chain(5).await, Ok(2));
+    assert_eq!(redirect_chain(6).await, Err(UpdateError::Network));
 }
