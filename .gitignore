@@ -35,3 +35,4 @@ dist/
 *~
 app/.svelte-check/
 __pycache__/
+.planning/
