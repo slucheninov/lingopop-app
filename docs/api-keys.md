@@ -1,11 +1,9 @@
 # Getting an API key for LingoPop
 
-> **Status:** LingoPop for Windows is pre-alpha. This document describes the intended behaviour of the released app; parts of it are not implemented yet. The Settings screens are described as they will ship.
-
 LingoPop does not include any AI or translation service of its own. It sends your text to the provider you choose, using your own API key. An API key is a secret string that identifies your account at that provider.
 
-- Enter keys in LingoPop: tray icon, then **Settings → Providers**, select a provider, paste the key, click **Save**.
-- Keys are stored only on your PC, in a DPAPI-protected file (`%APPDATA%\LingoPop\secrets.dat`). They are never synced anywhere.
+- Enter keys in LingoPop: tray icon (Windows) or menu-bar icon (macOS), then **Settings → Providers**, select a provider, paste the key, click **Save**.
+- Keys are stored only on your computer, encrypted: on Windows in a DPAPI-protected file (`%APPDATA%\LingoPop\secrets.dat`), on macOS in an AES-256-GCM encrypted file (`~/Library/Application Support/LingoPop-Tauri/secrets.dat`) whose key is kept in your login keychain. LingoPop never syncs them anywhere (system backups or a Windows roaming profile may still copy the data folder).
 - Never share a key, post it in an issue, or commit it to a repository. If a key leaks, delete it in the provider's console and create a new one.
 - Providers bill you directly for what you use. LingoPop does not see or charge for it. Where the provider supports it, set a spending limit before you start.
 

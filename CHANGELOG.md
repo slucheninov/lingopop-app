@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0] - 2026-11-06
+
+The first stable release of LingoPop for Windows and macOS.
+
+### Changed
+
+- Releases with a plain version (such as `0.2.0`) are published as the repository's Latest release instead of a pre-release, so **Settings → About → Check for updates**, the background update check and the download links find them (GitHub's latest-release lookup skips pre-releases). Versions with a pre-release part (`-alpha.N`) stay pre-releases.
+- The README is rewritten for people who want to try the app: features, downloads per platform and architecture, Windows and macOS installation, granting Accessibility and Screen Recording, providers, privacy and FAQ.
+- New user guide [docs/settings.md](https://github.com/slucheninov/lingopop-app/blob/main/docs/settings.md) for every Settings tab, the menu, the popup and History.
+- PRIVACY.md, SECURITY.md and docs/api-keys.md now cover macOS (Keychain-protected AES-256-GCM key file, Vision OCR, Accessibility and Screen Recording) and the GitHub update check.
+
 ## [0.2.0-alpha.9] - 2026-11-06
 
 ### Changed

@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import zipfile
 from pathlib import Path
@@ -540,16 +541,52 @@ class Verify(Base):
 class Repository(unittest.TestCase):
     def test_release_workflow_publishes_a_checked_draft(self):
         workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-        create = workflow.index('gh release create "$TAG" --draft --prerelease')
+        channel = workflow.index('if [[ "$VERSION" == *-* ]]; then channel=(--prerelease); fi')
+        create = workflow.index('gh release create "$TAG" --draft "${channel[@]}"')
         check = workflow.index('gh release download "$TAG" --dir uploaded')
-        publish = workflow.index('gh release edit "$TAG" --draft=false --prerelease')
+        publish_pre = workflow.index('gh release edit "$TAG" --draft=false --prerelease\n')
+        publish_latest = workflow.index('gh release edit "$TAG" --draft=false --prerelease=false --latest')
+        self.assertLess(channel, create)
         self.assertLess(create, check)
-        self.assertLess(check, publish)
+        self.assertLess(check, publish_pre)
+        self.assertLess(check, publish_latest)
         # Every version capture strips a Windows CR.
         captures = re.findall(r"version=\$\(python scripts/check-version.py[^)]*\)", workflow)
         self.assertEqual(len(captures), 5)
         for capture in captures:
             self.assertIn("| tr -d '\\r'", capture)
+
+    @staticmethod
+    def _run_block(block, version):
+        """Run a workflow shell block with a recording `gh` stub; return the gh argv lines."""
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = Path(tmp) / "gh"
+            log = Path(tmp) / "gh.log"
+            stub.write_text('#!/bin/sh\necho "$*" >> "$GH_LOG"\n', encoding="utf-8")
+            stub.chmod(0o755)
+            env = {"PATH": f"{tmp}:/usr/bin:/bin", "GH_LOG": str(log), "VERSION": version, "TAG": f"v{version}"}
+            subprocess.run(["bash", "-c", block], env=env, check=True)
+            return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+    @unittest.skipIf(sys.platform == "win32", "runs the workflow bash blocks with a POSIX gh stub")
+    def test_release_channel_follows_the_version(self):
+        workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        channel_line = re.search(r"^ *(channel=\(\)\n *if .*channel=\(--prerelease\); fi)$", workflow, re.M)
+        self.assertIsNotNone(channel_line)
+        channel = textwrap.dedent(channel_line.group(0))
+        create = channel + '\ngh release create "$TAG" --draft "${channel[@]}" --title "LingoPop $VERSION"'
+        publish_start = workflow.index("      - name: Publish the release")
+        publish_run = workflow[workflow.index("run: |", publish_start) + len("run: |"):]
+        publish = textwrap.dedent(publish_run)
+        for version, created, published in (
+            ("0.2.0", "release create v0.2.0 --draft --title LingoPop 0.2.0",
+             "release edit v0.2.0 --draft=false --prerelease=false --latest"),
+            ("0.3.0-alpha.1", "release create v0.3.0-alpha.1 --draft --prerelease --title LingoPop 0.3.0-alpha.1",
+             "release edit v0.3.0-alpha.1 --draft=false --prerelease"),
+        ):
+            with self.subTest(version=version):
+                self.assertEqual(self._run_block(create, version), [created])
+                self.assertEqual(self._run_block(publish, version), [published])
 
     def test_committed_release_platforms_file_is_valid(self):
         self.assertIsNotNone(vra.read_release_platforms(REPO_ROOT / "release-platforms.json"))
