@@ -14,6 +14,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 ### Changed
 
 - The repository now covers both the Windows and the macOS version; README and AGENTS.md describe the shared codebase and the cross-platform plan.
+- Popup header: one font for the whole row and the provider's coloured icon before its name.
+- Tray menu: history rows show only the copied (original) text, cut to 50 characters, and a click copies it back to the clipboard, so the menu works as a clipboard history. The first ten rows have their quick-pick key at the right edge (Windows `1`…`0`, macOS `⌘1`…`⌘0`); rows after the tenth have none.
+- A fresh install keeps 100 history entries (was 10); an existing `settings.json` keeps its saved value.
 - The manual checklist file is removed; release-time manual checks are recorded in the PR instead.
 - CI and every release leg check that `Cargo.toml`, `tauri.conf.json`, `app/package.json` and `app/package-lock.json` carry the same version and that the macOS Tauri override has no `version` (`scripts/check-version.py`).
 
