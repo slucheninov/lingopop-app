@@ -6,6 +6,7 @@ mod ax;
 mod capture;
 mod clipboard;
 mod foreground;
+pub(crate) mod fs;
 mod keys;
 mod last_foreground;
 mod monitors;

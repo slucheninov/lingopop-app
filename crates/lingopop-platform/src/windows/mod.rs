@@ -5,6 +5,7 @@ mod capture;
 mod clipboard;
 mod dpapi;
 mod foreground;
+pub(crate) mod fs;
 mod keys;
 mod last_foreground;
 mod monitors;

@@ -95,6 +95,8 @@ pub use popup_window::NoActivateWindow;
 pub mod system;
 pub use system::SystemInfo;
 
+pub mod update_install;
+
 pub mod overlay;
 pub use overlay::RegionOverlay;
 
