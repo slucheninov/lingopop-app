@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.0-alpha.8] - 2026-11-06
+
 ### Added
 
 - macOS preview builds: each release also carries `LingoPop-<version>-macos-arm64` (Apple silicon) and `-macos-x64` (Intel) as `.dmg` and `.zip` with the menu-bar app `LingoPop Preview` (macOS 13 or newer, ad-hoc signed unless Developer ID secrets are configured). The release notes now end with installation instructions for both platforms ([docs/INSTALL.md](docs/INSTALL.md)).
