@@ -121,7 +121,9 @@ Core gets pure functions with tests on fixtures:
     - It becomes `committed` (rewritten atomically) only after the swap AND every check after it succeeded.
     - Only a `committed` journal means the version at `site` is the one to keep.
   - **Identity, not position.** After the new item passed every check before the swap, its SHA-256 goes into the journal as `newHash`, in an atomic rewrite done before the swap.
-    - The new item is the exe on Windows, or the bundle's main executable `Contents/MacOS/<CFBundleExecutable>` on macOS.
+    - The new item is the exe on Windows.
+    - On macOS it is the bundle's `CFBundleShortVersionString`, which is always the planned version and strictly newer than the running one, plus the SHA-256 of `Contents/_CodeSignature/CodeResources`.
+    - `CodeResources` hashes every file of the bundle, so two different bundles never share it, even when their main executables are identical.
     - Recovery never infers state from which path a bundle sits at. It hashes what is at `site`: equal to `newHash` means "the new version is installed", anything else means "the previous version is installed".
     - A journal without `newHash` means no swap can have happened.
   - **Recovery** (any copy of the app, at startup, and before every new update attempt). Every step is idempotent, so an interrupted recovery is just run again:

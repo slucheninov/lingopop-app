@@ -219,7 +219,7 @@ Nothing in this task is committed except public values.
   - `pub fn recover(data_dir: &Path, running: &Path) -> Recovery` (`enum Recovery { Nothing, Cleaned, Restored, Kept }`) implements spec section 3 exactly:
     - with no journal it touches nothing;
     - `site` missing and `old` present: restore it;
-    - the decision follows spec section 3: `site` is identified by `item_hash(site) == new_hash` (SHA-256 of the exe, or of the bundle's main executable through an injected hasher), never by position;
+    - the decision follows spec section 3: `site` is identified by `item_hash(site) == new_hash` (SHA-256 of the exe; on macOS `<CFBundleShortVersionString>:<SHA-256 of Contents/_CodeSignature/CodeResources>`, through an injected identity function), never by position;
     - new at `site` + `Pending`: put the previous version back (Windows: `site`→`staged`, `old`→`site`; macOS: `BundleTools::swap(old, site)` through an injected swap closure), then clean;
     - `site` present otherwise: delete `staged`, `old` and every `scratch` entry (files, or directories with `remove_dir_all`);
     - it never deletes a path that equals or contains `running` (`running.starts_with(path)`); such a delete is skipped and the journal kept;
@@ -235,6 +235,8 @@ Nothing in this task is committed except public values.
   - `running_old_file_is_kept` (`running == old` → `Kept`, journal stays);
   - `running_bundle_inside_scratch_is_kept` (`Committed` journal, `running` = `<scratch dir>/old.app/Contents/MacOS/LingoPop` → `Kept`, the folder and the journal stay);
   - `crash_before_swap_never_installs_staged` (`Pending`, no `new_hash`, site = old bytes, staged present → site unchanged, staged deleted);
+  - `crash_after_hash_before_swap_never_installs_staged` (`Pending`, `new_hash` set, site = old bytes, staged = new → site unchanged, staged deleted, journal gone);
+  - `bundles_with_identical_executables_are_told_apart` (old and new bundles with the same main executable but a different version and `CodeResources` → identified correctly);
   - `interrupted_recovery_after_swap_back_is_idempotent` (run `recover` with a hook that stops right after the swap-back, then run it again → site keeps the old bytes, the new copy deleted, the journal gone);
   - `failed_stage_leaves_exe_untouched` (non-PE bytes, `Install`);
   - `failed_rollback_keeps_journal_and_old` is covered by `both_renames_fail_leaves_old_exe_and_journal`, which also asserts nothing was deleted;
