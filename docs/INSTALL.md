@@ -40,6 +40,7 @@ LingoPop is published on the [Releases page](https://github.com/slucheninov/ling
 
 - Requires macOS 13 Ventura or newer.
 - Open the `.dmg`, drag **LingoPop** to **Applications**, then eject the disk image. (With the `.zip`: double-click it and move `LingoPop.app` to Applications.) The installed app is `/Applications/LingoPop.app`.
+- **Upgrading from LingoPop Preview** (0.2.0 and earlier): quit LingoPop Preview (menu-bar icon > Quit) and move `/Applications/LingoPop Preview.app` to the Trash before installing; your settings, history and API keys stay. Then grant Accessibility and Screen Recording to **LingoPop**, and remove the old LingoPop Preview entries from those lists in **System Settings > Privacy & Security**.
 <!-- if macos-adhoc -->
 - This build is signed ad hoc, not notarized by Apple, so Gatekeeper blocks the first launch: macOS says it cannot verify the app or check it for malicious software. Close the dialog, then open **System Settings > Privacy & Security** and scroll to **Security**: after one blocked attempt to open the app, an **Open Anyway** button for LingoPop appears there (for about an hour). Click it, confirm with **Open**, and enter your administrator password if macOS asks. On macOS 13 and 14 you can instead Control-click the app in Applications, choose **Open** and confirm. Alternatively, in Terminal: `xattr -dr com.apple.quarantine "/Applications/LingoPop.app"`, then open the app.
 <!-- endif -->

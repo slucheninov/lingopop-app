@@ -80,7 +80,7 @@ Good to know:
 
 ## Install on macOS
 
-1. Download the `.dmg` for your Mac and open it.
+1. Download the `.dmg` for your Mac and open it. **Upgrading from LingoPop Preview** (0.2.0 and earlier)? Quit it and move `/Applications/LingoPop Preview.app` to the Trash first; your settings, history and API keys stay. Grant the permissions again to **LingoPop** (step 5) and remove the old LingoPop Preview entries from those lists.
 2. Drag **LingoPop** into **Applications**, then eject the disk image.
 3. **First launch.** The app is not notarized by Apple, so the first time macOS refuses to open it ("cannot verify that it is free of malware"). Close the dialog, then:
    - open **System Settings → Privacy & Security**, scroll down to **Security** and click **Open Anyway** next to LingoPop (the button appears after one blocked attempt and stays for about an hour), confirm with **Open** and enter your password if asked;
