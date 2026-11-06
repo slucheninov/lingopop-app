@@ -60,3 +60,20 @@ test('history_mounts_and_reads_rows', async () => {
   expect(screen.getByPlaceholderText('Search history')).toBeTruthy();
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('history_list'));
 });
+
+test('settings_reads_again_once_the_change_listener_is_registered', async () => {
+  // A change committed after the first read but before the listener existed would otherwise be missed.
+  let register!: () => void;
+  const registered = new Promise<void>(resolve => { register = resolve; });
+  const { listen } = await import('@tauri-apps/api/event');
+  const original = vi.mocked(listen).getMockImplementation()!;
+  vi.mocked(listen).mockImplementation((async (name: string, callback: (event: { payload: unknown }) => void) => {
+    if (name === 'settings://changed') await registered;
+    return original(name as never, callback as never);
+  }) as unknown as typeof listen);
+  const reads = () => vi.mocked(invoke).mock.calls.filter(([command]) => command === 'settings_get').length;
+  render(Settings);
+  await waitFor(() => expect(reads()).toBe(1));
+  register();
+  await waitFor(() => expect(reads()).toBe(2));
+});
