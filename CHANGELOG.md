@@ -1,15 +1,26 @@
 # Changelog
 
-All notable changes to LingoPop for Windows and macOS are documented here. Each release also has auto-generated notes on the [Releases page](https://github.com/slucheninov/lingopop-app/releases).
+All notable changes to LingoPop are documented here. Each release also has auto-generated notes on the [Releases page](https://github.com/slucheninov/lingopop-app/releases).
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) and the project uses [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## [0.2.0-alpha.8] - 2026-11-06
+
+### Added
+
+- macOS preview builds: each release also carries `LingoPop-<version>-macos-arm64` (Apple silicon) and `-macos-x64` (Intel) as `.dmg` and `.zip` with the menu-bar app `LingoPop Preview` (macOS 13 or newer, ad-hoc signed unless Developer ID secrets are configured). The release notes now end with installation instructions for both platforms ([docs/INSTALL.md](https://github.com/slucheninov/lingopop-app/blob/main/docs/INSTALL.md)).
+- The release is published only after every platform leg succeeded and one combined `SHA256SUMS.txt` was verified against the exact asset set, the executable architectures and the macOS bundle metadata. It is created as a draft and made public only after the uploaded files were downloaded again and matched the verified ones.
+
 ### Changed
 
 - The repository now covers both the Windows and the macOS version; README and AGENTS.md describe the shared codebase and the cross-platform plan.
+- Popup header: one font for the whole row and the provider's coloured icon before its name.
+- Tray menu: history rows show only the copied (original) text, cut to 50 characters, and a click copies it back to the clipboard, so the menu works as a clipboard history. The first ten rows have their quick-pick key at the right edge (Windows `1`…`0`, macOS `⌘1`…`⌘0`); rows after the tenth have none.
+- A fresh install keeps 100 history entries (was 10); an existing `settings.json` keeps its saved value.
 - The manual checklist file is removed; release-time manual checks are recorded in the PR instead.
+- CI and every release leg check that `Cargo.toml`, `tauri.conf.json`, `app/package.json` and `app/package-lock.json` carry the same version and that the macOS Tauri override has no `version` (`scripts/check-version.py`).
 
 ## [0.2.0-alpha.7] - 2026-11-03
 

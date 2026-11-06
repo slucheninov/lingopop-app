@@ -73,8 +73,12 @@
   const onUiPatch = (patch: UiPatch) => mutate(() => updateUi(patch));
 
   onMount(() => {
+    const changed = listen<unknown>('settings://changed', () => { if (!disposed) signal(); });
+    // A change committed between the first read and the registration (the startup update check)
+    // emitted its signal to nobody: read once more as soon as the listener is in place.
+    void changed.then(() => { if (!disposed) signal(); }).catch(() => {});
     const registrations = [
-      listen<unknown>('settings://changed', () => { if (!disposed) signal(); }),
+      changed,
       listen<string>('settings://tab', event => { if (!disposed && isTab(event.payload)) active = event.payload; }),
     ];
     void load();

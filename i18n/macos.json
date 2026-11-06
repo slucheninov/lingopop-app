@@ -129,6 +129,16 @@
     "pl": "Wymagane uprawnienia Nagrywania ekranu",
     "uk": "Потрібен дозвіл «Запис екрана»"
   },
+  "Screen capture failed. Try again.": {
+    "de": "Bildschirmaufnahme fehlgeschlagen. Versuche es erneut.",
+    "pl": "Nie udało się wykonać zrzutu ekranu. Spróbuj ponownie.",
+    "uk": "Не вдалося зробити знімок екрана. Спробуйте ще раз."
+  },
+  "Text recognition failed. Try again.": {
+    "de": "Texterkennung fehlgeschlagen. Versuche es erneut.",
+    "pl": "Rozpoznawanie tekstu nie powiodło się. Spróbuj ponownie.",
+    "uk": "Не вдалося розпізнати текст. Спробуйте ще раз."
+  },
   "Steps:\n1. Open System Settings → Privacy & Security → %@\n2. Make sure LingoPop is in the list and the toggle is ON\n3. Quit LingoPop completely (menu bar → Quit) and relaunch\n\nmacOS only reads the new permission after a full restart of the app.": {
     "de": "Schritte:\n1. Systemeinstellungen → Datenschutz & Sicherheit → %@ öffnen\n2. Sicherstellen, dass LingoPop in der Liste steht und der Schalter EIN ist\n3. LingoPop vollständig beenden (Menüleiste → Beenden) und neu starten\n\nmacOS liest die neue Berechtigung erst nach einem vollständigen Neustart der App.",
     "pl": "Kroki:\n1. Otwórz Ustawienia systemowe → Prywatność i ochrona → %@\n2. Upewnij się, że LingoPop jest na liście, a przełącznik jest WŁĄCZONY\n3. Całkowicie zamknij LingoPop (pasek menu → Wyjdź) i uruchom ponownie\n\nmacOS odczytuje nowe uprawnienie dopiero po pełnym ponownym uruchomieniu aplikacji.",
@@ -158,5 +168,30 @@
     "pl": "Kliknij pole skrótu i naciśnij kombinację klawiszy. Użyj ⌘, Option, Control lub Shift z klawiszem. Esc anuluje nagrywanie. ✕ usuwa skrót.",
     "uk": "Натисніть поле скорочення, а потім комбінацію клавіш. Використовуйте ⌘, Option, Control або Shift із клавішею. Esc скасовує запис. ✕ видаляє скорочення.",
     "de": "Klicke auf ein Kurzbefehlfeld und drücke eine Tastenkombination. Verwende ⌘, Option, Control oder Shift mit einer Taste. Esc bricht die Aufnahme ab. ✕ entfernt den Kurzbefehl."
+  },
+  "Allow LingoPop in System Settings > Login Items to start it at login.": {
+    "de": "Erlaube LingoPop in den Systemeinstellungen > Anmeldeobjekte, damit es bei der Anmeldung startet.",
+    "pl": "Zezwól LingoPop w Ustawieniach systemowych > Elementy logowania, aby uruchamiał się przy logowaniu.",
+    "uk": "Дозвольте LingoPop у Системних налаштуваннях > Елементи входу, щоб він запускався під час входу."
+  },
+  "Open Login Items settings": {
+    "de": "Anmeldeobjekte-Einstellungen öffnen",
+    "pl": "Otwórz ustawienia elementów logowania",
+    "uk": "Відкрити налаштування елементів входу"
+  },
+  "Launch at login isn't available until LingoPop runs from the Applications folder. Move it there and open it again.": {
+    "de": "Beim Anmelden starten ist erst verfügbar, wenn LingoPop aus dem Ordner „Programme“ läuft. Verschiebe die App dorthin und öffne sie erneut.",
+    "pl": "Uruchamianie przy logowaniu będzie dostępne dopiero, gdy LingoPop działa z folderu Programy. Przenieś go tam i otwórz ponownie.",
+    "uk": "Запуск під час входу буде доступний, лише коли LingoPop працює з теки «Програми». Перемістіть його туди й відкрийте знову."
+  },
+  "Launch at login isn't available for this copy of LingoPop. Reinstall it in the Applications folder and open it again.": {
+    "de": "Beim Anmelden starten ist für diese Kopie von LingoPop nicht verfügbar. Installiere die App erneut im Ordner „Programme“ und öffne sie erneut.",
+    "pl": "Uruchamianie przy logowaniu nie jest dostępne dla tej kopii LingoPop. Zainstaluj aplikację ponownie w folderze Programy i otwórz ją ponownie.",
+    "uk": "Запуск під час входу недоступний для цієї копії LingoPop. Встановіть застосунок знову в теку «Програми» й відкрийте його знову."
+  },
+  "Couldn't change Launch at login. Try again.": {
+    "de": "„Beim Anmelden starten“ konnte nicht geändert werden. Versuche es erneut.",
+    "pl": "Nie udało się zmienić ustawienia uruchamiania przy logowaniu. Spróbuj ponownie.",
+    "uk": "Не вдалося змінити запуск під час входу. Спробуйте ще раз."
   }
 }

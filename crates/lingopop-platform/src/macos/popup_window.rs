@@ -138,7 +138,15 @@ fn convert(window: &NSWindow) -> Result<(), PlatformError> {
         return Ok(());
     }
     let name = current.name().to_str().unwrap_or("");
-    if !SWAPPABLE_CLASSES.contains(&name) {
+    let parent = current
+        .superclass()
+        .map(|c| c.name().to_str().unwrap_or(""))
+        .unwrap_or("");
+    if !is_swappable(name, parent) {
+        platform_log(&format!(
+            "popup window class chain: {}",
+            class_chain(current)
+        ));
         return Err(refused("popup window class is not TaoWindow or NSWindow"));
     }
     if !is_subclass(current, NSWindow::class()) {
@@ -149,8 +157,8 @@ fn convert(window: &NSWindow) -> Result<(), PlatformError> {
     }
     let object = (window as *const NSWindow).cast_mut().cast::<AnyObject>();
     // SAFETY: `object` is a live NSWindow on the main thread (the caller holds a Retained).
-    // Its runtime class is exactly `TaoWindow` or `NSWindow` (checked by name above), both
-    // direct NSWindow subclasses (or NSWindow itself). LingoPopPopupPanel derives from NSWindow
+    // Its runtime class is exactly `TaoWindow` or `NSWindow`, or the ivar-free KVO subclass of
+    // one (checked by name above), all NSWindow subclasses (or NSWindow itself). LingoPopPopupPanel derives from NSWindow
     // through NSPanel, adds no ivars and needs no more than the existing allocation (checked
     // above; NSPanel adds no instance storage over NSWindow), so every ivar NSWindow / NSPanel
     // addresses lies inside the allocation and keeps its initialized value. tao's own ivars
@@ -160,6 +168,40 @@ fn convert(window: &NSWindow) -> Result<(), PlatformError> {
         return Err(refused("popup panel class swap failed"));
     }
     Ok(())
+}
+
+/// KVO prefix of the class the Foundation runtime substitutes (isa swizzling) for an object
+/// with key-value observers. WebKit observes the window of every `WKWebView`, so the Tauri
+/// popup window always reaches us as `NSKVONotifying_TaoWindow`.
+const KVO_PREFIX: &str = "NSKVONotifying_";
+
+/// Whether a runtime class `name` (with superclass `parent`) may be swapped to the panel:
+/// exactly an allowlisted class, or the KVO subclass of one (`NSKVONotifying_<X>` whose
+/// superclass is exactly `<X>`). KVO subclasses add no ivars. After the swap the KVO class's
+/// generated setters are gone, so automatic change notifications for keys observed BEFORE the
+/// swap stop (manual ones and later observers still work; the side-table observation info
+/// stays, so removal is unaffected). WebKit only observes `contentLayoutRect` /
+/// `titlebarAppearsTransparent`, which never change on this borderless, fixed panel, and the
+/// window is retained for the life of the process, so KVO's dealloc check never runs.
+fn is_swappable(name: &str, parent: &str) -> bool {
+    if SWAPPABLE_CLASSES.contains(&name) {
+        return true;
+    }
+    match name.strip_prefix(KVO_PREFIX) {
+        Some(base) => base == parent && SWAPPABLE_CLASSES.contains(&base),
+        None => false,
+    }
+}
+
+/// Runtime class names from `class` up to the root (class names, never user data).
+fn class_chain(class: &AnyClass) -> String {
+    let mut names = Vec::new();
+    let mut next = Some(class);
+    while let Some(c) = next {
+        names.push(c.name().to_str().unwrap_or("?").to_owned());
+        next = c.superclass();
+    }
+    names.join(" < ")
 }
 
 fn is_subclass(mut class: &AnyClass, ancestor: &AnyClass) -> bool {
@@ -342,6 +384,27 @@ mod tests {
     #[test]
     fn only_tao_and_plain_windows_are_swappable() {
         assert_eq!(SWAPPABLE_CLASSES, ["TaoWindow", "NSWindow"]);
+    }
+
+    #[test]
+    fn kvo_subclass_of_an_allowlisted_class_is_swappable() {
+        assert!(is_swappable("TaoWindow", "NSWindow"));
+        assert!(is_swappable("NSWindow", "NSResponder"));
+        assert!(is_swappable("NSKVONotifying_TaoWindow", "TaoWindow"));
+        assert!(is_swappable("NSKVONotifying_NSWindow", "NSWindow"));
+    }
+
+    #[test]
+    fn other_classes_and_mismatched_kvo_parents_are_refused() {
+        assert!(!is_swappable("NSPanel", "NSWindow"));
+        assert!(!is_swappable("NSKVONotifying_NSPanel", "NSPanel"));
+        assert!(!is_swappable("NSKVONotifying_TaoWindow", "NSWindow"));
+        assert!(!is_swappable(
+            "NSKVONotifying_TaoWindow",
+            "NSKVONotifying_TaoWindow"
+        ));
+        assert!(!is_swappable("NSKVONotifying_", ""));
+        assert!(!is_swappable("", ""));
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub mod hotkeys;
 pub mod logging;
 #[cfg(target_os = "macos")]
 pub mod macos_main_thread;
+pub mod ocr_warmup;
 pub mod paths;
 pub mod permissions_cmds;
 pub mod picker;
@@ -71,6 +72,10 @@ pub(crate) struct ShellHooks {
     serial: Arc<std::sync::Mutex<()>>,
     /// Newest requested value; an older queued job that lost the race skips its write.
     latest_login: Arc<AtomicBool>,
+    /// The outcome of the last applied update that the user must act on (cleared by a success).
+    login_issue: Arc<std::sync::Mutex<Option<settings_cmds::LoginIssue>>>,
+    /// Called after `login_issue` changed; the shell emits the `settings://changed` signal.
+    on_login_issue: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ShellHooks {
@@ -81,6 +86,8 @@ impl ShellHooks {
             spawn: Arc::new(BlockingLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
             latest_login: Arc::new(AtomicBool::new(false)),
+            login_issue: Arc::new(std::sync::Mutex::new(None)),
+            on_login_issue: None,
         }
     }
 
@@ -93,6 +100,8 @@ impl ShellHooks {
             spawn: Arc::new(InlineLogin),
             serial: Arc::new(std::sync::Mutex::new(())),
             latest_login: Arc::new(AtomicBool::new(false)),
+            login_issue: Arc::new(std::sync::Mutex::new(None)),
+            on_login_issue: None,
         }
     }
 }
@@ -102,6 +111,8 @@ impl SettingsHooks for ShellHooks {
         let login = Arc::clone(&self.login);
         let serial = Arc::clone(&self.serial);
         let latest = Arc::clone(&self.latest_login);
+        let issue = Arc::clone(&self.login_issue);
+        let notify = self.on_login_issue.clone();
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
             Err(_) => {
@@ -111,16 +122,86 @@ impl SettingsHooks for ShellHooks {
         };
         self.latest_login.store(enabled, Ordering::Release);
         self.spawn.spawn_login(Box::new(move || {
-            let _guard = serial
+            let guard = serial
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if latest.load(Ordering::Acquire) != enabled {
                 return;
             }
-            if let Err(error) = login.set_enabled(enabled, &exe) {
-                log::warn!("login item update failed: {error}");
+            let outcome = match login.set_enabled(enabled, &exe) {
+                Ok(()) => None,
+                Err(error) => {
+                    log::warn!("login item update failed: {error}");
+                    settings_cmds::LoginIssue::classify(&error)
+                }
+            };
+            let changed = {
+                let mut current = issue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let changed = *current != outcome;
+                *current = outcome;
+                changed
+            };
+            // The remembered issue is committed; the signal (an event emit) needs no lock.
+            drop(guard);
+            if changed {
+                if let Some(notify) = notify {
+                    notify();
+                }
             }
         }));
+    }
+
+    fn login_issue(&self) -> Option<settings_cmds::LoginIssue> {
+        *self
+            .login_issue
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn recheck_login_issue(&self) {
+        let current = || {
+            *self
+                .login_issue
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        // Cheap exits without touching the platform: only a pending approval can clear here,
+        // and only while launch at login is on.
+        if !self.latest_login.load(Ordering::Acquire)
+            || current() != Some(settings_cmds::LoginIssue::RequiresApproval)
+        {
+            return;
+        }
+        // The same `serial` lock the update jobs hold for their whole run: the read happens
+        // after any earlier `set_enabled` finished and before any later one starts, so a stale
+        // read can never override a newer update's result.
+        let cleared = {
+            let _guard = self
+                .serial
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Re-evaluated under the lock: a toggle or a job may have changed either.
+            if !self.latest_login.load(Ordering::Acquire)
+                || current() != Some(settings_cmds::LoginIssue::RequiresApproval)
+                || self.login.status() != lingopop_platform::LoginItemStatus::Enabled
+            {
+                false
+            } else {
+                *self
+                    .login_issue
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                true
+            }
+        };
+        // Outside `serial`, so the callback (an event emit) can never wait on an update job.
+        if cleared {
+            if let Some(notify) = &self.on_login_issue {
+                notify();
+            }
+        }
     }
 
     fn hotkeys(
@@ -152,6 +233,7 @@ pub fn parse_wait_pid(args: &[String]) -> Option<u32> {
     None
 }
 
+// lifecycle-marker: setup-begin (task5_tests pins what may live between the markers)
 fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "macos")]
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -162,6 +244,12 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     #[cfg(target_os = "macos")]
     if platform.monitors.initialize_on_main_thread().is_err() {
         log::warn!("display topology initialization failed");
+    }
+    // macOS: Vision's first recognition loads its models (tens of seconds); pay it now, off
+    // the gate, so the first Screen Translate does not hit the gate's run deadline.
+    #[cfg(target_os = "macos")]
+    if ocr_warmup::spawn(platform.ocr.clone()).is_err() {
+        log::warn!("ocr warm-up thread could not start");
     }
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let (config, stores, ui) = state::load(&DataPaths::new(data_dir), &platform, clock.clone());
@@ -190,12 +278,14 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     // on macOS this converts the window into the non-activating panel (main thread only).
     let handle = popup_shell::native_handle(&window);
     // macOS: NSEvent dismiss monitors are installed through the main-thread dispatcher.
+    // The region overlay's native windows live on the same dispatcher.
     #[cfg(target_os = "macos")]
-    platform
-        .dismiss
-        .bind_main_thread(Arc::new(macos_main_thread::TauriMacMainThread(
-            app.handle().clone(),
-        )));
+    {
+        let main: Arc<dyn lingopop_platform::MainThread> =
+            Arc::new(macos_main_thread::TauriMacMainThread(app.handle().clone()));
+        platform.dismiss.bind_main_thread(main.clone());
+        platform.overlay.bind_main_thread(main);
+    }
     let popup = Arc::new(ShellPopup::new(
         app.handle().clone(),
         platform.clone(),
@@ -249,6 +339,10 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     hotkey_registry.observe_swift();
     let mut shell_hooks = ShellHooks::new(platform.login_item.clone());
     shell_hooks.hotkeys = Some(hotkey_registry.clone());
+    let events = app.handle().clone();
+    shell_hooks.on_login_issue = Some(Arc::new(move || {
+        let _ = events.emit("settings://changed", ());
+    }));
     let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);
     apply_startup_login(hooks.as_ref(), config.settings().launch_at_login);
     let update_state = Arc::new(updates::UpdateState::new(transport, ui.clone(), clock));
@@ -279,6 +373,7 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     log::info!("LingoPop started");
     Ok(())
 }
+// lifecycle-marker: setup-end
 
 pub fn run() {
     let data_dir = paths::data_dir();
@@ -295,6 +390,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         // Registered first; callbacks only schedule window creation.
+        // lifecycle-marker: single-instance-first
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             windows::open_settings(app, None)
         }))
@@ -307,6 +403,8 @@ pub fn run() {
             settings_cmds::ui_update,
             settings_cmds::ui_bootstrap,
             settings_cmds::open_url,
+            settings_cmds::login_items_open_settings,
+            settings_cmds::login_item_recheck,
             provider_cmds::provider_reset_secrets,
             provider_cmds::provider_state,
             provider_cmds::provider_validate,
@@ -326,6 +424,7 @@ pub fn run() {
             updates::updates_check,
             commands::app_relaunch
         ])
+        // lifecycle-marker: setup-registered
         .setup(move |app| setup(app, &data_dir))
         .build(tauri::generate_context!());
     let app = match app {

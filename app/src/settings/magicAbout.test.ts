@@ -194,7 +194,7 @@ test('superseded_save_response_does_not_restore_the_old_prompt', async () => {
   const reread = deferred<unknown>();
   let reads = 0;
   const area = await openMagic({
-    settings_get: () => (reads++ === 0 ? { ...baseView, magicPrompt: 'old' } : reread.promise),
+    settings_get: () => (reads++ < 2 ? { ...baseView, magicPrompt: 'old' } : reread.promise),
     settings_update: () => update.promise,
   });
   await waitFor(() => expect(area.value).toBe('old'));
@@ -206,7 +206,7 @@ test('superseded_save_response_does_not_restore_the_old_prompt', async () => {
   await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true));
   expect(area.value).toBe('new');
   reread.resolve({ ...baseView, magicPrompt: 'new' });
-  await waitFor(() => expect(calls('settings_get').length).toBe(2));
+  await waitFor(() => expect(calls('settings_get').length).toBe(3));
   await flush();
   expect(area.value).toBe('new');
   expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
@@ -230,7 +230,7 @@ test('clearing_the_text_during_a_save_is_kept', async () => {
   const reread = deferred<unknown>();
   let reads = 0;
   const area = await openMagic({
-    settings_get: () => (reads++ === 0 ? { ...baseView, magicPrompt: '' } : reread.promise),
+    settings_get: () => (reads++ < 2 ? { ...baseView, magicPrompt: '' } : reread.promise),
     settings_update: () => update.promise,
   });
   await fireEvent.input(area, { target: { value: 'new' } });
@@ -242,7 +242,7 @@ test('clearing_the_text_during_a_save_is_kept', async () => {
   await flush();
   expect(area.value).toBe('');
   reread.resolve({ ...baseView, magicPrompt: 'new' });
-  await waitFor(() => expect(calls('settings_get').length).toBe(2));
+  await waitFor(() => expect(calls('settings_get').length).toBe(3));
   await flush();
   expect(area.value).toBe('');
   expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);

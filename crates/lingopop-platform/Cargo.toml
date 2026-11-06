@@ -57,6 +57,8 @@ security-framework = "=3.7.0"
 security-framework-sys = "=2.17.0"
 core-foundation = "=0.10.1"
 core-graphics = "0.25.0"
+# `ForeignType::as_ptr` of core-graphics' `CGImage` (already in the lock through core-graphics).
+foreign-types = "=0.5.0"
 block2 = "0.6.2"
 # proc_pidinfo / proc_bsdinfo for the kernel process start time (macos/procinfo.rs). No std
 # needed; objc2-app-kit already pulls libc in.
@@ -82,6 +84,15 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSResponder",
     "NSRunningApplication",
     "NSWorkspace",
+    # The region overlay window (macos/overlay_window.rs): dim fill, hole, border, size label.
+    "NSAttributedString",
+    "NSBezierPath",
+    "NSColor",
+    "NSCursor",
+    "NSFont",
+    "NSFontDescriptor",
+    "NSShadow",
+    "NSStringDrawing",
 ] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "std",
@@ -93,11 +104,37 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
     "NSValue",
     "block2",
     "NSArray",
+    "NSBundle",
     "NSData",
     "NSDate",
     "NSEnumerator",
+    "NSError",
     "NSObject",
     "NSString",
+] }
+
+# Vision text recognition (macos/ocr.rs). Exact pin, verified in the registry: bindings for
+# VNRecognizeTextRequest / VNImageRequestHandler / VNRecognizedTextObservation, macOS 10.15+
+# (the app floor is 13). Only the needed headers are enabled.
+objc2-vision = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "VNObservation",
+    "VNRecognizeTextRequest",
+    "VNRequest",
+    "VNRequestHandler",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+] }
+
+# Launch at login (macos/service_management.rs): `SMAppService.mainApp`, macOS 13+. Exact pin,
+# verified in the registry: bindings for SMAppService (`mainAppService`, `status`,
+# `registerAndReturnError:`, `unregisterAndReturnError:`, `openSystemSettingsLoginItems`) over
+# objc2 0.6; the crate links the ServiceManagement framework itself.
+objc2-service-management = { version = "=0.3.2", default-features = false, features = [
+    "std",
+    "SMAppService",
+    "objc2",
+    "objc2-foundation",
 ] }
 
 [dev-dependencies]
@@ -111,6 +148,18 @@ harness = false
 # Owner-run real-AppKit popup check: runs on the main thread, skips unless `--ignored`.
 [[test]]
 name = "macos_popup"
+harness = false
+
+# Owner-run real-screen capture check: needs the main thread (monitor topology) and the
+# explicit opt-in below, skips unless `--ignored`.
+[[test]]
+name = "macos_screen"
+harness = false
+
+# Owner-run real-AppKit region overlay check: needs the main thread and real input, skips
+# unless `--ignored`.
+[[test]]
+name = "macos_overlay"
 harness = false
 
 [target.'cfg(windows)'.dev-dependencies]

@@ -22,7 +22,7 @@ export function mockIpc(overrides: Record<string, unknown> = {}): void {
   vi.mocked(invoke).mockImplementation(async (command: string, args?: unknown) => {
     const value = table[command];
     if (typeof value === 'function') return (value as (a: unknown) => unknown)(args);
-    if (typeof value === 'string' && (command === 'app_relaunch' || command.startsWith('permissions_'))) throw value;
+    if (typeof value === 'string' && (command === 'app_relaunch' || command.startsWith('permissions_') || command.startsWith('login_items_'))) throw value;
     if (value instanceof Error) throw value;
     return value;
   });

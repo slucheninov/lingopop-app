@@ -6,7 +6,12 @@ use crate::{
     windows,
 };
 use lingopop_core::{
-    host::HostKind, i18n, languages, operation::AIOperation, settings::Settings, ui_prefs::Language,
+    host::HostKind,
+    hotkey::{Hotkey, Modifier},
+    i18n, languages,
+    operation::AIOperation,
+    settings::Settings,
+    ui_prefs::Language,
 };
 use lingopop_orchestrator::{ConfigSource, StatusSink, TrayStatus, TriggerSource};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -183,26 +188,59 @@ pub fn menu_history_count(settings: &Settings) -> usize {
 pub fn menu_label(text: &str) -> String {
     text.replace('&', "&&")
 }
-pub fn menu_row_text(index: usize, original: &str, translated: &str) -> String {
-    fn side(s: &str) -> String {
-        let s = s
-            .split(|c: char| c.is_whitespace() || c.is_control())
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let mut out: String = s.chars().take(40).collect();
-        if s.chars().count() > 40 {
-            out.push('…');
-        }
-        out
+/// Characters of a history row before the ellipsis.
+pub const MENU_ROW_CHARS: usize = 50;
+
+/// One history row: the copied (original) text only, whitespace and control runs collapsed to
+/// one space, cut to `MENU_ROW_CHARS` with `…`. The quick-pick digit of the first ten rows
+/// sits at the right edge on both systems: Windows appends `\t&1`..`\t&0` (Win32 draws the
+/// text after a tab right-aligned, like the operation chords; the `&` makes the digit the
+/// item's mnemonic, so pressing it in the open menu picks the row); macOS shows `⌘1`..`⌘0` as
+/// native key equivalents (`history_accelerator`), right-aligned by AppKit.
+pub fn menu_row_text(index: usize, original: &str, host: HostKind) -> String {
+    let s = original
+        .split(|c: char| c.is_whitespace() || c.is_control())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut out: String = s.chars().take(MENU_ROW_CHARS).collect();
+    if s.chars().count() > MENU_ROW_CHARS {
+        out.push('…');
     }
-    let text = menu_label(&format!("{} → {}", side(original), side(translated)));
-    if index < 10 {
-        format!("&{} {text}", (index + 1) % 10)
+    let text = menu_label(&out);
+    if host == HostKind::Windows && index < 10 {
+        format!("{text}\t&{}", (index + 1) % 10)
     } else {
         text
     }
 }
+
+/// macOS key equivalent of history row `index`: `Cmd+1`..`Cmd+9`, `Cmd+0` (Swift parity).
+pub fn history_accelerator(index: usize, host: HostKind) -> Option<String> {
+    (host == HostKind::Unix && index < 10).then(|| format!("Cmd+{}", (index + 1) % 10))
+}
+
+/// macOS key equivalent shown beside an operation (muda accelerator syntax; the key is the
+/// W3C `KeyboardEvent.code` that muda parses too). `None` on Windows, where the label carries
+/// the chord after a tab instead.
+pub fn hotkey_accelerator(hotkey: &Hotkey, host: HostKind) -> Option<String> {
+    if host != HostKind::Unix || !hotkey.is_valid() {
+        return None;
+    }
+    let mut parts: Vec<&str> = hotkey
+        .modifiers
+        .iter()
+        .map(|m| match m {
+            Modifier::Ctrl => "Control",
+            Modifier::Alt => "Alt",
+            Modifier::Shift => "Shift",
+            Modifier::Win => "Cmd",
+        })
+        .collect();
+    parts.push(&hotkey.key);
+    Some(parts.join("+"))
+}
+
 fn target_items(current: &str) -> Vec<String> {
     let mut langs: Vec<String> = languages::quick_list()
         .into_iter()
@@ -243,7 +281,7 @@ impl TrayController {
                         if let Some(entry) = entry {
                             if state
                                 .orchestrator
-                                .write_clipboard(entry.translated)
+                                .write_clipboard(entry.original)
                                 .await
                                 .is_err()
                             {
@@ -288,15 +326,13 @@ impl TrayController {
         let state = self.app.state::<ShellState>();
         let settings = state.config.settings();
         let menu = Menu::new(&self.app)?;
-        let add = |id: &str, label: &str, enabled: bool| -> tauri::Result<()> {
-            menu.append(&MenuItem::with_id(
-                &self.app,
-                id,
-                label,
-                enabled,
-                None::<&str>,
-            )?)
-        };
+        let host = crate::state::HOST;
+        // Tauri drops an accelerator muda cannot parse (only the shortcut text is lost).
+        let add_with =
+            |id: &str, label: &str, enabled: bool, accel: Option<&str>| -> tauri::Result<()> {
+                menu.append(&MenuItem::with_id(&self.app, id, label, enabled, accel)?)
+            };
+        let add = |id: &str, label: &str, enabled: bool| add_with(id, label, enabled, None);
         let t = |key: &str| i18n::t(self.language, key, &[]);
         add(
             "header",
@@ -309,20 +345,28 @@ impl TrayController {
             add("empty", &t("No recent translations"), false)?;
         }
         for (i, e) in entries.iter().take(count).enumerate() {
-            add(
+            add_with(
                 &format!("hist:{}", e.id),
-                &menu_row_text(i, &e.original, &e.translated),
+                &menu_row_text(i, &e.original, host),
                 true,
+                history_accelerator(i, host).as_deref(),
             )?;
         }
         menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
         for op in AIOperation::ALL {
             let mut label = t(op.english_name());
-            if let Some(h) = settings.hotkeys.get(&op) {
+            let hotkey = settings.hotkeys.get(&op);
+            let accel = hotkey.and_then(|h| hotkey_accelerator(h, host));
+            if let (Some(h), HostKind::Windows) = (hotkey, host) {
                 label.push('\t');
-                label.push_str(&h.display_for(crate::state::HOST));
+                label.push_str(&h.display_for(host));
             }
-            add(&format!("op:{}", op.raw_value()), &label, true)?;
+            add_with(
+                &format!("op:{}", op.raw_value()),
+                &label,
+                true,
+                accel.as_deref(),
+            )?;
         }
         menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
         let target = Submenu::new(
@@ -345,15 +389,16 @@ impl TrayController {
             )?)?;
         }
         menu.append(&target)?;
-        for (id, key) in [
-            ("history", "History…"),
-            ("settings", "Settings…"),
-            ("about", "About LingoPop"),
+        let mac = host == HostKind::Unix;
+        for (id, key, accel) in [
+            ("history", "History…", mac.then_some("Cmd+H")),
+            ("settings", "Settings…", mac.then_some("Cmd+Comma")),
+            ("about", "About LingoPop", None),
         ] {
-            add(id, &t(key), true)?;
+            add_with(id, &t(key), true, accel)?;
         }
         menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
-        add("quit", &t("Quit LingoPop"), true)?;
+        add_with("quit", &t("Quit LingoPop"), true, mac.then_some("Cmd+Q"))?;
         self.tray.set_menu(Some(menu))
     }
 }
@@ -484,20 +529,65 @@ mod tests {
         assert_eq!(menu_history_count(&s), 5);
     }
     #[test]
-    fn menu_row_text_truncates_and_mnemonics() {
+    fn menu_row_text_shows_only_the_original_truncated() {
+        let w = HostKind::Windows;
         assert_eq!(
-            menu_row_text(0, &"a".repeat(50), " b\nc "),
-            format!("&1 {}… → b c", "a".repeat(40))
+            menu_row_text(0, &"a".repeat(60), w),
+            format!("{}…\t&1", "a".repeat(MENU_ROW_CHARS))
         );
-        assert_eq!(menu_row_text(10, "a\r\nb", "c\td"), "a b → c d");
-        assert_eq!(menu_row_text(10, " a\t \r\nb ", "c\0\x07d"), "a b → c d");
-        assert!(menu_row_text(9, "a", "b").starts_with("&0 "));
-        assert_eq!(menu_row_text(10, "a", "b"), "a → b");
+        assert_eq!(menu_row_text(10, "a\r\nb", w), "a b");
+        assert_eq!(menu_row_text(10, " a\t \r\nb\0\x07c ", w), "a b c");
+        assert_eq!(menu_row_text(9, "a", w), "a\t&0");
+        assert_eq!(menu_row_text(0, "a", HostKind::Unix), "a");
+        assert_eq!(menu_row_text(9, "a", HostKind::Unix), "a");
+    }
+    #[test]
+    fn mac_history_rows_get_cmd_digits() {
+        assert_eq!(
+            history_accelerator(0, HostKind::Unix).as_deref(),
+            Some("Cmd+1")
+        );
+        assert_eq!(
+            history_accelerator(9, HostKind::Unix).as_deref(),
+            Some("Cmd+0")
+        );
+        assert_eq!(history_accelerator(10, HostKind::Unix), None);
+        assert_eq!(history_accelerator(0, HostKind::Windows), None);
+    }
+    #[test]
+    fn hotkey_accelerators_are_mac_only_and_parse() {
+        let h = Hotkey::new("KeyT", vec![Modifier::Alt]);
+        assert_eq!(
+            hotkey_accelerator(&h, HostKind::Unix).as_deref(),
+            Some("Alt+KeyT")
+        );
+        assert_eq!(hotkey_accelerator(&h, HostKind::Windows), None);
+        let all = Hotkey::new(
+            "Digit1",
+            vec![
+                Modifier::Ctrl,
+                Modifier::Alt,
+                Modifier::Shift,
+                Modifier::Win,
+            ],
+        );
+        let accel = hotkey_accelerator(&all, HostKind::Unix).unwrap();
+        for a in [
+            accel.as_str(),
+            "Alt+KeyT",
+            "Cmd+1",
+            "Cmd+0",
+            "Cmd+H",
+            "Cmd+Comma",
+            "Cmd+Q",
+        ] {
+            assert!(a.parse::<muda::accelerator::Accelerator>().is_ok(), "{a}");
+        }
     }
     #[test]
     fn menu_label_escapes_ampersand() {
         assert_eq!(menu_label("Rock & Roll"), "Rock && Roll");
-        assert!(menu_row_text(0, "A & B", "C").contains("A && B → C"));
+        assert!(menu_row_text(0, "A & B", HostKind::Windows).contains("A && B"));
     }
     #[test]
     fn target_items_put_current_first_when_not_quick() {

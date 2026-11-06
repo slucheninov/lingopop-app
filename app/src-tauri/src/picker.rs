@@ -19,13 +19,17 @@ impl OverlayPicker {
 #[async_trait]
 impl RegionPicker for OverlayPicker {
     async fn pick(&self) -> Result<Option<Rect>, PlatformError> {
+        Ok(self.pick_with_revision().await?.map(|(rect, _)| rect))
+    }
+
+    async fn pick_with_revision(&self) -> Result<Option<(Rect, Option<u64>)>, PlatformError> {
         let (tx, rx) = crossbeam_channel::bounded(1);
         let done = self.done.clone().lock_owned().await;
         let overlay = self.overlay.clone();
         let task = tauri::async_runtime::spawn_blocking(move || {
             // The worker owns the lock even when its awaiting future is aborted.
             let _done = done;
-            overlay.pick(rx)
+            overlay.pick_with_revision(rx)
         });
         let out = task.await.map_err(|_| PlatformError::Os {
             api: "overlay worker join",
@@ -102,5 +106,67 @@ mod tests {
         wait_for(|| overlay.active() == 0).await;
         assert_eq!(overlay.picks(), 3);
         assert_eq!(overlay.max_active(), 1);
+    }
+    /// The real Mac lifecycle (`MacOverlay`) over a fake native backend, driven through the
+    /// shell bridge: an aborted pick keeps the serial guard until the native cleanup finished.
+    #[tokio::test]
+    async fn aborted_pick_restart_waits_for_native_cleanup() {
+        use lingopop_platform::fake::{FakeMainThread, FakeOverlayBackend, FakeSleeper};
+        use lingopop_platform::macos_geometry::{
+            MacDisplay, MacGeometry, NativeRect, TopologyCache,
+        };
+        use lingopop_platform::macos_overlay::MacOverlay;
+        let bounds = NativeRect::new(0.0, 0.0, 1440.0, 900.0);
+        let cache = TopologyCache::new(
+            MacGeometry::new(
+                1,
+                900.0,
+                vec![MacDisplay {
+                    id: 1,
+                    desktop_bounds: bounds,
+                    work_area: bounds,
+                    backing_scale: 1.0,
+                    primary: true,
+                }],
+            )
+            .unwrap(),
+        );
+        let main = FakeMainThread::new();
+        let backend = FakeOverlayBackend::new();
+        let overlay = Arc::new(MacOverlay::new(
+            backend.clone(),
+            Arc::new(cache),
+            Arc::new(FakeSleeper::new()),
+        ));
+        overlay.bind_main_thread(main.clone());
+        let pump = {
+            let m = main.clone();
+            std::thread::spawn(move || m.pump())
+        };
+        backend.hold_cleanup(true);
+        let picker = Arc::new(OverlayPicker::new(overlay));
+        let first = {
+            let picker = picker.clone();
+            tokio::spawn(async move { picker.pick().await })
+        };
+        wait_for(|| backend.creates() == 1).await;
+        first.abort(); // dropping the future drops the cancel sender
+        let _ = first.await;
+        backend.wait_for_cleanups_started(1);
+        let second = {
+            let picker = picker.clone();
+            tokio::spawn(async move { picker.pick().await })
+        };
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(backend.creates(), 1, "no second overlay during cleanup");
+        backend.hold_cleanup(false);
+        wait_for(|| backend.creates() == 2).await;
+        assert_eq!(backend.max_native(), 1);
+        assert!(backend.cleanup_seq(1).unwrap() < backend.create_seq(2).unwrap());
+        second.abort();
+        let _ = second.await;
+        wait_for(|| backend.native_active() == 0).await;
+        main.close();
+        pump.join().unwrap();
     }
 }

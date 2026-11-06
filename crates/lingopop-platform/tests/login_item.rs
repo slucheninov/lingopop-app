@@ -20,3 +20,13 @@ fn fake_login_item_records_calls() {
     item.set_enabled(false, &exe).expect("disable");
     assert_eq!(item.calls(), vec![(true, exe.clone()), (false, exe)]);
 }
+
+#[test]
+fn fake_login_item_records_open_settings_and_can_fail_it() {
+    let item = FakeLoginItem::new();
+    item.open_settings().expect("open");
+    assert_eq!(item.settings_opened(), 1);
+    item.fail_next();
+    assert!(item.open_settings().is_err());
+    assert_eq!(item.settings_opened(), 2);
+}

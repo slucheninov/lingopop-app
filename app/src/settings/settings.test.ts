@@ -5,7 +5,7 @@ import Settings from './Settings.svelte';
 import History from '../history/History.svelte';
 import { bootstrap } from '../lib/bootstrap';
 import { setLanguage, t } from '../lib/i18n';
-import { baseBootstrap, listeners, mockIpc } from './testSupport';
+import { baseBootstrap, baseView, listeners, mockIpc } from './testSupport';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
@@ -59,4 +59,26 @@ test('history_mounts_and_reads_rows', async () => {
   render(History);
   expect(screen.getByPlaceholderText('Search history')).toBeTruthy();
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('history_list'));
+});
+
+test('settings_reads_again_once_the_change_listener_is_registered', async () => {
+  // A change committed after the first read but before the listener existed would otherwise be missed.
+  let register!: () => void;
+  const registered = new Promise<void>(resolve => { register = resolve; });
+  const { listen } = await import('@tauri-apps/api/event');
+  // The second read sees the change; the view must show it.
+  let served = 0;
+  mockIpc({ settings_get: () => (served++ === 0 ? baseView : { ...baseView, maxHistoryCount: 77 }) });
+  const original = vi.mocked(listen).getMockImplementation()!;
+  vi.mocked(listen).mockImplementation((async (name: string, callback: (event: { payload: unknown }) => void) => {
+    if (name === 'settings://changed') await registered;
+    return original(name as never, callback as never);
+  }) as unknown as typeof listen);
+  const reads = () => vi.mocked(invoke).mock.calls.filter(([command]) => command === 'settings_get').length;
+  render(Settings);
+  await waitFor(() => expect(reads()).toBe(1));
+  expect(await screen.findByDisplayValue(String(baseView.maxHistoryCount))).toBeTruthy();
+  register();
+  await waitFor(() => expect(reads()).toBe(2));
+  expect(await screen.findByDisplayValue('77')).toBeTruthy();
 });

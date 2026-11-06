@@ -62,7 +62,9 @@ impl Default for Settings {
             hotkeys: BTreeMap::from([(AIOperation::Translate, Hotkey::default_translate())]),
             launch_at_login: false,
             max_input_chars: 5000,
-            max_history_count: 10,
+            // Deviation from the mac default (10): the history doubles as a clipboard history
+            // to return to, so a fresh install keeps the maximum the settings allow.
+            max_history_count: 100,
             menu_history_count: 10,
             use_auto_detect: false,
             language_pairs: [
@@ -298,7 +300,7 @@ mod tests {
         );
         assert!(!s.launch_at_login);
         assert_eq!(s.max_input_chars, 5000);
-        assert_eq!(s.max_history_count, 10);
+        assert_eq!(s.max_history_count, 100);
         assert_eq!(s.menu_history_count, 10);
         assert!(!s.use_auto_detect);
         assert_eq!(
@@ -373,7 +375,7 @@ mod tests {
             r#"{"activeProvider":"Bogus","maxHistoryCount":-5,"targetLanguage":"German","useAutoDetect":"yes"}"#,
         );
         assert_eq!(s.active_provider, ProviderType::GoogleFree);
-        assert_eq!(s.max_history_count, 10);
+        assert_eq!(s.max_history_count, 100);
         assert_eq!(s.target_language, "German");
         assert!(!s.use_auto_detect);
     }

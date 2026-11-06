@@ -143,6 +143,19 @@ fn rig_gated(
     fallbacks: &[(ProviderType, ProviderType)],
     gate: GateTimeouts,
 ) -> Rig {
+    rig_with_picker(pick, ocr, transport, keys_for, fallbacks, gate, None)
+}
+
+/// `custom` replaces the scripted `FakePicker` inside `Deps` (the `Rig.picker` stays unused).
+fn rig_with_picker(
+    pick: Result<Option<Rect>, PlatformError>,
+    ocr: Result<OcrText, PlatformError>,
+    transport: Arc<dyn Transport>,
+    keys_for: &[ProviderType],
+    fallbacks: &[(ProviderType, ProviderType)],
+    gate: GateTimeouts,
+    custom: Option<Arc<dyn lingopop_orchestrator::RegionPicker>>,
+) -> Rig {
     let sleeper = Arc::new(FakeSleeper::new());
     let clip = FakeClipboard::new(sleeper.clone());
     let keys = FakeKeys::new(clip.clone(), sleeper.clone());
@@ -205,7 +218,7 @@ fn rig_gated(
         log: Some(Arc::new(move |line| {
             log_lines.lock().unwrap().push(line.to_string())
         })),
-        picker: picker.clone(),
+        picker: custom.unwrap_or_else(|| picker.clone()),
     });
     Rig {
         logs,
@@ -421,6 +434,153 @@ async fn ocr_unavailable_message() {
     let m = last_model(&r);
     assert_eq!(error_key(&m), KEY_OCR_UNAVAILABLE);
     assert!(!m.retry_providers.is_empty());
+}
+
+#[tokio::test]
+async fn ocr_native_failure_names_the_recognition_stage_on_macos() {
+    let r = rig(
+        Err(PlatformError::Os {
+            api: "VNImageRequestHandler.performRequests",
+            code: 0,
+        }),
+        ok_transport(),
+    );
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_TEXT_RECOGNITION_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    // The vision retry stays on offer: a different provider may still read the image.
+    assert!(!m.retry_providers.is_empty());
+}
+
+#[tokio::test]
+async fn capture_native_failure_names_the_capture_stage_on_macos() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    // A display layout that changed during the capture (macOS adapter) or any native failure.
+    r.capture.fail_next(PlatformError::Os {
+        api: "display topology changed",
+        code: 0,
+    });
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_SCREEN_CAPTURE_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    assert_ne!(
+        error_key(&m),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL,
+        "a failed capture is not a too-small selection"
+    );
+    assert_eq!(r.capture.regions().len(), 1, "the capture was attempted");
+}
+
+#[tokio::test]
+async fn the_pick_revision_travels_to_the_capture() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.picker.set_revision(Some(7));
+    r.capture.set_live_revision(Some(7));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(r.capture.revisions(), vec![Some(7)]);
+    assert_eq!(
+        r.ocr.threads.lock().unwrap().len(),
+        1,
+        "capture succeeded, OCR ran"
+    );
+}
+
+#[tokio::test]
+async fn a_topology_change_between_pick_and_capture_fails_the_capture() {
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.picker.set_revision(Some(7));
+    r.capture.set_live_revision(Some(8)); // the layout changed after the pick
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_SCREEN_CAPTURE_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    assert_ne!(
+        error_key(&m),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL
+    );
+    assert_eq!(r.capture.topology_checks(), vec![Some(7)]);
+    assert!(
+        r.capture.regions().is_empty(),
+        "the stale pick is refused before any capture"
+    );
+    assert!(
+        r.ocr.threads.lock().unwrap().is_empty(),
+        "no OCR of a stale rect"
+    );
+}
+
+#[tokio::test]
+async fn a_stale_pick_outside_the_current_monitors_is_still_a_failed_capture() {
+    // The pick was on a display that is gone: its rect lies outside every current monitor, so
+    // clipping alone would say InvalidRegion ("selection too small"). The revision wins.
+    let outside = Rect::new(5000, 4000, 200, 50);
+    let r = rig_full(
+        Ok(Some(outside)),
+        ocr_ok(OCR_TEXT),
+        ok_transport(),
+        &KEYED,
+        &[],
+    );
+    r.picker.set_revision(Some(7));
+    r.capture.set_live_revision(Some(8));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    let m = last_model(&r);
+    let expected = if cfg!(target_os = "macos") {
+        lingopop_orchestrator::messages::KEY_SCREEN_CAPTURE_FAILED
+    } else {
+        lingopop_orchestrator::messages::KEY_PLATFORM_GENERIC
+    };
+    assert_eq!(error_key(&m), expected);
+    assert_ne!(
+        error_key(&m),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL
+    );
+    assert_eq!(r.capture.topology_checks(), vec![Some(7)]);
+    assert!(r.capture.regions().is_empty(), "zero native capture calls");
+    assert!(r.ocr.threads.lock().unwrap().is_empty(), "zero OCR calls");
+}
+
+#[tokio::test]
+async fn an_outside_pick_without_a_revision_is_still_a_small_selection() {
+    // Windows / None path unchanged: clipping decides.
+    let outside = Rect::new(5000, 4000, 200, 50);
+    let r = rig_full(
+        Ok(Some(outside)),
+        ocr_ok(OCR_TEXT),
+        ok_transport(),
+        &KEYED,
+        &[],
+    );
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(
+        error_key(&last_model(&r)),
+        lingopop_orchestrator::messages::KEY_SELECTION_TOO_SMALL
+    );
+    assert!(r.capture.regions().is_empty());
+}
+
+#[tokio::test]
+async fn a_pick_without_a_revision_captures_unchecked() {
+    // Windows: no revision to carry.
+    let r = rig(ocr_ok(OCR_TEXT), ok_transport());
+    r.capture.set_live_revision(Some(8));
+    r.orch.trigger(AIOperation::ScreenTranslate).await;
+    assert_eq!(r.capture.revisions(), vec![None]);
+    assert_eq!(r.ocr.threads.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -851,4 +1011,127 @@ async fn second_screen_translate_cancels_first_pick() {
     r.orch.close().await;
     first.await.unwrap();
     second.await.unwrap();
+}
+
+/// The orchestrator over the REAL macOS overlay lifecycle (`MacOverlay`) on a fake native
+/// backend: a second Screen Translate cancels the first pick, and the second overlay is
+/// created only after the first one's native cleanup finished (never two native overlays).
+mod mac_overlay_lifecycle {
+    use super::*;
+    use async_trait::async_trait;
+    use lingopop_orchestrator::RegionPicker;
+    use lingopop_platform::fake::{FakeMainThread, FakeOverlayBackend};
+    use lingopop_platform::macos_geometry::{MacDisplay, MacGeometry, NativeRect, TopologyCache};
+    use lingopop_platform::macos_overlay::MacOverlay;
+    use lingopop_platform::RegionOverlay;
+
+    /// Bridges the blocking overlay like the shell's `OverlayPicker`: one serial guard held by
+    /// the blocking worker, the cancel sender dropped when the awaiting future is dropped.
+    struct BridgePicker {
+        overlay: Arc<dyn RegionOverlay>,
+        done: Arc<tokio::sync::Mutex<()>>,
+    }
+    #[async_trait]
+    impl RegionPicker for BridgePicker {
+        async fn pick(&self) -> Result<Option<Rect>, PlatformError> {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let guard = self.done.clone().lock_owned().await;
+            let overlay = self.overlay.clone();
+            let out = tokio::task::spawn_blocking(move || {
+                let _guard = guard;
+                overlay.pick(rx)
+            })
+            .await
+            .map_err(|_| PlatformError::Os {
+                api: "overlay worker join",
+                code: 0,
+            })?;
+            drop(tx);
+            out
+        }
+    }
+
+    async fn wait(f: impl Fn() -> bool) {
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !f() {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn restarted_screen_translate_waits_for_overlay_cleanup() {
+        let bounds = NativeRect::new(0.0, 0.0, 1920.0, 1080.0);
+        let cache = TopologyCache::new(
+            MacGeometry::new(
+                1,
+                1080.0,
+                vec![MacDisplay {
+                    id: 1,
+                    desktop_bounds: bounds,
+                    work_area: bounds,
+                    backing_scale: 1.0,
+                    primary: true,
+                }],
+            )
+            .unwrap(),
+        );
+        let main = FakeMainThread::new();
+        let backend = FakeOverlayBackend::new();
+        let overlay = Arc::new(MacOverlay::new(
+            backend.clone(),
+            Arc::new(cache),
+            Arc::new(FakeSleeper::new()),
+        ));
+        overlay.bind_main_thread(main.clone());
+        let pump = {
+            let m = main.clone();
+            std::thread::spawn(move || m.pump())
+        };
+        backend.hold_cleanup(true);
+        let picker = Arc::new(BridgePicker {
+            overlay,
+            done: Arc::new(tokio::sync::Mutex::new(())),
+        });
+        let r = rig_with_picker(
+            Ok(None),
+            ocr_ok(OCR_TEXT),
+            Arc::new(FakeTransport::json(200, CLAUDE_OK)),
+            &KEYED,
+            &[],
+            GateTimeouts::default(),
+            Some(picker),
+        );
+        let orch = r.orch.clone();
+        let first = tokio::spawn(async move { orch.trigger(AIOperation::ScreenTranslate).await });
+        wait(|| backend.creates() == 1).await;
+        // The restart cancels the first flow (its picker future is dropped) ...
+        let orch = r.orch.clone();
+        let second = tokio::spawn(async move { orch.trigger(AIOperation::ScreenTranslate).await });
+        // (a blocking wait would starve the current-thread runtime that cancels the first flow)
+        wait(|| {
+            backend.calls().iter().any(|c| {
+                matches!(
+                    c,
+                    lingopop_platform::fake::OverlayCall::CleanupStarted { .. }
+                )
+            })
+        })
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        // ... but nothing new is created while the first overlay is still being cleaned up.
+        assert_eq!(backend.creates(), 1);
+        backend.hold_cleanup(false);
+        wait(|| backend.creates() == 2).await;
+        assert_eq!(backend.max_native(), 1);
+        assert!(backend.cleanup_seq(1).unwrap() < backend.create_seq(2).unwrap());
+        r.orch.close().await;
+        let _ = first.await;
+        let _ = second.await;
+        wait(|| backend.native_active() == 0).await;
+        main.close();
+        pump.join().unwrap();
+    }
 }

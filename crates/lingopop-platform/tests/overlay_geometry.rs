@@ -143,3 +143,39 @@ fn batch_matching_the_rendered_rect_is_unchanged() {
         InputBatch::Finish(Some(Rect::new(0, 0, 40, 40)))
     );
 }
+
+#[test]
+fn custom_acceptance_decides_the_finish_but_the_order_stays() {
+    // Mac: ten BACKING pixels, so a 5-point drag on a 2x display is accepted.
+    let accept_five = |r: Rect| r.width >= 5 && r.height >= 5;
+    let mut start = None;
+    let events = [
+        OverlayInput::Down(point(0, 0)),
+        OverlayInput::Move(point(3, 3)),
+        OverlayInput::Up(point(5, 5)),
+        OverlayInput::Move(point(500, 500)),
+    ];
+    assert_eq!(
+        fold_input_batch_with(&mut start, None, events, accept_five),
+        InputBatch::Finish(Some(Rect::new(0, 0, 5, 5)))
+    );
+    let mut start = None;
+    let events = [
+        OverlayInput::Down(point(0, 0)),
+        OverlayInput::Up(point(4, 9)),
+    ];
+    assert_eq!(
+        fold_input_batch_with(&mut start, None, events, accept_five),
+        InputBatch::Finish(None)
+    );
+    // The shared default stays ten units.
+    let mut start = None;
+    let events = [
+        OverlayInput::Down(point(0, 0)),
+        OverlayInput::Up(point(5, 5)),
+    ];
+    assert_eq!(
+        fold_input_batch(&mut start, None, events),
+        InputBatch::Finish(None)
+    );
+}

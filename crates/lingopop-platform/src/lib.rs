@@ -25,8 +25,14 @@ mod macos;
 pub mod macos_dismiss;
 #[path = "macos/geometry.rs"]
 pub mod macos_geometry;
+#[path = "macos/login_service.rs"]
+pub mod macos_login;
+#[path = "macos/overlay.rs"]
+pub mod macos_overlay;
 #[path = "macos/presentation.rs"]
 pub mod macos_presentation;
+#[path = "macos/screen.rs"]
+pub mod macos_screen;
 #[path = "macos/target_registry.rs"]
 pub mod macos_targets;
 pub mod main_thread;
@@ -47,7 +53,7 @@ mod windows;
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
     MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPermissions, MacPopupWindow, MacProtector,
-    NsPasteboard,
+    NsPasteboard, SmMainApp,
 };
 #[cfg(windows)]
 pub use crate::windows::{
@@ -67,7 +73,7 @@ pub use hotkey::{to_global_hotkey, GlobalHotkeyService};
 pub use inject::{bring_to_front, replace_selection, ReplaceOptions, ReplaceOutcome};
 pub use keys::KeySynth;
 pub use last_foreground::{LastForeground, NoLastForeground};
-pub use login_item::{run_value, LoginItem};
+pub use login_item::{run_value, LoginItem, LoginItemStatus};
 pub use monitors::{
     clamp_to_work_area, monitor_at, physical_size, validate_region, virtual_screen, MonitorInfo,
     Monitors, Point, Rect, Size,
@@ -75,7 +81,7 @@ pub use monitors::{
 pub use native::Platform;
 #[cfg(any(windows, target_os = "macos"))]
 pub use native::{native, native_system};
-pub use ocr::{select_best, Ocr, OcrCandidate, OcrText};
+pub use ocr::{select_best, text_in_reading_order, Ocr, OcrCandidate, OcrText};
 pub use permissions::{
     ensure_permission, AlwaysGranted, PermissionKind, PermissionState, Permissions,
 };
@@ -101,4 +107,4 @@ pub use macos::activate_app;
 #[doc(hidden)]
 pub use macos::OwnerRunWindow;
 #[cfg(target_os = "macos")]
-pub use macos::{configure_popup_panel, AppKitMonitors};
+pub use macos::{configure_popup_panel, AppKitMonitors, AppKitOverlay};

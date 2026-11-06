@@ -1,4 +1,4 @@
-//! macOS adapters, including Keychain secrets and the remaining dev stubs.
+//! macOS adapters, production adapters for every `Platform` entry, including Keychain secrets.
 //! Every `unsafe` block of the crate's macOS code lives under this module and
 //! carries a `// SAFETY:` comment.
 
@@ -37,11 +37,15 @@ pub fn on_main_thread() -> bool {
 mod system;
 pub use system::MacSystem;
 
-mod login_item;
-pub use login_item::MacLoginItem;
+mod service_management;
+pub use service_management::SmMainApp;
+/// The production macOS login item: `SMAppService.mainApp` over the portable decision logic.
+pub type MacLoginItem = crate::macos_login::ServiceLoginItem<SmMainApp>;
 
-mod overlay;
-pub use overlay::MacOverlay;
+mod overlay_window;
+pub use overlay_window::AppKitOverlay;
+/// The production macOS region overlay: AppKit windows over the portable lifecycle.
+pub type MacOverlay = crate::macos_overlay::MacOverlay<AppKitOverlay>;
 
 mod permissions;
 pub use permissions::MacPermissions;

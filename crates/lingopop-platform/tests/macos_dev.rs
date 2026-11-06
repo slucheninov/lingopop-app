@@ -5,18 +5,29 @@
 use lingopop_platform::{native, CapturedImage, Clipboard, MacClipboard, PlatformError, Rect};
 
 #[test]
-fn native_bundle_on_macos_has_unsupported_capture_and_ocr() {
+fn native_bundle_on_macos_capture_never_reaches_the_screen_before_setup() {
     let platform = native();
-    assert_eq!(
-        platform.capture.capture_region(Rect::new(0, 0, 10, 10)),
-        Err(PlatformError::Unsupported("screen capture on macOS"))
-    );
-    let image = CapturedImage::new(1, 1, vec![0, 0, 0, 255]).unwrap();
-    assert_eq!(
-        platform.ocr.recognize(&image).map(|_| ()),
-        Err(PlatformError::Unsupported("OCR on macOS"))
+    // Before shell setup the topology cache is empty, so a granted permission ends in
+    // InvalidRegion and a missing one in PermissionDenied: either way nothing is captured
+    // (the state read never prompts).
+    let result = platform.capture.capture_region(Rect::new(0, 0, 10, 10));
+    assert!(
+        matches!(
+            result,
+            Err(PlatformError::InvalidRegion | PlatformError::PermissionDenied(_))
+        ),
+        "{result:?}"
     );
     // Construction must not access the real login keychain.
+}
+
+#[test]
+#[ignore = "owner-run: real Vision"]
+fn native_bundle_ocr_is_a_real_empty_recognition_without_permission_or_topology() {
+    // Vision needs no permission and no topology: a real (empty) recognition, never an error.
+    let platform = native();
+    let image = CapturedImage::new(8, 8, vec![255; 8 * 8 * 4]).unwrap();
+    assert!(platform.ocr.recognize(&image).unwrap().is_empty());
 }
 
 #[test]
