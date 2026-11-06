@@ -114,8 +114,13 @@ Core gets pure functions with tests on fixtures:
 - **Signature first.** The signature file is downloaded first. The asset bytes are verified with `verify_update` before any install step. A failure deletes the staging files.
 - **Temporary files.** The staging location is described per OS below. Leftovers of a previous attempt are removed at startup, but only through the update journal.
 - **Update journal.** Before the first file of an attempt is created (the signature and asset downloads included), the updater writes `update-journal.json` atomically in the data folder (`fsio::atomic_write`).
-  - It names every path this attempt creates or moves: `{"version", "site", "staged", "old", "scratch": [..]}`. `site` is the install path recorded at startup; `scratch` lists the download files and, on macOS, the staging folder `<parent>/.LingoPop-update-<version>/`. Recovery deletes `scratch` entries like `staged` (never `running` or `site`).
-  - Startup acts only on this file and never matches names alone, so a user file that happens to be called `<stem>.old.exe` is never touched. Without a journal, startup deletes nothing.
+  - It names every path this attempt creates or moves: `{"version", "site", "staged", "old", "scratch": [..]}`. `site` is the install path recorded at startup; `scratch` lists the download files and, on macOS, the staging folder `<parent>/.LingoPop-update-<version>-<token>/`. Recovery deletes `scratch` entries like `staged` (never `running` or `site`).
+  - **Ownership of paths.**
+    - Every path an attempt creates carries a fresh 128-bit random `<token>` (hex) in its name.
+    - The path is created exclusively: `create_new` for files, `create_dir` failing on an existing folder, and a Windows rename only onto a name checked absent with that token.
+    - The journal is written first, naming paths that do not exist yet. Recovery deletes a journal path only when it exists AND the attempt reached the step that created it, which the journal records as `created: [..]` and appends after each exclusive creation.
+    - A collision (the name already exists) aborts the attempt: nothing is deleted, the journal is removed, and the error is the install error.
+  - Startup acts only on this file and never matches names alone, so a user file that happens to be called `<stem>.old.exe` or `<stem>.old-<some token>.exe` is never touched. Without a journal, startup deletes nothing.
   - **Phase.** The journal also has a `phase`.
     - `pending` when it is first written.
     - It becomes `committed` (rewritten atomically) only after the swap AND every check after it succeeded.
@@ -123,7 +128,8 @@ Core gets pure functions with tests on fixtures:
   - **Identity, not position.** After the new item passed every check before the swap, its SHA-256 goes into the journal as `newHash`, in an atomic rewrite done before the swap.
     - The new item is the exe on Windows.
     - On macOS it is the bundle's `CFBundleShortVersionString`, which is always the planned version and strictly newer than the running one, plus the SHA-256 of `Contents/_CodeSignature/CodeResources`.
-    - `CodeResources` hashes every file of the bundle, so two different bundles never share it, even when their main executables are identical.
+    - `CodeResources` covers the bundle's resources but not the main executable, whose signature lives in the executable itself, so the identity also includes the main executable's SHA-256.
+    - What really tells the releases apart is the version invariant. The pre-swap check requires the staged bundle's version to equal the planned version, and `update_plan` only plans a version strictly newer than the running one. So the new bundle at `site` always has a version different from the previous one.
     - Recovery never infers state from which path a bundle sits at. It hashes what is at `site`: equal to `newHash` means "the new version is installed", anything else means "the previous version is installed".
     - A journal without `newHash` means no swap can have happened.
   - **Recovery** (any copy of the app, at startup, and before every new update attempt). Every step is idempotent, so an interrupted recovery is just run again:
@@ -141,18 +147,18 @@ Core gets pure functions with tests on fixtures:
 ### 4. Windows install (portable exe)
 
 - **Names.** They are derived from the running exe, whatever the user called it (the shipped file is `LingoPop-<v>-windows-x64-portable.exe`). With `<stem>` = its file name without `.exe`:
-  - staging is `<exe dir>\<stem>.update.exe`;
-  - the old file is `<exe dir>\<stem>.old.exe`.
+  - staging is `<exe dir>\<stem>.update-<token>.exe`;
+  - the old file is `<exe dir>\<stem>.old-<token>.exe`.
 
   Both sit on the same volume, so the renames are atomic. The file keeps its name after the update, even when that name carries the old version number: renaming it would break shortcuts and the Run value.
   - **A non-writable exe folder** (for example `Program Files`) is an error, "LingoPop can't update itself in this folder", with the **Download** link as the fallback.
 - **Checks after the download.** Signature OK and the PE machine is AMD64 (the same check as the release contract).
 - **Swap.**
-  1. Rename the running `<stem>.exe` to `<stem>.old.exe`. Windows allows renaming a running exe.
-  2. Rename `<stem>.update.exe` to `<stem>.exe`.
-  3. If step 2 fails, rename `<stem>.old.exe` back.
+  1. Rename the running `<stem>.exe` to `<stem>.old-<token>.exe`. Windows allows renaming a running exe.
+  2. Rename `<stem>.update-<token>.exe` to `<stem>.exe`.
+  3. If step 2 fails, rename `<stem>.old-<token>.exe` back.
 
-  The journal (section 3) is written before step 1. If the process dies between steps 1 and 2, or the rollback in step 3 fails, the journal remains. The user's shortcut is then broken, but `<stem>.old.exe` is still a visible, runnable file in the same folder. Starting it, or any copy of the app, recovers through the journal. Windows cannot replace a running exe in one step, so this short gap cannot be closed.
+  The journal (section 3) is written before step 1. If the process dies between steps 1 and 2, or the rollback in step 3 fails, the journal remains. The user's shortcut is then broken, but `<stem>.old-<token>.exe` is still a visible, runnable file in the same folder. Starting it, or any copy of the app, recovers through the journal. Windows cannot replace a running exe in one step, so this short gap cannot be closed.
 - **Cleanup.** At startup the paths named in the journal are deleted (section 3); nothing is deleted by name. Errors are logged only. The process still running from the old file never deletes it.
 - **What the user sees.** The About tab enters the **ready** state: **Restart** relaunches the exe at the original path through the existing `--wait-for-pid` path.
 - **Not restarting.** If the user quits without pressing Restart, the next start is the new version, which is fine.
@@ -167,7 +173,7 @@ Core gets pure functions with tests on fixtures:
   - the running app's own designated requirement is exactly `identifier "app.lingopop.tauri.macos" and certificate leaf = H"<RELEASE_CERT_SHA1>"`.
     - `RELEASE_CERT_SHA1` is a constant in core next to `UPDATE_PUBLIC_KEY`, and CI checks that it equals `release-signing.json`.
     - An ad-hoc or otherwise-signed local build never self-updates.
-- **Staging.** `<parent>/.LingoPop-update-<version>/`, on the same volume as the app. The zip is extracted there with `ditto -x -k --noqtn`.
+- **Staging.** `<parent>/.LingoPop-update-<version>-<token>/`, on the same volume as the app. The zip is extracted there with `ditto -x -k --noqtn`.
 - **Checks before the swap.** The extracted bundle must:
   - contain exactly one `LingoPop.app`;
   - have `CFBundleIdentifier` = `app.lingopop.tauri.macos`;
@@ -203,7 +209,7 @@ Core gets pure functions with tests on fixtures:
   - The About tab first registers the listener, then calls `updates_state`. It applies a value, from the event or the read, only when its revision is higher than the last one applied. So a change during registration or during the read is never missed, and a stale read never overwrites a newer event.
 - **Ready survives closing Settings.** `Ready` is kept in memory while the app runs. Reopening Settings shows **Restart** through `updates_state`.
 - **After a swap, every relaunch uses the original install path.**
-  - The old process's `current_exe()` may point at the moved bundle (`.LingoPop-update-*/old.app`) or at `<stem>.old.exe`.
+  - The old process's `current_exe()` may point at the moved bundle (`.LingoPop-update-*/old.app`) or at `<stem>.old-<token>.exe`.
   - So both the language-change Relaunch (`app_relaunch`) and `updates_restart` start the installed path recorded before the swap; on macOS they go through `open -n <app>`.
   - The login item is unchanged: SMAppService names the bundle by id, and the Windows Run value already holds the original path.
 - **Background check.** It is unchanged. It still only sets the banner.

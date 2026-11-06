@@ -36,12 +36,12 @@
   - It must equal `release-signing.json` `macosCertificateSha1`.
 - **macOS install.**
   - Only bundle id `app.lingopop.tauri.macos` is ever replaced.
-  - Staging is `<parent>/.LingoPop-update-<version>/`, extracted with `ditto -x -k --noqtn`.
+  - Staging is `<parent>/.LingoPop-update-<version>-<token>/`, extracted with `ditto -x -k --noqtn`.
   - The old bundle is kept until the next start.
   - Restart is `/usr/bin/open -n <app> --args --wait-for-pid <pid>`.
 - **Windows install.**
   - `<stem>` is the running exe's file name without `.exe`.
-  - Staging is `<stem>.update.exe`, the old file is `<stem>.old.exe`, both next to the exe.
+  - Staging is `<stem>.update-<token>.exe`, the old file is `<stem>.old-<token>.exe`, both next to the exe.
   - The exe keeps its file name.
 - **Data and settings.** No user data (`%APPDATA%\LingoPop`, `~/Library/Application Support/LingoPop-Tauri`, keychain item) is touched. There is no update-URL override in any build, and no automatic download.
 - **Tag runs.** A tag run with Mac assets (`macosPreview: true`) must sign `selfsigned` with the pinned certificate. `adhoc` is allowed only on `workflow_dispatch` or without Mac assets.
@@ -57,7 +57,7 @@
 1. **Update pressed twice, or Check pressed during a download.** Exactly one update runs; a second `updates_install` returns the current state and does not start a second download (Task 7: `install_is_single_flight`).
 2. **Download cut off midway, disk full, or a body shorter or longer than `size`.** The state becomes Failed, the staging files are gone, and the installed app is byte-identical (Task 4: `truncated_or_oversized_body_fails`; Task 5: `failed_stage_leaves_exe_untouched`).
 3. **GitHub answers 403 or 404 or HTML** (rate limit, a release without `.minisig`, for example Mac assets left off). Check shows the Download-only state for this platform, never an Update button that cannot work (Task 3: `release_without_signature_has_no_plan`).
-4. **The language-change Relaunch is pressed after an update installed but before Restart.** It must start the installed new version, not the old bundle left in the staging folder or `<stem>.old.exe` (Task 7: `relaunch_after_swap_uses_install_path`).
+4. **The language-change Relaunch is pressed after an update installed but before Restart.** It must start the installed new version, not the old bundle left in the staging folder or `<stem>.old-<token>.exe` (Task 7: `relaunch_after_swap_uses_install_path`).
 5. **The app runs from a folder it cannot write to, from a dmg, or as an ad-hoc dev build.** It shows Download only, and nothing is written next to the app (Task 5: `read_only_folder_is_unsupported`; Task 6: `adhoc_running_app_is_unsupported`).
 
 ---
@@ -209,11 +209,11 @@ Nothing in this task is committed except public values.
   - `pub enum Support { Supported(InstallSite), Unsupported(&'static str) }`. The reason is a fixed log text.
   - `pub fn exe_support(exe: &Path) -> Support`:
     - `Unsupported("folder not writable")` when a probe file `<stem>.update.probe` cannot be created and removed.
-  - `pub fn stage_exe(site: &InstallSite) -> PathBuf`: `<stem>.update.exe`.
+  - `pub fn stage_exe(site: &InstallSite) -> PathBuf`: `<stem>.update-<token>.exe`.
   - `pub fn install_exe(site: &InstallSite, staged: &Path) -> Result<(), UpdateError>`:
     - it checks the PE machine is AMD64 (the same rule as `scripts/verify-release-assets.py` `pe_machine`), then swaps with rollback;
-    - after an `Err`, the original exe is byte-identical at its path.
-  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf, pub scratch: Vec<PathBuf>, pub phase: Phase, pub new_hash: Option<String> }` with `pub enum Phase { Pending, Committed }` (`pub fn commit_journal(data_dir) -> Result<(), UpdateError>` rewrites it as `Committed`` (serde camelCase, file `update-journal.json` in the data dir).
+    - after an `Err` where no rename happened or the rollback succeeded, the original exe is byte-identical at its path. When the rollback fails it is at `<stem>.old-<token>.exe`, named by the journal, and `recover` returns it (see below).
+  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf, pub scratch: Vec<PathBuf>, pub phase: Phase, pub new_hash: Option<String>, pub created: Vec<PathBuf> }` and `pub fn new_token() -> String` (32 hex chars from `getrandom`). Every path is created exclusively and appended to `created` (atomic rewrite) right after it was created; `recover` only deletes paths in `created`` with `pub enum Phase { Pending, Committed }` (`pub fn commit_journal(data_dir) -> Result<(), UpdateError>` rewrites it as `Committed`` (serde camelCase, file `update-journal.json` in the data dir).
     - `pub fn write_journal(data_dir: &Path, j: &Journal) -> Result<(), UpdateError>` uses core `fsio::atomic_write`.
     - `pub fn remove_journal(data_dir: &Path)`.
   - `pub fn recover(data_dir: &Path, running: &Path) -> Recovery` (`enum Recovery { Nothing, Cleaned, Restored, Kept }`) implements spec section 3 exactly:
@@ -224,11 +224,11 @@ Nothing in this task is committed except public values.
     - `site` present otherwise: delete `staged`, `old` and every `scratch` entry (files, or directories with `remove_dir_all`);
     - it never deletes a path that equals or contains `running` (`running.starts_with(path)`); such a delete is skipped and the journal kept;
     - errors keep the journal.
-  - `install_exe` takes `data_dir` and expects the journal Task 7 wrote before the download. On a failure before the first rename, or after a successful rollback, it deletes its files and the journal. When the rollback fails it deletes NOTHING and returns `Err(Install)`: the journal and `<stem>.old.exe` stay for `recover`.
+  - `install_exe` takes `data_dir` and expects the journal Task 7 wrote before the download. On a failure before the first rename, or after a successful rollback, it deletes its files and the journal. When the rollback fails it deletes NOTHING and returns `Err(Install)`: the journal and `<stem>.old-<token>.exe` stay for `recover`.
 
 - [ ] **Step 1: Write the failing tests:**
   - `swap_replaces_exe_and_keeps_name`;
-  - `no_journal_deletes_nothing` (user files `<stem>.old.exe` and `<stem>.update.exe` survive);
+  - `no_journal_deletes_nothing` (user files `<stem>.old.exe`, `<stem>.update.exe` and `<stem>.old-<other token>.exe` survive);
   - `crash_between_renames_is_restored` (site missing, old present, journal → `Restored`, site has the old bytes);
   - `completed_swap_is_cleaned` (`Committed` journal + old → `Cleaned`, old and journal gone);
   - `uncommitted_swap_is_restored` (`Pending` journal, new file at site, old present → `Restored`, site has the old bytes);
@@ -240,10 +240,12 @@ Nothing in this task is committed except public values.
   - `interrupted_recovery_after_swap_back_is_idempotent` (run `recover` with a hook that stops right after the swap-back, then run it again → site keeps the old bytes, the new copy deleted, the journal gone);
   - `failed_stage_leaves_exe_untouched` (non-PE bytes, `Install`);
   - `failed_rollback_keeps_journal_and_old` is covered by `both_renames_fail_leaves_old_exe_and_journal`, which also asserts nothing was deleted;
-  - `both_renames_fail_leaves_old_exe_and_journal` (second rename and rollback both forced to fail → `Err(Install)`, `<stem>.old.exe` holds the original bytes, the journal names it, and `recover` then restores it to the site);
+  - `both_renames_fail_leaves_old_exe_and_journal` (second rename and rollback both forced to fail → `Err(Install)`, `<stem>.old-<token>.exe` holds the original bytes, the journal names it, and `recover` then restores it to the site);
   - `rollback_when_second_rename_fails` (staged path removed between the steps through a test hook `#[doc(hidden)] install_exe_with(.., before_second_rename: impl FnOnce())`);
   - `read_only_folder_is_unsupported` (Unix permissions; ignore on Windows);
-  - `stem_comes_from_running_name` (`LingoPop-0.2.1-windows-x64-portable.exe` → `LingoPop-0.2.1-windows-x64-portable.old.exe`).
+  - `existing_token_path_aborts_without_deleting` (a pre-existing file at the chosen `<stem>.update-<token>.exe` → `Err(Install)`, that file unchanged, journal removed);
+  - `recover_ignores_paths_not_in_created` (a journal naming `old`, but a user file at that path never added to `created` → it survives);
+  - `stem_comes_from_running_name` (`LingoPop-0.2.1-windows-x64-portable.exe` → `LingoPop-0.2.1-windows-x64-portable.old-<token>.exe`).
 - [ ] **Step 2: Run** `cargo test -p lingopop-platform --test update_install_exe`. Expected: FAIL.
 - [ ] **Step 3: Implement** with `std::fs::rename` only. The module is portable: no `unsafe`, compiled on every OS.
 - [ ] **Step 4: Run** the tests on this Mac, then push so the Windows CI leg runs them too. Expected: PASS.
@@ -272,7 +274,7 @@ Nothing in this task is committed except public values.
     - the parent is writable;
     - `designated_requirement(app) == Some(pinned_requirement())`.
   - `pub fn install_bundle(site: &InstallSite, zip: &Path, version: &str, arch: &str, tools: &dyn BundleTools) -> Result<(), UpdateError>`.
-    - It stages into `<parent>/.LingoPop-update-<version>/`.
+    - It stages into `<parent>/.LingoPop-update-<version>-<token>/`.
     - It checks: exactly one `LingoPop.app`, the id, the version, `verify(new, pinned_requirement())`, and that the arch is present.
     - Then it swaps atomically with `BundleTools::swap(staged, site.path)`: afterwards the old bundle sits at the staged path, and a failed late check swaps back.
   - The swap is `BundleTools::swap(&self, a: &Path, b: &Path) -> Result<(), UpdateError>`, an atomic exchange.
@@ -355,7 +357,7 @@ Nothing in this task is committed except public values.
   - First call `recover`; a journal left afterwards = Failed, nothing written.
   - After the checks that come before the swap, rewrite the journal with `new_hash`. After `Installer::install` and its checks succeeded, call `commit_journal`.
   - BEFORE any download, write the Task 5 `Journal` (`Pending`) with `site`, `staged`, `old` and `scratch` = the signature file, the download file and, on macOS, the staging folder.
-  - The download goes to a temp file next to the site: Windows `stage_exe`, macOS `<parent>/.LingoPop-update-<v>/download.zip`.
+  - The download goes to a temp file next to the site: Windows `stage_exe`, macOS `<parent>/.LingoPop-update-<v>-<token>/download.zip`.
   - The signature is downloaded first, then the asset, then `verify_update(read(file), sig, plan.expected_comment)`, then `Installer::install`.
   - The existing background loop and `SettingsView.latestVersion` stay unchanged.
 - [ ] **Step 4: Run** `cargo test -p lingopop-app` and `cargo clippy --workspace --all-targets --locked -- -D warnings`. Expected: PASS, no warnings.
