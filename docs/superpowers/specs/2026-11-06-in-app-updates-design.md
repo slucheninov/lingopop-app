@@ -120,13 +120,18 @@ Core gets pure functions with tests on fixtures:
     - `pending` when it is first written.
     - It becomes `committed` (rewritten atomically) only after the swap AND every check after it succeeded.
     - Only a `committed` journal means the version at `site` is the one to keep.
-  - **Recovery** (any copy of the app, at startup, and before every new update attempt):
-    - `site` is missing and `old` exists: rename `old` back to `site` (it is the previous version), delete `staged` if present, delete the journal, and log `update recovered`.
-    - `site` exists, `old` exists and `phase` is `pending`: the swap happened but was never committed. This includes a macOS late check whose swap-back failed. Put `old` back at `site`:
-      - macOS: one more `RENAME_SWAP` of `old` and `site`;
-      - Windows: rename `site` to `staged`, then `old` to `site`.
-      - Then clean up as below.
-    - `site` exists otherwise (`committed`, or `old` absent): delete `staged` and `old` when present, then the journal. The file or bundle the current process runs from is never deleted: that delete is skipped and the journal stays for the next start.
+  - **Identity, not position.** After the new item passed every check before the swap, its SHA-256 goes into the journal as `newHash`, in an atomic rewrite done before the swap.
+    - The new item is the exe on Windows, or the bundle's main executable `Contents/MacOS/<CFBundleExecutable>` on macOS.
+    - Recovery never infers state from which path a bundle sits at. It hashes what is at `site`: equal to `newHash` means "the new version is installed", anything else means "the previous version is installed".
+    - A journal without `newHash` means no swap can have happened.
+  - **Recovery** (any copy of the app, at startup, and before every new update attempt). Every step is idempotent, so an interrupted recovery is just run again:
+    - `site` missing (Windows only, between the two renames): rename `old` to `site` when `old` exists, then continue below. When `old` is missing too, nothing is touched, the journal stays and `update recovery failed` is logged.
+    - The new version is at `site` and the phase is `committed`: delete `staged`, `old` and `scratch`, then the journal.
+    - The new version is at `site` and the phase is `pending` (the swap happened, a later check or its swap-back failed): put the previous version back.
+      - This happens only when the item at the other path exists and is NOT the new one: on macOS `RENAME_SWAP` of `site` and `staged`; on Windows `site` to `staged`, then `old` to `site`.
+      - Then hash `site` again and continue with the next rule.
+    - The previous version is at `site` (no swap yet, or swapped back): the remaining copies are the new or unchecked download. Delete `staged`, `old` and `scratch`, then the journal. An unchecked staged bundle is therefore never installed by recovery.
+    - **Running copy.** A path is never deleted when it equals the running exe or bundle or contains it (path-prefix test, so a running bundle inside a scratch folder is safe). Such a delete is skipped and the journal stays.
     - Every error is logged only; the journal then stays so the next start tries again.
   - A completed update leaves the journal for that cleanup. A failed or cancelled attempt whose files never moved, or whose rollback succeeded, deletes its own files and the journal at once. When a rollback FAILS, nothing is deleted: the journal and the file or bundle it names as `old` stay, so the next start restores them.
   - **No new attempt over an open journal.** `updates_install` first runs recovery. If a journal is still present afterwards, it is Failed with the install error and writes nothing: no new journal, no download. The open journal is never overwritten or removed by a retry or a cancel.

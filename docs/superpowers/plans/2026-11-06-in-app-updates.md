@@ -213,15 +213,16 @@ Nothing in this task is committed except public values.
   - `pub fn install_exe(site: &InstallSite, staged: &Path) -> Result<(), UpdateError>`:
     - it checks the PE machine is AMD64 (the same rule as `scripts/verify-release-assets.py` `pe_machine`), then swaps with rollback;
     - after an `Err`, the original exe is byte-identical at its path.
-  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf, pub scratch: Vec<PathBuf>, pub phase: Phase }` with `pub enum Phase { Pending, Committed }` (`pub fn commit_journal(data_dir) -> Result<(), UpdateError>` rewrites it as `Committed`` (serde camelCase, file `update-journal.json` in the data dir).
+  - `pub struct Journal { pub version: String, pub site: PathBuf, pub staged: PathBuf, pub old: PathBuf, pub scratch: Vec<PathBuf>, pub phase: Phase, pub new_hash: Option<String> }` with `pub enum Phase { Pending, Committed }` (`pub fn commit_journal(data_dir) -> Result<(), UpdateError>` rewrites it as `Committed`` (serde camelCase, file `update-journal.json` in the data dir).
     - `pub fn write_journal(data_dir: &Path, j: &Journal) -> Result<(), UpdateError>` uses core `fsio::atomic_write`.
     - `pub fn remove_journal(data_dir: &Path)`.
   - `pub fn recover(data_dir: &Path, running: &Path) -> Recovery` (`enum Recovery { Nothing, Cleaned, Restored, Kept }`) implements spec section 3 exactly:
     - with no journal it touches nothing;
     - `site` missing and `old` present: restore it;
-    - `site` present, `old` present, `Pending`: put `old` back (Windows: `site`→`staged`, `old`→`site`; macOS: `BundleTools::swap(old, site)` through an injected swap closure), then clean;
+    - the decision follows spec section 3: `site` is identified by `item_hash(site) == new_hash` (SHA-256 of the exe, or of the bundle's main executable through an injected hasher), never by position;
+    - new at `site` + `Pending`: put the previous version back (Windows: `site`→`staged`, `old`→`site`; macOS: `BundleTools::swap(old, site)` through an injected swap closure), then clean;
     - `site` present otherwise: delete `staged`, `old` and every `scratch` entry (files, or directories with `remove_dir_all`);
-    - it never deletes `running`; such a delete is skipped and the journal kept;
+    - it never deletes a path that equals or contains `running` (`running.starts_with(path)`); such a delete is skipped and the journal kept;
     - errors keep the journal.
   - `install_exe` takes `data_dir` and expects the journal Task 7 wrote before the download. On a failure before the first rename, or after a successful rollback, it deletes its files and the journal. When the rollback fails it deletes NOTHING and returns `Err(Install)`: the journal and `<stem>.old.exe` stay for `recover`.
 
@@ -232,6 +233,9 @@ Nothing in this task is committed except public values.
   - `completed_swap_is_cleaned` (`Committed` journal + old → `Cleaned`, old and journal gone);
   - `uncommitted_swap_is_restored` (`Pending` journal, new file at site, old present → `Restored`, site has the old bytes);
   - `running_old_file_is_kept` (`running == old` → `Kept`, journal stays);
+  - `running_bundle_inside_scratch_is_kept` (`Committed` journal, `running` = `<scratch dir>/old.app/Contents/MacOS/LingoPop` → `Kept`, the folder and the journal stay);
+  - `crash_before_swap_never_installs_staged` (`Pending`, no `new_hash`, site = old bytes, staged present → site unchanged, staged deleted);
+  - `interrupted_recovery_after_swap_back_is_idempotent` (run `recover` with a hook that stops right after the swap-back, then run it again → site keeps the old bytes, the new copy deleted, the journal gone);
   - `failed_stage_leaves_exe_untouched` (non-PE bytes, `Install`);
   - `failed_rollback_keeps_journal_and_old` is covered by `both_renames_fail_leaves_old_exe_and_journal`, which also asserts nothing was deleted;
   - `both_renames_fail_leaves_old_exe_and_journal` (second rename and rollback both forced to fail → `Err(Install)`, `<stem>.old.exe` holds the original bytes, the journal names it, and `recover` then restores it to the site);
@@ -347,7 +351,7 @@ Nothing in this task is committed except public values.
 - [ ] **Step 2: Run** `cargo test -p lingopop-app update_install`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
   - First call `recover`; a journal left afterwards = Failed, nothing written.
-  - After `Installer::install` and its checks succeeded, call `commit_journal`.
+  - After the checks that come before the swap, rewrite the journal with `new_hash`. After `Installer::install` and its checks succeeded, call `commit_journal`.
   - BEFORE any download, write the Task 5 `Journal` (`Pending`) with `site`, `staged`, `old` and `scratch` = the signature file, the download file and, on macOS, the staging folder.
   - The download goes to a temp file next to the site: Windows `stage_exe`, macOS `<parent>/.LingoPop-update-<v>/download.zip`.
   - The signature is downloaded first, then the asset, then `verify_update(read(file), sig, plan.expected_comment)`, then `Installer::install`.
@@ -402,7 +406,7 @@ Nothing in this task is committed except public values.
 - Modify: `scripts/package-macos.sh` (mode selection at about line 81–94, the signing branch at about line 174–198, native checks, `signing-<slug>.txt`)
 - Modify: `scripts/verify-release-assets.py` (`SIGNING_MODES`, `CONDITIONS` / `render_notes` condition `macos-unnotarized` for `adhoc` and `selfsigned`)
 - Modify: `docs/INSTALL.md` (`macos-adhoc` blocks → `macos-unnotarized`; the re-grant paragraph stays `adhoc` only)
-- Modify: `.github/workflows/release.yml` (the mac leg passes the two new secrets plus `RELEASE_TAG_RUN=1` on tag runs)
+- Modify: `.github/workflows/release.yml` (the mac leg passes the two new secrets plus `RELEASE_TAG_RUN=1` on tag runs); unset `MACOS_SIGNING_P12` and `MACOS_SIGNING_P12_PASSWORD` for the Tauri build invocation
 - Modify: `scripts/check-macos-production.sh`, if its rules need the new mode
 - Test: `scripts/tests/test_release_assets.py`
 - Test: `scripts/tests/test_package_macos_mode.py` (new, mode selection run as a function of env)
