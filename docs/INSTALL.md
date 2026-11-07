@@ -1,6 +1,6 @@
 # Installing LingoPop
 
-LingoPop is published on the [Releases page](https://github.com/slucheninov/lingopop-app/releases). Everything below the marker comment is also copied into the notes of every release by the release workflow (`scripts/verify-release-assets.py publish`): `<version>` becomes the release version, the Windows or macOS part is left out when the release has no assets for it, the macOS paragraph on opening the app past Gatekeeper is kept for builds that are not notarized (signed ad hoc or with LingoPop's own release certificate, `macos-unnotarized`), and the paragraph on re-granting permissions after an update only for ad-hoc builds (`macos-adhoc`), whose code identity changes with every build. Keep the `<!-- if ... -->` / `<!-- endif -->` markers balanced (the release tests check it).
+LingoPop is published on the [Releases page](https://github.com/slucheninov/lingopop-app/releases). Everything below the marker comment is also copied into the notes of every release by the release workflow (`scripts/verify-release-assets.py prepare`): `<version>` becomes the release version, the Windows or macOS part is left out when the release has no assets for it, the macOS paragraph on opening the app past Gatekeeper is kept for builds that are not notarized (signed ad hoc or with LingoPop's own release certificate, `macos-unnotarized`), and the paragraph on re-granting permissions after an update only for ad-hoc builds (`macos-adhoc`), whose code identity changes with every build. Keep the `<!-- if ... -->` / `<!-- endif -->` markers balanced (the release tests check it).
 
 <!-- release-notes-start -->
 ## Installation
@@ -16,7 +16,7 @@ LingoPop is published on the [Releases page](https://github.com/slucheninov/ling
 - The `.zip` files hold the same app as the `.dmg` of the same architecture; the `.dmg` is the recommended download.
 <!-- endif -->
 
-`SHA256SUMS.txt` lists the SHA-256 checksum of every file. To check a download, put it next to `SHA256SUMS.txt` and compare:
+The `.minisig` files are the update signatures the in-app updater checks; a manual install does not need them. `SHA256SUMS.txt` lists the SHA-256 checksum of every file. To check a download, put it next to `SHA256SUMS.txt` and compare:
 
 <!-- if windows -->
 - Windows (PowerShell): `(Get-FileHash .\LingoPop-<version>-windows-x64-portable.exe -Algorithm SHA256).Hash.ToLower()` must equal the value on that file's line in `SHA256SUMS.txt`.

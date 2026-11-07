@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Release asset contract: verify, assemble and publish the platform artifacts.
+"""Release asset contract: verify, assemble, sign-check and publish the platform artifacts.
 
-    verify-release-assets.py verify  --version V --platforms windows,macos [--manifest NAME] DIR
-    verify-release-assets.py publish --version V --platforms-file release-platforms.json \\
+    verify-release-assets.py verify   --version V --platforms windows,macos [--manifest NAME] [--signed] DIR
+    verify-release-assets.py prepare  --version V --platforms-file release-platforms.json \\
         --artifacts DIR --out DIR --changelog CHANGELOG.md --install docs/INSTALL.md \\
-        --notes-out notes.md -- gh release create TAG --prerelease ...
+        --notes-out notes.md [--require-mac-signing selfsigned]
+    verify-release-assets.py updatable --version V --platforms-file release-platforms.json
+    verify-release-assets.py finalize --version V --platforms-file release-platforms.json DIR \\
+        -- gh release create TAG --draft ...
 
 Asset contract (fixed names, derived from the version; no file lists them):
 
@@ -12,13 +15,25 @@ Asset contract (fixed names, derived from the version; no file lists them):
 - `macos-arm64`: `LingoPop-<version>-macos-arm64.dmg`, `LingoPop-<version>-macos-arm64.zip`
 - `macos-x64`:   `LingoPop-<version>-macos-x64.dmg`,   `LingoPop-<version>-macos-x64.zip`
 
+Updatable assets (the in-app updater downloads them) get a detached minisign signature
+`<asset>.minisig` in the release, whose trusted comment is exactly `lingopop-update <asset>`:
+the exe and the two zips. The dmgs are never signed.
+
 Each build leg uploads the artifact `LingoPop-<version>-<platform>` with its assets,
 `SHA256SUMS-<platform>.txt` and, for the macOS legs, `signing-<platform>.txt` (`adhoc`,
-`selfsigned` or `developer-id`). `publish` reads `release-platforms.json` (`{"macosPreview": bool}`; anything else
-fails closed), copies the selected assets into `--out`, concatenates the per-platform manifests
-into `SHA256SUMS.txt`, runs `verify_assets` on the result, renders the release notes (CHANGELOG
-section + the Installation section of `docs/INSTALL.md`) and only then runs the given command
-with the asset paths appended. Any error means the command never runs.
+`selfsigned` or `developer-id`). The publish job runs, stopping at the first error:
+
+1. `prepare`: reads `release-platforms.json` (`{"macosPreview": bool}`; anything else fails
+   closed), copies the selected assets into `--out` (refusing any macOS signing mode other than
+   `--require-mac-signing`), concatenates the per-platform manifests into `SHA256SUMS.txt`, runs
+   `verify_assets` on the UNSIGNED set (the pre-signing check) and renders the release notes
+   (CHANGELOG section + the Installation section of `docs/INSTALL.md`).
+2. `updatable` prints the names to sign; the workflow signs them and verifies the signatures
+   cryptographically against the committed public key (`lingopop-release-tools`).
+3. `finalize`: appends the `.minisig` files to `SHA256SUMS.txt` (the asset lines stay those of
+   the build legs, so an asset changed after step 1 is a checksum mismatch), runs `verify_assets`
+   on the SIGNED set (names, sizes, checksums, trusted-comment lines) and only then runs the given
+   command with the asset paths appended. Any error means the command never runs.
 
 `verify_assets` inspects everything without mounting a disk image, so it runs on Linux: the zip's
 Info.plist (bundle id, version, minimum macOS, LSUIElement), the Mach-O header of the bundle
@@ -57,6 +72,11 @@ VERSION_RE = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$"
 )
 MANIFEST_LINE = re.compile(r"^([0-9a-f]{64})  ([^\s/\\]+)$")
+SIGNATURE_SUFFIX = ".minisig"
+MAX_SIGNATURE_BYTES = 4096  # the updater's limit (core `updates::update_plan`)
+UNTRUSTED_PREFIX = "untrusted comment: "
+TRUSTED_PREFIX = "trusted comment: "
+UPDATE_COMMENT = "lingopop-update "  # core `update_sig::update_comment`
 
 # Mach-O
 MH_MAGIC_64 = 0xFEEDFACF
@@ -93,9 +113,35 @@ def resolve_platforms(platforms) -> Tuple[List[str], List[str]]:
 
 
 def asset_names(version: str, slug: str) -> List[str]:
+    """The UNSIGNED build set of one platform (what a build leg uploads and `assemble` copies)."""
     if slug == "windows-x64":
         return [f"LingoPop-{version}-windows-x64-portable.exe"]
     return [f"LingoPop-{version}-{slug}.dmg", f"LingoPop-{version}-{slug}.zip"]
+
+
+def updatable_names(version: str, slug: str) -> List[str]:
+    """The assets of one platform the in-app updater installs, i.e. the ones that get signed."""
+    if slug == "windows-x64":
+        return [f"LingoPop-{version}-windows-x64-portable.exe"]
+    return [f"LingoPop-{version}-{slug}.zip"]
+
+
+def signed_asset_names(version: str, slug: str) -> List[str]:
+    """The release set of one platform after signing: the build set plus `<asset>.minisig` for
+    every updatable asset, each signature right after its asset."""
+    names = []
+    signed = set(updatable_names(version, slug))
+    for name in asset_names(version, slug):
+        names.append(name)
+        if name in signed:
+            names.append(name + SIGNATURE_SUFFIX)
+    return names
+
+
+def updatable_assets(version: str, platforms) -> List[str]:
+    """The names to sign for a platform selection, in contract order."""
+    slugs, _ = resolve_platforms(sorted(platforms))
+    return [name for slug in slugs for name in updatable_names(version, slug)]
 
 
 def artifact_name(version: str, slug: str) -> str:
@@ -299,14 +345,39 @@ def inspect_app_zip(path: Path, tag: str, version: str, slug: str) -> List[str]:
     return errors
 
 
+def inspect_signature(path: Path, tag: str, asset: str) -> List[str]:
+    """Text checks of a minisign signature file (the cryptographic check is the Rust tool's):
+    four LF lines `untrusted comment: ..`, signature, `trusted comment: ..`, global signature, and
+    the trusted comment is exactly `lingopop-update <asset>`."""
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        return [f"{tag}: not a minisign signature"]
+    lines = text[:-1].split("\n") if text.endswith("\n") else text.split("\n")
+    if (
+        "\r" in text
+        or len(lines) != 4
+        or not lines[0].startswith(UNTRUSTED_PREFIX)
+        or not lines[1]
+        or not lines[2].startswith(TRUSTED_PREFIX)
+        or not lines[3]
+    ):
+        return [f"{tag}: not a minisign signature"]
+    if lines[2] != f"{TRUSTED_PREFIX}{UPDATE_COMMENT}{asset}":
+        return [f"{tag}: trusted comment does not name the asset"]
+    return []
+
+
 # ---------------------------------------------------------------------------------------------
 # Verification
 
 
-def verify_assets(directory: Path, version: str, platforms, manifest: str = MANIFEST) -> List[str]:
+def verify_assets(directory: Path, version: str, platforms, manifest: str = MANIFEST, signed: bool = False) -> List[str]:
     """Sorted fixed-text errors; empty means `directory` holds exactly the selected asset set and
     its manifest, every size is plausible, every checksum matches and every binary is the
-    expected kind, architecture and bundle."""
+    expected kind, architecture and bundle. `signed` selects the release set after signing
+    (`signed_asset_names`: a `.minisig` per updatable asset with its trusted-comment line);
+    otherwise a `.minisig` is an unexpected file."""
     directory = Path(directory)
     if not VERSION_RE.match(version or ""):
         return [f"invalid version {version!r}"]
@@ -315,8 +386,9 @@ def verify_assets(directory: Path, version: str, platforms, manifest: str = MANI
         return sorted(errors + [f"{directory}: not a directory"])
 
     expected: Dict[str, str] = {}
+    names_of = signed_asset_names if signed else asset_names
     for slug in slugs:
-        for name in asset_names(version, slug):
+        for name in names_of(version, slug):
             expected[name] = slug
     present = {entry.name: entry for entry in directory.iterdir()}
 
@@ -334,11 +406,14 @@ def verify_assets(directory: Path, version: str, platforms, manifest: str = MANI
             errors.append(f"{tag}: missing")
             continue
         size = entry.stat().st_size
-        if size == 0 or size > MAX_ASSET_BYTES:
+        limit = MAX_SIGNATURE_BYTES if name.endswith(SIGNATURE_SUFFIX) else MAX_ASSET_BYTES
+        if size == 0 or size > limit:
             errors.append(f"{tag}: size {size} bytes is out of range")
             continue
         digests[name] = sha256_of(entry)
-        if name.endswith(".exe"):
+        if name.endswith(SIGNATURE_SUFFIX):
+            errors.extend(inspect_signature(entry, tag, name[: -len(SIGNATURE_SUFFIX)]))
+        elif name.endswith(".exe"):
             with open(entry, "rb") as handle:
                 head = handle.read(4096)
             machine = pe_machine(head)
@@ -378,9 +453,14 @@ def verify_assets(directory: Path, version: str, platforms, manifest: str = MANI
 # Publication
 
 
-def assemble(artifacts: Path, version: str, platforms, out: Path) -> Tuple[List[str], Optional[str]]:
+def assemble(
+    artifacts: Path, version: str, platforms, out: Path, require_mac_signing: Optional[str] = None
+) -> Tuple[List[str], Optional[str]]:
     """Copies the selected assets of each `LingoPop-<version>-<platform>` artifact directory into
-    `out` and writes the combined `SHA256SUMS.txt`. Returns (sorted errors, macOS signing mode)."""
+    `out` and writes the combined `SHA256SUMS.txt`. Returns (sorted errors, macOS signing mode).
+    With `require_mac_signing`, every selected macOS leg must report exactly that mode (a tag
+    release that carries the Mac assets must be `selfsigned`); a selection without macOS legs is
+    unaffected."""
     slugs, errors = resolve_platforms(sorted(platforms))
     if errors:
         return sorted(errors), None
@@ -426,6 +506,8 @@ def assemble(artifacts: Path, version: str, platforms, out: Path) -> Tuple[List[
                 mode = None
             if mode not in SIGNING_MODES:
                 errors.append(f"signing-{slug}.txt: missing or invalid")
+            elif require_mac_signing is not None and mode != require_mac_signing:
+                errors.append(f"signing-{slug}.txt: {mode} is not allowed for a release ({require_mac_signing} required)")
             else:
                 modes.add(mode)
     if len(modes) > 1:
@@ -512,7 +594,14 @@ def render_notes(changelog: str, template: str, version: str, platforms, mode: O
     return f"{section}\n\n{install}", errors + install_errors
 
 
-def publish(
+def platforms_from_file(platforms_file: Path) -> Tuple[Optional[Set[str]], List[str]]:
+    config = read_release_platforms(platforms_file)
+    if config is None:
+        return None, [f"{Path(platforms_file).name}: missing or malformed (expected {{\"macosPreview\": true|false}})"]
+    return platforms_for(config), []
+
+
+def prepare(
     artifacts: Path,
     version: str,
     platforms_file: Path,
@@ -520,18 +609,16 @@ def publish(
     changelog: Path,
     install: Path,
     notes_out: Path,
-    command: Sequence[str],
-    runner: Callable = subprocess.run,
+    require_mac_signing: Optional[str] = None,
 ) -> List[str]:
-    """Returns the sorted errors. `runner(command + asset paths, check=True)` is called exactly
-    once, and only when there are none."""
-    if not command:
-        return ["no publish command given"]
-    config = read_release_platforms(platforms_file)
-    if config is None:
-        return [f"{Path(platforms_file).name}: missing or malformed (expected {{\"macosPreview\": true|false}})"]
-    platforms = platforms_for(config)
-    errors, mode = assemble(artifacts, version, platforms, out)
+    """Publish step 1: assemble, the pre-signing check of the unsigned set, the release notes.
+    Returns the sorted errors (nothing is signed or published here)."""
+    platforms, errors = platforms_from_file(platforms_file)
+    if errors:
+        return errors
+    if require_mac_signing is not None and require_mac_signing not in SIGNING_MODES:
+        return [f"unknown signing mode {require_mac_signing!r}"]
+    errors, mode = assemble(artifacts, version, platforms, out, require_mac_signing)
     if errors:
         return errors
     errors = verify_assets(out, version, platforms)
@@ -550,9 +637,58 @@ def publish(
     if errors:
         return sorted(errors)
     Path(notes_out).write_text(notes, encoding="utf-8", newline="\n")
+    return []
+
+
+def add_signatures_to_manifest(directory: Path, version: str, platforms) -> List[str]:
+    """Appends a line for every expected `.minisig` that exists to `SHA256SUMS.txt`. The existing
+    lines (the build legs' checksums, checked before signing) are kept as they are, so the full
+    check that follows compares the assets with those and not with a fresh hash."""
+    directory = Path(directory)
+    path = directory / MANIFEST
+    if not path.is_file():
+        return [f"{MANIFEST}: missing"]
+    data = path.read_bytes()
+    _, errors = parse_manifest(data, MANIFEST)
+    if errors:
+        return sorted(errors)
+    lines = [data.decode("utf-8")]
+    slugs, errors = resolve_platforms(sorted(platforms))
+    for slug in slugs:
+        for name in updatable_names(version, slug):
+            signature = directory / (name + SIGNATURE_SUFFIX)
+            if signature.is_file() and not signature.is_symlink():
+                lines.append(manifest_line(signature))
+    path.write_text("".join(lines), encoding="utf-8", newline="\n")
+    return sorted(errors)
+
+
+def finalize(
+    directory: Path,
+    version: str,
+    platforms_file: Path,
+    command: Sequence[str],
+    runner: Callable = subprocess.run,
+) -> List[str]:
+    """Publish step 3, after signing and the cryptographic check: the manifest with the
+    signatures, `verify_assets` on the signed set and then `runner(command + asset paths,
+    check=True)`, exactly once and only when there are no errors."""
+    if not command:
+        return ["no publish command given"]
+    if not VERSION_RE.match(version or ""):
+        return [f"invalid version {version!r}"]
+    platforms, errors = platforms_from_file(platforms_file)
+    if errors:
+        return errors
+    errors = add_signatures_to_manifest(directory, version, platforms)
+    if errors:
+        return errors
+    errors = verify_assets(directory, version, platforms, signed=True)
+    if errors:
+        return errors
     slugs, _ = resolve_platforms(sorted(platforms))
-    files = [str(Path(out) / name) for slug in slugs for name in asset_names(version, slug)]
-    files.append(str(Path(out) / MANIFEST))
+    files = [str(Path(directory) / name) for slug in slugs for name in signed_asset_names(version, slug)]
+    files.append(str(Path(directory) / MANIFEST))
     runner(list(command) + files, check=True)
     return []
 
@@ -568,8 +704,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     v.add_argument("--version", required=True)
     v.add_argument("--platforms", required=True, help="comma list: windows, macos, windows-x64, macos-arm64, macos-x64")
     v.add_argument("--manifest", default=MANIFEST)
+    v.add_argument("--signed", action="store_true", help="the release set after signing (with .minisig files)")
     v.add_argument("directory")
-    p = sub.add_parser("publish", help="assemble, verify, write notes, then run the command")
+    p = sub.add_parser("prepare", help="assemble, check the unsigned set, write the notes")
     p.add_argument("--version", required=True)
     p.add_argument("--platforms-file", required=True)
     p.add_argument("--artifacts", required=True)
@@ -577,15 +714,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--changelog", required=True)
     p.add_argument("--install", required=True)
     p.add_argument("--notes-out", required=True)
-    p.add_argument("command", nargs=argparse.REMAINDER)
+    p.add_argument("--require-mac-signing", choices=SIGNING_MODES)
+    u = sub.add_parser("updatable", help="print the names of the assets to sign, one per line")
+    u.add_argument("--version", required=True)
+    u.add_argument("--platforms-file", required=True)
+    f = sub.add_parser("finalize", help="add the signatures to the manifest, check the signed set, then run the command")
+    f.add_argument("--version", required=True)
+    f.add_argument("--platforms-file", required=True)
+    f.add_argument("directory")
+    f.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
     if args.action == "verify":
         platforms = {p for p in args.platforms.split(",") if p}
-        errors = verify_assets(Path(args.directory), args.version, platforms, args.manifest)
-    else:
-        command = args.command[1:] if args.command[:1] == ["--"] else args.command
-        errors = publish(
+        errors = verify_assets(Path(args.directory), args.version, platforms, args.manifest, args.signed)
+    elif args.action == "prepare":
+        errors = prepare(
             Path(args.artifacts),
             args.version,
             Path(args.platforms_file),
@@ -593,8 +737,20 @@ def main(argv: Optional[List[str]] = None) -> int:
             Path(args.changelog),
             Path(args.install),
             Path(args.notes_out),
-            command,
+            args.require_mac_signing,
         )
+    elif args.action == "updatable":
+        if not VERSION_RE.match(args.version):
+            errors = [f"invalid version {args.version!r}"]
+        else:
+            platforms, errors = platforms_from_file(Path(args.platforms_file))
+        if not errors:
+            for name in updatable_assets(args.version, platforms):
+                print(name)
+            return 0
+    else:
+        command = args.command[1:] if args.command[:1] == ["--"] else args.command
+        errors = finalize(Path(args.directory), args.version, Path(args.platforms_file), command)
     for error in errors:
         print(f"error: {error}", file=sys.stderr)
     if errors:

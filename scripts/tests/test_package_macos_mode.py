@@ -168,6 +168,21 @@ class ScriptText(unittest.TestCase):
         for var in ["MACOS_SIGNING_P12", "MACOS_SIGNING_P12_PASSWORD", *APPLE]:
             self.assertRegex(command, rf"-u {var}(\s|$)", var)
 
+    def test_signing_secrets_are_unset_right_after_the_import(self):
+        # Later children (security, codesign, ditto, hdiutil, python3) never inherit them.
+        lines = self.script.splitlines()
+        for importing, names in (
+            ('import_identity "$MACOS_SIGNING_P12" "$MACOS_SIGNING_P12_PASSWORD"',
+             "unset MACOS_SIGNING_P12 MACOS_SIGNING_P12_PASSWORD"),
+            ('import_identity "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD"',
+             "unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD"),
+        ):
+            index = [i for i, line in enumerate(lines) if line.strip() == importing]
+            self.assertEqual(len(index), 1, importing)
+            self.assertEqual(lines[index[0] + 1].strip(), names)
+        after = self.script[self.script.index("unset MACOS_SIGNING_P12 MACOS_SIGNING_P12_PASSWORD"):]
+        self.assertNotIn("$MACOS_SIGNING_P12", after)
+
     def test_selfsigned_checks_the_pinned_requirement(self):
         self.assertIn("release-signing.json", self.script)
         self.assertIn('identifier \\"$bundle_id\\" and certificate leaf = H\\"$pinned_sha1\\"', self.script)

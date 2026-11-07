@@ -17,11 +17,14 @@ env:
 
 # Every leg checks the versions (and, on a tag run, the tag) with scripts/check-version.py, builds
 # its assets, verifies them with scripts/verify-release-assets.py and uploads the artifact
-# LingoPop-<version>-<platform> (assets + SHA256SUMS-<platform>.txt). The publish job runs on tag
-# pushes only, after EVERY leg succeeded: it assembles the assets selected by
-# release-platforms.json, writes and verifies the combined SHA256SUMS.txt, creates a DRAFT
-# pre-release with them, checks the uploaded files and only then publishes it. workflow_dispatch
-# builds and uploads the artifacts only.
+# LingoPop-<version>-<platform> (assets + SHA256SUMS-<platform>.txt). build-release-tools builds
+# the update signer / verifier (crates/lingopop-release-tools) without any secret. The publish
+# job runs on tag pushes only, after EVERY job succeeded, and builds nothing: it checks the tool
+# binary's SHA-256, assembles the assets selected by release-platforms.json and checks the
+# unsigned set, signs the updatable assets with the update key (the only job that sees it),
+# verifies the signatures against the committed public key, checks the signed set with the
+# combined SHA256SUMS.txt, creates a DRAFT release with them, checks the uploaded files and only
+# then publishes it. workflow_dispatch builds and uploads the artifacts only.
 jobs:
   build:
     name: build-windows-portable
@@ -232,10 +235,42 @@ jobs:
           path: dist-release/*
           if-no-files-found: error
 
+  # The update signer / verifier, built from this checkout with --locked in a job that holds no
+  # secret; the publish job runs this binary and builds nothing itself. The SHA-256 output only
+  # proves the file was not swapped between the jobs, it does not make the binary or its
+  # dependencies trusted.
+  build-release-tools:
+    name: build-release-tools
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: Build the release tools
+        run: cargo build -p lingopop-release-tools --release --locked
+      - name: Hash the binary
+        id: hash
+        run: |
+          set -euo pipefail
+          sum=$(sha256sum target/release/lingopop-release-tools | cut -d ' ' -f 1)
+          echo "lingopop-release-tools sha256: $sum"
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lingopop-release-tools
+          path: target/release/lingopop-release-tools
+          if-no-files-found: error
+
   publish:
     name: publish-release
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: [build, build-macos]
+    needs: [build, build-macos, build-release-tools]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -263,16 +298,88 @@ jobs:
             echo "::error::the legs report different versions ($WINDOWS_VERSION, $MACOS_VERSION, expected $version)"
             exit 1
           fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lingopop-release-tools
+          path: tools
+      - name: Check the release tools binary
+        env:
+          EXPECTED: ${{ needs.build-release-tools.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          actual=$(sha256sum tools/lingopop-release-tools | cut -d ' ' -f 1)
+          if [ -z "$EXPECTED" ] || [ "$actual" != "$EXPECTED" ]; then
+            echo "::error::the release tools binary does not match the SHA-256 of build-release-tools"
+            exit 1
+          fi
+          chmod +x tools/lingopop-release-tools
       # Each artifact lands in its own directory artifacts/LingoPop-<version>-<platform>/.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: LingoPop-${{ needs.build.outputs.version }}-*
           path: artifacts
+      # Reads release-platforms.json (fails closed), copies the selected assets into release/,
+      # writes SHA256SUMS.txt from the legs' manifests, checks the UNSIGNED set (no .minisig) and
+      # writes notes.md (CHANGELOG section + the Installation section of docs/INSTALL.md). A
+      # release that carries the Mac assets must be signed with the pinned self-signed
+      # certificate (the second check after the build leg's gate); a Windows-only release is
+      # unaffected.
+      - name: Assemble and check the unsigned assets
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          python scripts/verify-release-assets.py prepare \
+            --version "$VERSION" \
+            --platforms-file release-platforms.json \
+            --artifacts artifacts \
+            --out release \
+            --changelog CHANGELOG.md \
+            --install docs/INSTALL.md \
+            --notes-out notes.md \
+            --require-mac-signing selfsigned
+      # The update key exists only in this job: as a 0600 file under $RUNNER_TEMP for this step
+      # (removed by the always() step below) and its password only in the variable that
+      # --password-env names. Neither is ever printed. Signed: the exe and, with the Mac assets,
+      # the two zips (never the dmgs); trusted comment `lingopop-update <asset>`.
+      - name: Sign the update assets
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_PASSWORD: ${{ secrets.UPDATE_SIGNING_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UPDATE_SIGNING_KEY" ] || [ -z "$UPDATE_SIGNING_KEY_PASSWORD" ]; then
+            echo "::error::the UPDATE_SIGNING_KEY secrets are not configured"
+            exit 1
+          fi
+          names=$(python scripts/verify-release-assets.py updatable --version "$VERSION" --platforms-file release-platforms.json)
+          assets=()
+          while IFS= read -r name; do assets+=("release/$name"); done <<< "$names"
+          key="$RUNNER_TEMP/update-signing.key"
+          (umask 077 && printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key")
+          unset UPDATE_SIGNING_KEY
+          tools/lingopop-release-tools sign --key "$key" --password-env UPDATE_SIGNING_KEY_PASSWORD "${assets[@]}"
+          rm -f "$key"
+      - name: Remove the update signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/update-signing.key"
+      # Cryptographic check of every .minisig against the committed core UPDATE_PUBLIC_KEY
+      # (`const`), with the same minisign-verify code and trusted-comment rule as the app.
+      - name: Verify the update signatures
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          names=$(python scripts/verify-release-assets.py updatable --version "$VERSION" --platforms-file release-platforms.json)
+          assets=()
+          while IFS= read -r name; do assets+=("release/$name"); done <<< "$names"
+          tools/lingopop-release-tools verify --public-key const "${assets[@]}"
       # The release is created as a DRAFT with every asset, the uploaded files are downloaded
       # again and compared byte for byte with the verified ones, and only then is it published.
       # A failure anywhere leaves at most a draft (never a public release with missing files);
       # delete it by hand before re-running.
-      - name: Assemble, verify and create the draft release
+      - name: Check the signed assets and create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -284,17 +391,13 @@ jobs:
           # /releases/latest (the in-app update check and the README download links) points to.
           channel=()
           if [[ "$VERSION" == *-* ]]; then channel=(--prerelease); fi
-          # Reads release-platforms.json (fails closed), copies the selected assets into
-          # release/, writes and verifies SHA256SUMS.txt, writes notes.md (CHANGELOG section +
-          # the Installation section of docs/INSTALL.md) and only then runs gh with the assets.
-          python scripts/verify-release-assets.py publish \
+          # Adds the .minisig files to SHA256SUMS.txt (the asset lines stay the legs' checksums),
+          # checks the complete signed set (names, sizes, checksums, trusted-comment lines) and
+          # only then runs gh with the assets.
+          python scripts/verify-release-assets.py finalize \
             --version "$VERSION" \
             --platforms-file release-platforms.json \
-            --artifacts artifacts \
-            --out release \
-            --changelog CHANGELOG.md \
-            --install docs/INSTALL.md \
-            --notes-out notes.md \
+            release \
             -- gh release create "$TAG" --draft "${channel[@]}" --title "LingoPop $VERSION" --notes-file notes.md
       - name: Check the uploaded assets
         env:

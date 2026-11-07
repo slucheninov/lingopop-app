@@ -281,6 +281,7 @@ if [ "$mode" = adhoc ]; then
   codesign --force --sign - --options runtime --timestamp=none "$app"
 elif [ "$mode" = selfsigned ]; then
   import_identity "$MACOS_SIGNING_P12" "$MACOS_SIGNING_P12_PASSWORD"
+  unset MACOS_SIGNING_P12 MACOS_SIGNING_P12_PASSWORD
   identities=$(security find-identity -p codesigning "$keychain" | identity_sha1s)
   [ -n "$identities" ] || die "the self-signed .p12 holds no code-signing identity"
   [ "$(printf '%s\n' "$identities" | wc -l | tr -d ' ')" = 1 ] \
@@ -292,6 +293,7 @@ elif [ "$mode" = selfsigned ]; then
     --timestamp=none "$app"
 else
   import_identity "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD"
+  unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
   codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$keychain" --options runtime \
     --timestamp "$app"
   ditto -c -k --keepParent "$app" "$work/notarize-app.zip"
