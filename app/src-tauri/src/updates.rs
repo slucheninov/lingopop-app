@@ -78,6 +78,10 @@ pub trait Installer: Send + Sync {
     /// Swaps the verified download in. On `Ok` the journal is still `pending`; the caller
     /// commits it.
     fn install(&self, plan: &UpdatePlan, downloaded: &Path) -> Result<(), UpdateError>;
+    /// Commits the journal after a successful install (`commit_journal`; a seam for tests).
+    fn commit(&self, data_dir: &Path) -> Result<(), UpdateError> {
+        commit_journal(data_dir)
+    }
     /// Starts the installed app with `--wait-for-pid <this pid>`; the caller then exits.
     fn relaunch(&self) -> std::io::Result<()>;
 }
@@ -447,7 +451,22 @@ impl UpdateState {
     }
 
     async fn run(self: Arc<Self>, plan: UpdatePlan, cancel: tokio::sync::watch::Receiver<bool>) {
-        let outcome = self.attempt(&plan, cancel).await;
+        // The attempt runs as its own task so a panic in it ends as Failed (install key) with
+        // the attempt cleaned up through recovery, never as a phase stuck in Downloading.
+        let this = Arc::clone(&self);
+        let attempted = plan.clone();
+        let outcome = match tauri::async_runtime::spawn(async move {
+            this.attempt(&attempted, cancel).await
+        })
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                log::warn!("update attempt panicked");
+                self.cleanup().await;
+                Err(UpdateError::Install("update worker failed").into())
+            }
+        };
         let phase = match outcome {
             Ok(()) => {
                 log::info!("update installed");
@@ -536,13 +555,32 @@ impl UpdateState {
             return Err(Stop::Cancelled);
         }
         let (installer, data, plan) = (deps.installer.clone(), deps.data_dir.clone(), plan.clone());
+        let running = deps.running.clone();
         // After an install error the attempt is either cleaned already or the journal stays
-        // for the next start's recovery (a failed rollback): nothing more to do here.
-        blocking(move || {
+        // for the next start's recovery (a failed rollback): nothing more to do here. A commit
+        // failure after a successful swap is recovered at once (the pending new version is
+        // swapped back), so "Your current version is unchanged" is true when it is shown.
+        let installed = blocking(move || {
             installer.install(&plan, &asset)?;
-            commit_journal(&data)
+            if let Err(error) = installer.commit(&data) {
+                log::warn!("update commit failed, restoring the previous version");
+                if !matches!(recover(&data, &running), Recovery::Restored) {
+                    log::warn!("update restore after a failed commit did not complete");
+                }
+                return Err(error);
+            }
+            Ok(())
         })
-        .await??;
+        .await;
+        match installed {
+            Ok(result) => result?,
+            Err(error) => {
+                // The install job panicked: its state is unknown, recovery decides.
+                log::warn!("update install panicked");
+                self.cleanup().await;
+                return Err(error.into());
+            }
+        }
         Ok(())
     }
 
@@ -608,8 +646,10 @@ impl UpdateState {
             let Phase::Downloading { received, .. } = &mut m.phase else {
                 return false;
             };
+            // A clock that stepped backwards (`now < last`) counts as elapsed, so progress
+            // never stalls until wall time catches up again.
             if m.last_progress
-                .is_some_and(|last| now - last < PROGRESS_INTERVAL_SECONDS)
+                .is_some_and(|last| now >= last && now - last < PROGRESS_INTERVAL_SECONDS)
             {
                 return false;
             }

@@ -13,8 +13,8 @@ use lingopop_core::time::{ManualClock, Timestamp};
 use lingopop_core::update_sig::{update_comment, verify_update_with, UpdateError};
 use lingopop_core::updates::{UpdatePlan, UpdateTarget};
 use lingopop_platform::update_install::{
-    file_sha256, read_journal, recover, write_journal, InstallSite, Journal, Phase, Recovery,
-    SiteKind, Support, JOURNAL_FILE,
+    confirm, file_sha256, intend, read_journal, recover, write_journal, InstallSite, Journal,
+    Phase, Recovery, SiteKind, Support, JOURNAL_FILE,
 };
 use tokio::sync::Notify;
 
@@ -72,6 +72,46 @@ enum Mode {
     Hang,
     /// Calls `progress` this many times, advancing the clock 5 ms each time.
     Chatty(usize),
+    /// Reports progress 1, steps the clock back 10 s, then reports progress 2.
+    Backwards,
+    /// Panics inside the download (the async part of the attempt).
+    Panic,
+}
+
+/// Holds a blocking step until the test releases it: `entered` is signalled first.
+#[derive(Default)]
+struct Gate {
+    entered: Notify,
+    release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+}
+
+impl Gate {
+    /// Arms the gate; dropping or sending on the returned sender releases it.
+    fn arm(&self) -> std::sync::mpsc::Sender<()> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        *self.release.lock().unwrap() = Some(rx);
+        tx
+    }
+
+    /// Called on the blocking thread.
+    fn pass(&self) {
+        let rx = self.release.lock().unwrap().take();
+        if let Some(rx) = rx {
+            self.entered.notify_one();
+            let _ = rx.recv();
+        }
+    }
+}
+
+/// What the fake install does.
+#[derive(Clone, Copy, PartialEq)]
+enum InstallMode {
+    /// Copies the download onto `site` and records `newHash`.
+    Copy,
+    /// A real swap (`site` -> backup, download -> `site`), then the commit fails.
+    SwapThenCommitFails,
+    /// Panics on the blocking thread.
+    Panic,
 }
 
 #[derive(Debug, Clone)]
@@ -131,19 +171,25 @@ impl Download for FakeDownloader {
             .map_err(|_| UpdateError::Download)?;
         let mut guard = Partial(dest.to_owned(), false);
         match mode {
+            Mode::Panic => panic!("scripted download panic"),
             Mode::Hang => {
                 std::fs::write(dest, &bytes[..4]).unwrap();
                 self.started.notify_one();
                 std::future::pending::<()>().await;
                 unreachable!()
             }
-            Mode::Serve | Mode::Report(_) | Mode::Chatty(_) => {
+            Mode::Serve | Mode::Report(_) | Mode::Chatty(_) | Mode::Backwards => {
                 std::fs::write(dest, &bytes).unwrap();
                 if let Mode::Chatty(n) = mode {
                     for i in 0..n {
                         self.clock.advance(0.005);
                         progress(i as u64, Some(bytes.len() as u64));
                     }
+                }
+                if let Mode::Backwards = mode {
+                    progress(1, Some(bytes.len() as u64));
+                    self.clock.advance(-10.0);
+                    progress(2, Some(bytes.len() as u64));
                 }
                 guard.1 = true;
                 Ok(match mode {
@@ -160,6 +206,8 @@ struct FakeInstaller {
     support: Support,
     installs: Mutex<Vec<(String, PathBuf)>>,
     relaunches: AtomicUsize,
+    mode: Mutex<InstallMode>,
+    gate: Gate,
 }
 
 impl Installer for FakeInstaller {
@@ -173,14 +221,35 @@ impl Installer for FakeInstaller {
             .lock()
             .unwrap()
             .push((plan.version.clone(), downloaded.to_owned()));
+        self.gate.pass();
         let Support::Supported(site) = &self.support else {
             return Err(UpdateError::Unsupported("test"));
         };
+        let mode = *self.mode.lock().unwrap();
+        if mode == InstallMode::Panic {
+            panic!("scripted install panic");
+        }
         let mut j = read_journal(&self.data_dir).unwrap().unwrap();
         j.new_hash = file_sha256(downloaded);
         write_journal(&self.data_dir, &j).unwrap();
-        std::fs::copy(downloaded, &site.path).unwrap();
+        if mode == InstallMode::SwapThenCommitFails {
+            // Like `install_exe`: the backup is tracked, then the two renames.
+            let old = j.old.clone();
+            intend(&self.data_dir, &mut j, &old).unwrap();
+            std::fs::rename(&site.path, &old).unwrap();
+            confirm(&self.data_dir, &mut j, &old).unwrap();
+            std::fs::rename(downloaded, &site.path).unwrap();
+        } else {
+            std::fs::copy(downloaded, &site.path).unwrap();
+        }
         Ok(())
+    }
+
+    fn commit(&self, data_dir: &Path) -> Result<(), UpdateError> {
+        if *self.mode.lock().unwrap() == InstallMode::SwapThenCommitFails {
+            return Err(UpdateError::Install("scripted commit failure"));
+        }
+        lingopop_platform::update_install::commit_journal(data_dir)
     }
 
     fn relaunch(&self) -> std::io::Result<()> {
@@ -196,6 +265,7 @@ struct Rig {
     state: Arc<UpdateState>,
     downloader: Arc<FakeDownloader>,
     installer: Arc<FakeInstaller>,
+    verify_gate: Arc<Gate>,
     clock: Arc<ManualClock>,
     emitted: Arc<Mutex<Vec<UpdateView>>>,
     comments: Arc<Mutex<Vec<String>>>,
@@ -232,7 +302,11 @@ fn rig_with(release: FakeTransport, support: Option<&'static str>) -> Rig {
         },
         installs: Mutex::new(Vec::new()),
         relaunches: AtomicUsize::new(0),
+        mode: Mutex::new(InstallMode::Copy),
+        gate: Gate::default(),
     });
+    let verify_gate = Arc::new(Gate::default());
+    let held = verify_gate.clone();
     let emitted = Arc::new(Mutex::new(Vec::new()));
     let comments = Arc::new(Mutex::new(Vec::new()));
     let sink = emitted.clone();
@@ -250,6 +324,7 @@ fn rig_with(release: FakeTransport, support: Option<&'static str>) -> Rig {
             // recorded so the tests can check it is the plan's.
             verify: Arc::new(move |bytes, sig, comment| {
                 seen.lock().unwrap().push(comment.to_owned());
+                held.pass();
                 verify_update_with(key_line(), bytes, sig, &update_comment(FIXTURE_ASSET))
             }),
             emit: Arc::new(move |view| sink.lock().unwrap().push(view.clone())),
@@ -261,6 +336,7 @@ fn rig_with(release: FakeTransport, support: Option<&'static str>) -> Rig {
         state: Arc::new(state),
         downloader,
         installer,
+        verify_gate,
         clock,
         emitted,
         comments,
@@ -707,4 +783,124 @@ impl Rig {
         use lingopop_core::time::Clock;
         self.clock.now().unix_seconds()
     }
+}
+
+// Fix round 1.
+
+#[tokio::test]
+async fn commit_failure_restores_the_previous_version_at_once() {
+    let rig = rig();
+    rig.available().await;
+    *rig.installer.mode.lock().unwrap() = InstallMode::SwapThenCommitFails;
+    let view = rig.install_and_settle().await;
+    assert_eq!(view.state, UpdateStatus::Failed, "{view:?}");
+    assert_eq!(view.error.as_deref(), Some(INSTALL_KEY));
+    assert_eq!(rig.installer.installs.lock().unwrap().len(), 1);
+    // The swap happened and was undone in the same job: the old version is back now.
+    assert_eq!(std::fs::read(&rig.site).unwrap(), b"old exe");
+    assert!(!rig.journal_path().exists());
+    assert!(
+        rig.site_leftovers().is_empty(),
+        "{:?}",
+        rig.site_leftovers()
+    );
+}
+
+#[tokio::test]
+async fn panic_in_the_install_job_is_failed_and_cleaned() {
+    let rig = rig();
+    rig.available().await;
+    *rig.installer.mode.lock().unwrap() = InstallMode::Panic;
+    let view = rig.install_and_settle().await;
+    assert_eq!(view.state, UpdateStatus::Failed, "{view:?}");
+    assert_eq!(view.error.as_deref(), Some(INSTALL_KEY));
+    assert!(!rig.journal_path().exists());
+    assert!(
+        rig.site_leftovers().is_empty(),
+        "{:?}",
+        rig.site_leftovers()
+    );
+    assert_eq!(std::fs::read(&rig.site).unwrap(), b"old exe");
+    // Not stuck: a retry from Failed works.
+    *rig.installer.mode.lock().unwrap() = InstallMode::Copy;
+    assert_eq!(rig.install_and_settle().await.state, UpdateStatus::Ready);
+}
+
+#[tokio::test]
+async fn panic_in_the_attempt_task_is_failed_not_stuck_downloading() {
+    let rig = rig();
+    rig.available().await;
+    *rig.downloader.asset.lock().unwrap() = Mode::Panic;
+    let view = rig.install_and_settle().await;
+    assert_eq!(view.state, UpdateStatus::Failed, "{view:?}");
+    assert_eq!(view.error.as_deref(), Some(INSTALL_KEY));
+    assert!(rig.installer.installs.lock().unwrap().is_empty());
+    assert!(!rig.journal_path().exists());
+    assert!(
+        rig.site_leftovers().is_empty(),
+        "{:?}",
+        rig.site_leftovers()
+    );
+    assert_eq!(std::fs::read(&rig.site).unwrap(), b"old exe");
+    // The machine accepts a new attempt.
+    *rig.downloader.asset.lock().unwrap() = Mode::Serve;
+    assert_eq!(rig.install_and_settle().await.state, UpdateStatus::Ready);
+}
+
+#[tokio::test]
+async fn cancel_during_installing_is_ignored() {
+    let rig = rig();
+    rig.available().await;
+    let release = rig.installer.gate.arm();
+    rig.state.install();
+    rig.installer.gate.entered.notified().await;
+    assert_eq!(rig.state.current().state, UpdateStatus::Installing);
+    let view = rig.state.cancel().await;
+    assert_eq!(view.state, UpdateStatus::Installing, "{view:?}");
+    release.send(()).unwrap();
+    rig.state.settle().await;
+    let view = rig.state.current();
+    assert_eq!(view.state, UpdateStatus::Ready, "{view:?}");
+    assert_eq!(std::fs::read(&rig.site).unwrap(), ASSET_BYTES);
+}
+
+#[tokio::test]
+async fn cancel_during_verify_cleans_up_and_never_installs() {
+    let rig = rig();
+    rig.available().await;
+    let release = rig.verify_gate.arm();
+    rig.state.install();
+    rig.verify_gate.entered.notified().await;
+    assert_eq!(rig.state.current().state, UpdateStatus::Downloading);
+    // `join!` polls the cancel first: its first poll sets the flag, then the verify passes.
+    let (view, ()) = tokio::join!(rig.state.cancel(), async {
+        release.send(()).unwrap();
+    });
+    assert_eq!(view.state, UpdateStatus::Available, "{view:?}");
+    assert!(rig.installer.installs.lock().unwrap().is_empty());
+    assert!(!rig.journal_path().exists());
+    assert!(
+        rig.site_leftovers().is_empty(),
+        "{:?}",
+        rig.site_leftovers()
+    );
+    assert_eq!(std::fs::read(&rig.site).unwrap(), b"old exe");
+}
+
+#[tokio::test]
+async fn progress_after_the_clock_steps_back_is_still_reported() {
+    let rig = rig();
+    rig.available().await;
+    *rig.downloader.asset.lock().unwrap() = Mode::Backwards;
+    rig.install_and_settle().await;
+    let received: Vec<u64> = rig
+        .emitted
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|v| v.state == UpdateStatus::Downloading)
+        .filter_map(|v| v.received)
+        .filter(|r| *r > 0)
+        .collect();
+    assert_eq!(received, vec![1, 2]);
 }
