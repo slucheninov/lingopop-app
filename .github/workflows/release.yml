@@ -179,13 +179,46 @@ jobs:
       - name: Test frontend
         shell: bash
         run: npm test --prefix app
-      # Ad-hoc signing unless ALL six Developer ID secrets are configured; a partial set fails
-      # the leg inside the script. The script never prints the values.
+      # A tag run whose release carries the Mac assets (release-platforms.json macosPreview:
+      # true, read with the publish job's own fail-closed reader) must be signed with the pinned
+      # self-signed release certificate: RELEASE_TAG_RUN=1 makes package-macos.sh refuse ad hoc
+      # and Developer ID. An unreadable file fails the leg. With macosPreview false the Mac
+      # assets stay off the release and the leg may be ad hoc.
+      - name: Require the pinned certificate on tag runs
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import importlib.util
+          import os
+          import sys
+
+          spec = importlib.util.spec_from_file_location("vra", "scripts/verify-release-assets.py")
+          vra = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(vra)
+          config = vra.read_release_platforms("release-platforms.json")
+          if config is None:
+              print("::error::release-platforms.json is missing or invalid")
+              sys.exit(1)
+          if config["macosPreview"]:
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+                  env.write("RELEASE_TAG_RUN=1\n")
+              print("tag run with the Mac assets: the pinned certificate is required")
+          else:
+              print("macosPreview is false: the Mac assets stay off the release")
+          PY
+      # Signing (scripts/package-macos.sh): both MACOS_SIGNING_P12 secrets = selfsigned with the
+      # pinned certificate of release-signing.json (one of the two alone fails); otherwise, off
+      # a tag run, ad hoc unless ALL six Developer ID secrets are configured (a partial set
+      # fails). RELEASE_TAG_RUN comes from the step above. The script never prints the values.
       - name: Build, sign, package and verify
         shell: bash
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           TARGET: ${{ matrix.target }}
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}

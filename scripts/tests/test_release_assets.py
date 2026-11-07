@@ -44,8 +44,11 @@ Windows text.
 <!-- if macos -->
 macOS text.
 
-<!-- if macos-adhoc -->
+<!-- if macos-unnotarized -->
 Gatekeeper text.
+<!-- endif -->
+<!-- if macos-adhoc -->
+Re-grant text.
 <!-- endif -->
 <!-- endif -->
 """
@@ -301,7 +304,7 @@ class Publish(Base):
         self.assertNotIn("older", notes)
         self.assertNotIn("Intro shown only in the docs", notes)
         self.assertNotIn("<!--", notes)
-        for text in ("## Installation", "Windows text.", "macOS text.", "Gatekeeper text."):
+        for text in ("## Installation", "Windows text.", "macOS text.", "Gatekeeper text.", "Re-grant text."):
             self.assertIn(text, notes)
         self.assertLess(notes.index("macOS builds."), notes.index("## Installation"))
 
@@ -311,6 +314,27 @@ class Publish(Base):
         notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
         self.assertIn("macOS text.", notes)
         self.assertNotIn("Gatekeeper text.", notes)
+        self.assertNotIn("Re-grant text.", notes)
+
+    def test_selfsigned_is_accepted_by_assemble(self):
+        write_artifacts(self.tmp / "artifacts", mode="selfsigned")
+        errors, mode = vra.assemble(self.tmp / "artifacts", VERSION, ALL, self.tmp / "release")
+        self.assertEqual(errors, [])
+        self.assertEqual(mode, "selfsigned")
+
+    def test_selfsigned_notes_show_open_anyway_but_not_the_regrant(self):
+        write_artifacts(self.tmp / "artifacts", mode="selfsigned")
+        self.assertEqual(self.publish(), [])
+        self.assertEqual(self.publish_calls, 1)
+        notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
+        self.assertIn("macOS text.", notes)
+        self.assertIn("Gatekeeper text.", notes)
+        self.assertNotIn("Re-grant text.", notes)
+
+    def test_unknown_signing_mode_blocks_publication(self):
+        write_artifacts(self.tmp / "artifacts", mode="self-signed")
+        self.assertIn("signing-macos-arm64.txt: missing or invalid", self.publish())
+        self.assertEqual(self.publish_calls, 0)
 
     def test_version_placeholder_is_replaced(self):
         (self.tmp / "INSTALL.md").write_text(INSTALL.replace("Windows text.", "Get LingoPop-<version>.exe"), encoding="utf-8", newline="\n")
@@ -593,7 +617,7 @@ class Repository(unittest.TestCase):
 
     def test_committed_install_template_renders_for_every_mode(self):
         template = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
-        for platforms, mode in (({"windows"}, None), (ALL, "adhoc"), (ALL, "developer-id")):
+        for platforms, mode in (({"windows"}, None), (ALL, "adhoc"), (ALL, "selfsigned"), (ALL, "developer-id")):
             notes, errors = vra.render_notes(CHANGELOG, template, VERSION, platforms, mode)
             self.assertEqual(errors, [])
             self.assertTrue(notes.startswith("### Added"), notes[:80])
@@ -607,8 +631,8 @@ class Repository(unittest.TestCase):
             self.assertEqual("### macOS" in notes, "macos" in platforms)
             self.assertEqual(f"LingoPop-{VERSION}-macos-arm64.dmg" in notes, "macos" in platforms)
             self.assertEqual("shasum -a 256 -c" in notes, "macos" in platforms)
-            self.assertEqual("Open Anyway" in notes, mode == "adhoc")
-            self.assertEqual("com.apple.quarantine" in notes, mode == "adhoc")
+            self.assertEqual("Open Anyway" in notes, mode in ("adhoc", "selfsigned"))
+            self.assertEqual("com.apple.quarantine" in notes, mode in ("adhoc", "selfsigned"))
             self.assertEqual("re-grant" in notes or "add it again" in notes, mode == "adhoc")
 
 

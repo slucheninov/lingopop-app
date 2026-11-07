@@ -13,8 +13,8 @@ Asset contract (fixed names, derived from the version; no file lists them):
 - `macos-x64`:   `LingoPop-<version>-macos-x64.dmg`,   `LingoPop-<version>-macos-x64.zip`
 
 Each build leg uploads the artifact `LingoPop-<version>-<platform>` with its assets,
-`SHA256SUMS-<platform>.txt` and, for the macOS legs, `signing-<platform>.txt` (`adhoc` or
-`developer-id`). `publish` reads `release-platforms.json` (`{"macosPreview": bool}`; anything else
+`SHA256SUMS-<platform>.txt` and, for the macOS legs, `signing-<platform>.txt` (`adhoc`,
+`selfsigned` or `developer-id`). `publish` reads `release-platforms.json` (`{"macosPreview": bool}`; anything else
 fails closed), copies the selected assets into `--out`, concatenates the per-platform manifests
 into `SHA256SUMS.txt`, runs `verify_assets` on the result, renders the release notes (CHANGELOG
 section + the Installation section of `docs/INSTALL.md`) and only then runs the given command
@@ -48,7 +48,9 @@ MANIFEST = "SHA256SUMS.txt"
 BUNDLE_ID = "app.lingopop.tauri.macos"
 APP_DIR = "LingoPop.app"
 MIN_MACOS = "13.0"
-SIGNING_MODES = ("adhoc", "developer-id")
+SIGNING_MODES = ("adhoc", "selfsigned", "developer-id")
+# Signing modes whose app Apple has not notarized: Gatekeeper blocks the first launch.
+UNNOTARIZED_MODES = ("adhoc", "selfsigned")
 MAX_ASSET_BYTES = 1 << 30  # 1 GiB; a real asset is a few MB, an empty one is always wrong
 MAX_EXECUTABLE_BYTES = 512 << 20
 VERSION_RE = re.compile(
@@ -436,13 +438,16 @@ def assemble(artifacts: Path, version: str, platforms, out: Path) -> Tuple[List[
 CONDITION = re.compile(r"^<!--\s*if\s+([a-z-]+)\s*-->$")
 END_CONDITION = re.compile(r"^<!--\s*endif\s*-->$")
 NOTES_START = "<!-- release-notes-start -->"
-CONDITIONS = ("windows", "macos", "macos-adhoc")
+# `macos-unnotarized`: the Mac build is not notarized (`adhoc` or `selfsigned`): the Open Anyway
+# paragraph. `macos-adhoc`: ad hoc only, its code identity changes with every build: the
+# permission re-grant paragraph.
+CONDITIONS = ("windows", "macos", "macos-unnotarized", "macos-adhoc")
 
 
 def render_install(template: str, conditions: Set[str]) -> Tuple[str, List[str]]:
     """The part of `docs/INSTALL.md` after `<!-- release-notes-start -->` with each
     `<!-- if NAME -->` ... `<!-- endif -->` block kept only when NAME is true (blocks nest;
-    NAME is `windows`, `macos` or `macos-adhoc`). `render_notes` then replaces `<version>`."""
+    NAME is one of `CONDITIONS`; any other name is an error). `render_notes` then replaces `<version>`."""
     if NOTES_START not in template:
         return "", [f"install template: {NOTES_START} marker missing"]
     body = template.split(NOTES_START, 1)[1]
@@ -495,10 +500,12 @@ def render_notes(changelog: str, template: str, version: str, platforms, mode: O
         conditions.add("windows")
     if any(s.startswith("macos-") for s in slugs):
         conditions.add("macos")
+        if mode not in SIGNING_MODES:
+            errors.append("macOS signing mode unknown")
+        if mode in UNNOTARIZED_MODES:
+            conditions.add("macos-unnotarized")
         if mode == "adhoc":
             conditions.add("macos-adhoc")
-        elif mode != "developer-id":
-            errors.append("macOS signing mode unknown")
     install, install_errors = render_install(template, conditions)
     install = install.replace("<version>", version)
     section = changelog_section(changelog, version) or f"Test pre-release {version} of LingoPop."
