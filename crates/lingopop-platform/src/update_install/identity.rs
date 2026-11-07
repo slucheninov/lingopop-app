@@ -55,6 +55,7 @@ pub(crate) fn info_plist(app: &Path) -> Option<String> {
 }
 
 /// `Contents/MacOS/<CFBundleExecutable>`; `None` when the name is not a plain file name.
+#[cfg(target_os = "macos")]
 pub(crate) fn bundle_executable(app: &Path) -> Option<std::path::PathBuf> {
     bundle_executable_in(app, &info_plist(app)?)
 }

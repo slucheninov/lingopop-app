@@ -32,6 +32,7 @@ pub use exe::{
     exe_support, install_exe, install_exe_with, old_exe_path, stage_exe, stage_exe_with,
     staged_exe_path, staging_folder, InstallOps,
 };
+#[cfg(target_os = "macos")]
 pub(crate) use identity::bundle_executable;
 pub use identity::{bundle_identity, file_sha256, identity_for};
 pub use journal::{
