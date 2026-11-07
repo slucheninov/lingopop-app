@@ -49,8 +49,8 @@ class WorkflowDiff(unittest.TestCase):
 
     def test_a_renamed_install_template_still_builds(self):
         """Renaming docs/INSTALL.md to another Markdown file, with rename detection on, builds."""
-        line = re.search(r'files=\$\((git diff [^)]*)\)', WORKFLOW.read_text(encoding="utf-8"))
-        self.assertIsNotNone(line, "ci.yml has no `files=$(git diff ...)` line")
+        line = re.search(r'files=\$\((git [^)]*diff [^)]*)\)', WORKFLOW.read_text(encoding="utf-8"))
+        self.assertIsNotNone(line, "ci.yml has no `files=$(git ... diff ...)` line")
         argv = line.group(1).replace('"$base"', "HEAD^").split()
         with tempfile.TemporaryDirectory() as repo:
             git = lambda *a: subprocess.run(
@@ -65,8 +65,15 @@ class WorkflowDiff(unittest.TestCase):
             git("mv", "docs/INSTALL.md", "docs/OTHER.md")
             git("commit", "-q", "-m", "b")
             files = git(*argv[1:])
-        self.assertIn("docs/INSTALL.md", files)
-        self.assertTrue(ci_changes.needs_build(files.splitlines()))
+            self.assertIn("docs/INSTALL.md", files)
+            self.assertTrue(ci_changes.needs_build(files.splitlines()))
+            # A non-ASCII Markdown path is printed verbatim, so a docs-only change still skips.
+            (Path(repo) / "docs" / "über.md").write_text("doc\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-q", "-m", "c")
+            files = git(*argv[1:])
+            self.assertIn("docs/über.md", files)
+            self.assertFalse(ci_changes.needs_build(files.splitlines()))
 
 
 if __name__ == "__main__":
