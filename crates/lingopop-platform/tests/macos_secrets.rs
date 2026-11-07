@@ -351,3 +351,17 @@ fn insert_failure_with_unreadable_old_key_reports_the_insert_error() {
     assert!(protector.regenerate_key().is_err());
     assert!(keys.key.lock().unwrap().is_none());
 }
+
+/// A blob sealed by aes-gcm 0.10.3 (the 0.2.1 release) still opens: the LPS1
+/// format is unchanged by a library upgrade. Test key 0x42 * 32, not a real key.
+#[test]
+fn aead_opens_a_blob_sealed_by_the_previous_library() {
+    const BLOB: &str = "4c50533132f38c5a2d405bfe8d56d42abb48299f693e8c8d85fc78c31aeb64239e4e3abf098b5bbb3f41f42949aeae29d8e57ed587877d6feb80175656ae8227c263";
+    let bytes: Vec<u8> = (0..BLOB.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&BLOB[i..i + 2], 16).unwrap())
+        .collect();
+    let key = SecretKey::from_bytes(&[0x42; 32]).unwrap();
+    let plain = open(&key, &bytes).unwrap();
+    assert_eq!(plain, b"{\"apiKey.Claude\":\"test-not-a-key\"}");
+}
