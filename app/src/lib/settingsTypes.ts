@@ -136,3 +136,14 @@ export interface ProviderState {
   connectionsCorrupt: boolean;
   keyGuideUrl: string;
 }
+
+export type UpdateState = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'ready' | 'failed' | 'unsupported';
+/** Wire shape of the shell's `UpdateView`: `revision` grows with every change, `error` is an English catalog key. */
+export interface UpdateView {
+  state: UpdateState;
+  version?: string;
+  received?: number;
+  total?: number;
+  error?: string;
+  revision: number;
+}
