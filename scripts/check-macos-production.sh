@@ -49,9 +49,11 @@ else
 fi
 
 # (2) No leftover dev-stub marker text in the macOS adapters (the old Unsupported stubs).
+# Rust sources only: CI skips the build for a Markdown-only change, so a note that quotes a
+# marker must never fail a later code change.
 if [ -d crates/lingopop-platform/src ]; then
   for marker in 'screen capture on macOS' 'OCR on macOS' 'region overlay on macOS'; do
-    if grep -rn -F -e "$marker" crates/lingopop-platform/src/macos "$native" >&2 2>/dev/null; then
+    if grep -rn -F --include='*.rs' -e "$marker" crates/lingopop-platform/src/macos "$native" >&2 2>/dev/null; then
       fail "dev stub marker \"$marker\" is still in the macOS adapters"
     fi
   done
