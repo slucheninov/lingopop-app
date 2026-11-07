@@ -44,8 +44,11 @@ Windows text.
 <!-- if macos -->
 macOS text.
 
-<!-- if macos-adhoc -->
+<!-- if macos-unnotarized -->
 Gatekeeper text.
+<!-- endif -->
+<!-- if macos-adhoc -->
+Re-grant text.
 <!-- endif -->
 <!-- endif -->
 """
@@ -149,6 +152,35 @@ def write_artifacts(root: Path, slugs=("windows-x64", "macos-arm64", "macos-x64"
             (leg / f"signing-{slug}.txt").write_text(mode + "\n", encoding="utf-8", newline="\n")
 
 
+def minisig_text(name, comment=None):
+    """A minisign-shaped signature file; the bytes are not a real signature (the cryptographic
+    check is the Rust tool's job, in the workflow), only its trusted-comment line matters here."""
+    comment = f"lingopop-update {name}" if comment is None else comment
+    return (
+        "untrusted comment: signature from minisign secret key\n"
+        "RUQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n"
+        f"trusted comment: {comment}\n"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\n"
+    )
+
+
+def fake_sign(paths):
+    for path in paths:
+        path = Path(path)
+        Path(f"{path}.minisig").write_text(minisig_text(path.name), encoding="utf-8", newline="\n")
+
+
+def write_signatures(directory: Path, slugs=("windows-x64", "macos-arm64", "macos-x64")):
+    """Signs the updatable assets of an unsigned set and rewrites the manifest for the signed set."""
+    for slug in slugs:
+        fake_sign(directory / n for n in vra.updatable_names(VERSION, slug))
+    write_manifest(directory, [n for s in slugs for n in vra.signed_asset_names(VERSION, s)])
+
+
+def signed_order(slugs=vra.PLATFORMS):
+    return [n for s in slugs for n in vra.signed_asset_names(VERSION, s)]
+
+
 class PublishDouble:
     def __init__(self):
         self.calls = []
@@ -170,8 +202,8 @@ class Base(unittest.TestCase):
         self.platforms_file.write_text('{"macosPreview": true}\n', encoding="utf-8", newline="\n")
         self.double = PublishDouble()
 
-    def publish(self, artifacts=None):
-        return vra.publish(
+    def prepare(self, artifacts=None, require_mac_signing=None):
+        return vra.prepare(
             artifacts or self.tmp / "artifacts",
             VERSION,
             self.platforms_file,
@@ -179,9 +211,28 @@ class Base(unittest.TestCase):
             self.tmp / "CHANGELOG.md",
             self.tmp / "INSTALL.md",
             self.tmp / "notes.md",
+            require_mac_signing=require_mac_signing,
+        )
+
+    def finalize(self):
+        return vra.finalize(
+            self.tmp / "release",
+            VERSION,
+            self.platforms_file,
             ["gh", "release", "create", f"v{VERSION}"],
             runner=self.double,
         )
+
+    def publish(self, artifacts=None, signer=fake_sign, require_mac_signing=None):
+        """The publish job's order: prepare (assemble + pre-signing check + notes), sign the
+        updatable assets, finalize (manifest with the signatures + full check + command)."""
+        errors = self.prepare(artifacts, require_mac_signing)
+        if errors:
+            return errors
+        config = vra.read_release_platforms(self.platforms_file)
+        names = vra.updatable_assets(VERSION, vra.platforms_for(config))
+        signer([self.tmp / "release" / n for n in names])
+        return self.finalize()
 
     @property
     def publish_calls(self):
@@ -253,23 +304,27 @@ class Anchors(Base):
         seen = {}
         real_verify = vra.verify_assets
 
-        def spy(directory, version, platforms, manifest=vra.MANIFEST):
-            seen["platforms"] = set(platforms)
-            return real_verify(directory, version, platforms, manifest)
+        def spy(directory, version, platforms, manifest=vra.MANIFEST, signed=False):
+            seen.setdefault("platforms", []).append((set(platforms), signed))
+            return real_verify(directory, version, platforms, manifest, signed)
 
         vra.verify_assets = spy
         try:
             self.assertEqual(self.publish(), [])
         finally:
             vra.verify_assets = real_verify
-        self.assertEqual(seen["platforms"], {"windows"})
+        # The pre-signing check, then the check of the signed set.
+        self.assertEqual(seen["platforms"], [({"windows"}, False), ({"windows"}, True)])
         exe = f"LingoPop-{VERSION}-windows-x64-portable.exe"
         manifest = (self.tmp / "release" / vra.MANIFEST).read_text(encoding="utf-8")
-        self.assertEqual([line.split("  ")[1] for line in manifest.splitlines()], [exe])
-        self.assertEqual(sorted(p.name for p in (self.tmp / "release").iterdir()), sorted([vra.MANIFEST, exe]))
+        self.assertEqual([line.split("  ")[1] for line in manifest.splitlines()], [exe, f"{exe}.minisig"])
+        self.assertEqual(
+            sorted(p.name for p in (self.tmp / "release").iterdir()),
+            sorted([vra.MANIFEST, exe, f"{exe}.minisig"]),
+        )
         self.assertEqual(self.publish_calls, 1)
         self.assertEqual(
-            [Path(a).name for a in self.double.calls[0][4:]], [exe, vra.MANIFEST]
+            [Path(a).name for a in self.double.calls[0][4:]], [exe, f"{exe}.minisig", vra.MANIFEST]
         )
         notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
         self.assertIn("Windows text.", notes)
@@ -283,15 +338,18 @@ class Publish(Base):
         self.assertEqual(self.publish_calls, 1)
         argv = self.double.calls[0]
         self.assertEqual(argv[:4], ["gh", "release", "create", f"v{VERSION}"])
-        self.assertEqual(
-            [Path(a).name for a in argv[4:]],
-            [n for s in vra.PLATFORMS for n in vra.asset_names(VERSION, s)] + [vra.MANIFEST],
-        )
-        self.assertEqual(vra.verify_assets(self.tmp / "release", VERSION, ALL), [])
+        self.assertEqual([Path(a).name for a in argv[4:]], signed_order() + [vra.MANIFEST])
+        self.assertEqual(vra.verify_assets(self.tmp / "release", VERSION, ALL, signed=True), [])
         manifest = (self.tmp / "release" / vra.MANIFEST).read_bytes()
         self.assertTrue(manifest.endswith(b"\n"))
         self.assertNotIn(b"\r", manifest)
-        self.assertEqual(len(manifest.splitlines()), 5)
+        self.assertEqual(len(manifest.splitlines()), 8)
+        # 9 files: exe, 2 dmg, 2 zip, 3 signatures, the manifest.
+        self.assertEqual(
+            sorted(p.name for p in (self.tmp / "release").iterdir()),
+            sorted(signed_order() + [vra.MANIFEST]),
+        )
+        self.assertEqual(len(list((self.tmp / "release").iterdir())), 9)
 
     def test_adhoc_notes_show_the_gatekeeper_paragraph(self):
         write_artifacts(self.tmp / "artifacts", mode="adhoc")
@@ -301,7 +359,7 @@ class Publish(Base):
         self.assertNotIn("older", notes)
         self.assertNotIn("Intro shown only in the docs", notes)
         self.assertNotIn("<!--", notes)
-        for text in ("## Installation", "Windows text.", "macOS text.", "Gatekeeper text."):
+        for text in ("## Installation", "Windows text.", "macOS text.", "Gatekeeper text.", "Re-grant text."):
             self.assertIn(text, notes)
         self.assertLess(notes.index("macOS builds."), notes.index("## Installation"))
 
@@ -311,6 +369,27 @@ class Publish(Base):
         notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
         self.assertIn("macOS text.", notes)
         self.assertNotIn("Gatekeeper text.", notes)
+        self.assertNotIn("Re-grant text.", notes)
+
+    def test_selfsigned_is_accepted_by_assemble(self):
+        write_artifacts(self.tmp / "artifacts", mode="selfsigned")
+        errors, mode = vra.assemble(self.tmp / "artifacts", VERSION, ALL, self.tmp / "release")
+        self.assertEqual(errors, [])
+        self.assertEqual(mode, "selfsigned")
+
+    def test_selfsigned_notes_show_open_anyway_but_not_the_regrant(self):
+        write_artifacts(self.tmp / "artifacts", mode="selfsigned")
+        self.assertEqual(self.publish(), [])
+        self.assertEqual(self.publish_calls, 1)
+        notes = (self.tmp / "notes.md").read_text(encoding="utf-8")
+        self.assertIn("macOS text.", notes)
+        self.assertIn("Gatekeeper text.", notes)
+        self.assertNotIn("Re-grant text.", notes)
+
+    def test_unknown_signing_mode_blocks_publication(self):
+        write_artifacts(self.tmp / "artifacts", mode="self-signed")
+        self.assertIn("signing-macos-arm64.txt: missing or invalid", self.publish())
+        self.assertEqual(self.publish_calls, 0)
 
     def test_version_placeholder_is_replaced(self):
         (self.tmp / "INSTALL.md").write_text(INSTALL.replace("Windows text.", "Get LingoPop-<version>.exe"), encoding="utf-8", newline="\n")
@@ -367,35 +446,205 @@ class Publish(Base):
         self.assertIn("install template: if without endif", self.publish())
         self.assertEqual(self.publish_calls, 0)
 
-    def test_cli_publish_runs_nothing_on_error(self):
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "publish", "--version", VERSION,
-             "--platforms-file", str(self.platforms_file), "--artifacts", str(self.tmp / "none"),
-             "--out", str(self.tmp / "release"), "--changelog", str(self.tmp / "CHANGELOG.md"),
-             "--install", str(self.tmp / "INSTALL.md"), "--notes-out", str(self.tmp / "notes.md"),
-             "--", sys.executable, "-c", f"open({str(self.tmp / 'ran')!r}, 'w').write('x')"],
-            capture_output=True, text=True, check=False,
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(SCRIPT), *map(str, args)], capture_output=True, text=True, check=False)
+
+    def cli_prepare(self, artifacts, *extra):
+        return self.cli(
+            "prepare", "--version", VERSION, "--platforms-file", self.platforms_file,
+            "--artifacts", artifacts, "--out", self.tmp / "release",
+            "--changelog", self.tmp / "CHANGELOG.md", "--install", self.tmp / "INSTALL.md",
+            "--notes-out", self.tmp / "notes.md", *extra,
         )
+
+    def test_cli_prepare_fails_on_missing_artifacts(self):
+        result = self.cli_prepare(self.tmp / "none")
         self.assertEqual(result.returncode, 1)
         self.assertIn("artifact LingoPop-", result.stderr)
+
+    def test_cli_finalize_runs_nothing_on_error(self):
+        write_artifacts(self.tmp / "artifacts")
+        self.assertEqual(self.cli_prepare(self.tmp / "artifacts").returncode, 0)
+        result = self.cli(
+            "finalize", "--version", VERSION, "--platforms-file", self.platforms_file, self.tmp / "release",
+            "--", sys.executable, "-c", f"open({str(self.tmp / 'ran')!r}, 'w').write('x')",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("windows-x64-portable.exe.minisig: missing", result.stderr)
         self.assertFalse((self.tmp / "ran").exists())
 
-    def test_cli_publish_runs_the_command_after_success(self):
-        write_artifacts(self.tmp / "artifacts")
+    def test_cli_prepare_sign_finalize_runs_the_command_after_success(self):
+        write_artifacts(self.tmp / "artifacts", mode="selfsigned")
+        prepared = self.cli_prepare(self.tmp / "artifacts", "--require-mac-signing", "selfsigned")
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        listed = self.cli("updatable", "--version", VERSION, "--platforms-file", self.platforms_file)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        names = listed.stdout.splitlines()
+        self.assertEqual(names, [
+            f"LingoPop-{VERSION}-windows-x64-portable.exe",
+            f"LingoPop-{VERSION}-macos-arm64.zip",
+            f"LingoPop-{VERSION}-macos-x64.zip",
+        ])
+        fake_sign(self.tmp / "release" / n for n in names)
         marker = self.tmp / "argv.json"
         code = f"import json, sys; json.dump(sys.argv[1:], open({str(marker)!r}, 'w'))"
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "publish", "--version", VERSION,
-             "--platforms-file", str(self.platforms_file), "--artifacts", str(self.tmp / "artifacts"),
-             "--out", str(self.tmp / "release"), "--changelog", str(self.tmp / "CHANGELOG.md"),
-             "--install", str(self.tmp / "INSTALL.md"), "--notes-out", str(self.tmp / "notes.md"),
-             "--", sys.executable, "-c", code, "first"],
-            capture_output=True, text=True, check=False,
+        result = self.cli(
+            "finalize", "--version", VERSION, "--platforms-file", self.platforms_file, self.tmp / "release",
+            "--", sys.executable, "-c", code, "first",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         argv = json.loads(marker.read_text(encoding="utf-8"))
         self.assertEqual(argv[0], "first")
-        self.assertEqual(len(argv), 1 + 5 + 1)
+        self.assertEqual([Path(a).name for a in argv[1:]], signed_order() + [vra.MANIFEST])
+
+    def test_cli_prepare_refuses_adhoc_when_selfsigned_is_required(self):
+        write_artifacts(self.tmp / "artifacts", mode="adhoc")
+        result = self.cli_prepare(self.tmp / "artifacts", "--require-mac-signing", "selfsigned")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("signing-macos-arm64.txt: adhoc is not allowed for a release (selfsigned required)", result.stderr)
+
+
+class Signatures(Base):
+    def test_missing_signature_blocks_publication(self):
+        write_artifacts(self.tmp / "artifacts")
+
+        def skip_one(paths):
+            fake_sign(p for p in paths if not str(p).endswith("macos-arm64.zip"))
+
+        self.assertIn("macos-arm64.zip.minisig: missing", self.publish(signer=skip_one))
+        self.assertEqual(self.publish_calls, 0)
+
+    def test_wrong_trusted_comment_blocks_publication(self):
+        write_artifacts(self.tmp / "artifacts")
+        other = f"LingoPop-{VERSION}-macos-arm64.zip"
+
+        def wrong(paths):
+            fake_sign(paths)
+            bad = self.tmp / "release" / f"LingoPop-{VERSION}-macos-x64.zip.minisig"
+            bad.write_text(minisig_text(other), encoding="utf-8", newline="\n")
+
+        self.assertIn("macos-x64.zip.minisig: trusted comment does not name the asset", self.publish(signer=wrong))
+        self.assertEqual(self.publish_calls, 0)
+
+    def test_old_version_comment_is_rejected(self):
+        write_assets(self.dir)
+        write_signatures(self.dir)
+        exe = f"LingoPop-{VERSION}-windows-x64-portable.exe"
+        (self.dir / f"{exe}.minisig").write_text(
+            minisig_text(exe, comment="lingopop-update LingoPop-0.2.0-windows-x64-portable.exe"),
+            encoding="utf-8", newline="\n",
+        )
+        write_manifest(self.dir, signed_order())
+        errors = vra.verify_assets(self.dir, VERSION, ALL, signed=True)
+        self.assertEqual(errors, ["windows-x64-portable.exe.minisig: trusted comment does not name the asset"])
+
+    def test_signed_set_passes_and_unsigned_check_rejects_signatures(self):
+        write_assets(self.dir)
+        write_signatures(self.dir)
+        self.assertEqual(vra.verify_assets(self.dir, VERSION, ALL, signed=True), [])
+        unsigned = vra.verify_assets(self.dir, VERSION, ALL)
+        self.assertIn(f"LingoPop-{VERSION}-macos-x64.zip.minisig: unexpected file", unsigned)
+
+    def test_signed_check_requires_every_signature(self):
+        write_assets(self.dir)
+        errors = vra.verify_assets(self.dir, VERSION, ALL, signed=True)
+        for name in ("windows-x64-portable.exe", "macos-arm64.zip", "macos-x64.zip"):
+            self.assertIn(f"{name}.minisig: missing", errors)
+            self.assertIn(f"SHA256SUMS.txt: no entry for LingoPop-{VERSION}-{name}.minisig", errors)
+
+    def test_a_dmg_is_never_signed(self):
+        write_assets(self.dir)
+        write_signatures(self.dir)
+        dmg = self.dir / f"LingoPop-{VERSION}-macos-arm64.dmg"
+        fake_sign([dmg])
+        self.assertIn(f"{dmg.name}.minisig: unexpected file", vra.verify_assets(self.dir, VERSION, ALL, signed=True))
+
+    def test_malformed_signature_files(self):
+        write_assets(self.dir)
+        name = f"LingoPop-{VERSION}-macos-arm64.zip"
+        good = minisig_text(name)
+        cases = {
+            "": "macos-arm64.zip.minisig: size 0 bytes is out of range",
+            "x" * 5000: "macos-arm64.zip.minisig: size 5000 bytes is out of range",
+            "just text\n": "macos-arm64.zip.minisig: not a minisign signature",
+            good.replace("\n", "\r\n"): "macos-arm64.zip.minisig: not a minisign signature",
+            good.replace("trusted comment: ", "comment: "): "macos-arm64.zip.minisig: not a minisign signature",
+            good.replace(name, name + " extra"): "macos-arm64.zip.minisig: trusted comment does not name the asset",
+        }
+        for text, needle in cases.items():
+            write_signatures(self.dir)
+            (self.dir / f"{name}.minisig").write_bytes(text.encode())
+            write_manifest(self.dir, signed_order())
+            self.assertIn(needle, vra.verify_assets(self.dir, VERSION, ALL, signed=True), repr(text[:60]))
+        write_signatures(self.dir)
+        (self.dir / f"{name}.minisig").write_bytes(b"\xff\xfe\n")
+        write_manifest(self.dir, signed_order())
+        self.assertIn("macos-arm64.zip.minisig: not a minisign signature", vra.verify_assets(self.dir, VERSION, ALL, signed=True))
+
+    def test_an_asset_changed_after_the_pre_signing_check_is_a_checksum_mismatch(self):
+        write_artifacts(self.tmp / "artifacts")
+
+        def swap_then_sign(paths):
+            exe = self.tmp / "release" / f"LingoPop-{VERSION}-windows-x64-portable.exe"
+            exe.write_bytes(pe_bytes() + b"tampered")
+            fake_sign(paths)
+
+        self.assertIn("windows-x64-portable.exe: checksum mismatch", self.publish(signer=swap_then_sign))
+        self.assertEqual(self.publish_calls, 0)
+
+    def test_a_stray_signature_in_a_leg_artifact_is_not_copied(self):
+        write_artifacts(self.tmp / "artifacts")
+        leg = self.tmp / "artifacts" / vra.artifact_name(VERSION, "windows-x64")
+        exe = leg / f"LingoPop-{VERSION}-windows-x64-portable.exe"
+        fake_sign([exe])
+        # assemble copies only the contract names, so the leg's stray signature never reaches
+        # the release directory; signing then produces the only one.
+        self.assertEqual(self.publish(), [])
+        self.assertEqual(self.publish_calls, 1)
+
+    def test_finalize_before_signing_fails(self):
+        write_artifacts(self.tmp / "artifacts")
+        self.assertEqual(self.prepare(), [])
+        errors = self.finalize()
+        self.assertIn("windows-x64-portable.exe.minisig: missing", errors)
+        self.assertEqual(self.publish_calls, 0)
+
+    def test_updatable_assets(self):
+        self.assertEqual(vra.updatable_assets(VERSION, {"windows"}), [f"LingoPop-{VERSION}-windows-x64-portable.exe"])
+        self.assertEqual(vra.updatable_assets(VERSION, ALL), [
+            f"LingoPop-{VERSION}-windows-x64-portable.exe",
+            f"LingoPop-{VERSION}-macos-arm64.zip",
+            f"LingoPop-{VERSION}-macos-x64.zip",
+        ])
+        self.assertEqual(vra.asset_names(VERSION, "macos-arm64"), [
+            f"LingoPop-{VERSION}-macos-arm64.dmg", f"LingoPop-{VERSION}-macos-arm64.zip",
+        ])
+
+
+class RequiredMacSigning(Base):
+    def test_tag_release_with_mac_assets_refuses_adhoc(self):
+        write_artifacts(self.tmp / "artifacts", mode="adhoc")
+        errors = self.publish(require_mac_signing="selfsigned")
+        self.assertIn("signing-macos-arm64.txt: adhoc is not allowed for a release (selfsigned required)", errors)
+        self.assertIn("signing-macos-x64.txt: adhoc is not allowed for a release (selfsigned required)", errors)
+        self.assertEqual(self.publish_calls, 0)
+
+    def test_tag_release_with_mac_assets_refuses_developer_id(self):
+        write_artifacts(self.tmp / "artifacts", mode="developer-id")
+        errors = self.publish(require_mac_signing="selfsigned")
+        self.assertIn("signing-macos-arm64.txt: developer-id is not allowed for a release (selfsigned required)", errors)
+        self.assertEqual(self.publish_calls, 0)
+
+    def test_tag_release_with_mac_assets_accepts_selfsigned(self):
+        write_artifacts(self.tmp / "artifacts", mode="selfsigned")
+        self.assertEqual(self.publish(require_mac_signing="selfsigned"), [])
+        self.assertEqual(self.publish_calls, 1)
+
+    def test_windows_only_release_ignores_the_mac_signing_mode(self):
+        write_artifacts(self.tmp / "artifacts", mode="adhoc")
+        self.platforms_file.write_text('{"macosPreview": false}\n', encoding="utf-8", newline="\n")
+        self.assertEqual(self.publish(require_mac_signing="selfsigned"), [])
+        self.assertEqual(self.publish_calls, 1)
 
 
 class Verify(Base):
@@ -539,13 +788,72 @@ class Verify(Base):
 
 
 class Repository(unittest.TestCase):
+    @staticmethod
+    def _job(workflow, name):
+        """The text of the top-level job `name` (up to the next job or the end)."""
+        start = workflow.index(f"\n  {name}:\n")
+        following = re.search(r"\n  [a-z][a-z0-9-]*:\n", workflow[start + 1:])
+        return workflow[start: start + 1 + following.start()] if following else workflow[start:]
+
+    @staticmethod
+    def _step(job, name):
+        start = job.index(f"- name: {name}\n")
+        end = job.find("\n      - ", start + 1)
+        return job[start:] if end < 0 else job[start:end]
+
     def test_release_workflow_publishes_a_checked_draft(self):
         workflow = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        publish_job = self._job(workflow, "publish")
+        tools_job = self._job(workflow, "build-release-tools")
+        # The verifier / signer is built in its own job without secrets; publish builds nothing.
+        self.assertIn("cargo build -p lingopop-release-tools --release --locked", tools_job)
+        self.assertNotIn("secrets.", tools_job)
+        self.assertIn("sha256:", tools_job)
+        self.assertRegex(publish_job, r"needs: \[build, build-macos, build-release-tools\]")
+        for forbidden in ("cargo ", "npm ", "rust-toolchain", "rust-cache", "setup-node"):
+            self.assertNotIn(forbidden, publish_job, forbidden)
+        # Only the publish job's signing step holds the update key and its password.
+        for name in ("UPDATE_SIGNING_KEY", "UPDATE_SIGNING_KEY_PASSWORD"):
+            self.assertEqual(workflow.count(f"secrets.{name} }}}}"), 1, name)
+        sign_step = self._step(publish_job, "Sign the update assets")
+        self.assertIn("UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}", sign_step)
+        self.assertIn("UPDATE_SIGNING_KEY_PASSWORD: ${{ secrets.UPDATE_SIGNING_KEY_PASSWORD }}", sign_step)
+        self.assertIn("umask 077", sign_step)
+        self.assertIn('"$RUNNER_TEMP/update-signing.key"', sign_step)
+        self.assertIn("--password-env UPDATE_SIGNING_KEY_PASSWORD", sign_step)
+        self.assertNotIn("set -x", workflow)
+        self.assertNotIn("echo \"$UPDATE_SIGNING", workflow)
+        remove_step = self._step(publish_job, "Remove the update signing key")
+        self.assertIn("if: always()", remove_step)
+        self.assertIn('rm -f "$RUNNER_TEMP/update-signing.key"', remove_step)
+
+        # The secrets come from the tag-only `release` environment, never on a dispatch run.
+        self.assertIn("\n    environment: release\n", publish_job)
+        macos_job = self._job(workflow, "build-macos")
+        self.assertIn("environment: ${{ github.event_name == 'push' && github.ref_type == 'tag' && 'release' || '' }}", macos_job)
+        self.assertNotIn("environment:", tools_job)
+
+        tool_check = publish_job.index("needs.build-release-tools.outputs.sha256")
+        download = publish_job.index("pattern: LingoPop-${{ needs.build.outputs.version }}-*")
+        prepare = publish_job.index("scripts/verify-release-assets.py prepare")
+        require = publish_job.index("--require-mac-signing selfsigned")
+        sign = publish_job.index("lingopop-release-tools sign --key")
+        crypto = publish_job.index("lingopop-release-tools verify --public-key const")
+        finalize = publish_job.index("scripts/verify-release-assets.py finalize")
+        remove = publish_job.index("- name: Remove the update signing key")
         channel = workflow.index('if [[ "$VERSION" == *-* ]]; then channel=(--prerelease); fi')
         create = workflow.index('gh release create "$TAG" --draft "${channel[@]}"')
         check = workflow.index('gh release download "$TAG" --dir uploaded')
         publish_pre = workflow.index('gh release edit "$TAG" --draft=false --prerelease\n')
         publish_latest = workflow.index('gh release edit "$TAG" --draft=false --prerelease=false --latest')
+        self.assertLess(tool_check, download)
+        self.assertLess(download, prepare)
+        self.assertLess(prepare, require)
+        self.assertLess(require, sign)
+        self.assertLess(sign, crypto)
+        self.assertLess(crypto, finalize)
+        self.assertLess(sign, remove)
+        self.assertLess(workflow.index("scripts/verify-release-assets.py finalize"), create)
         self.assertLess(channel, create)
         self.assertLess(create, check)
         self.assertLess(check, publish_pre)
@@ -593,7 +901,7 @@ class Repository(unittest.TestCase):
 
     def test_committed_install_template_renders_for_every_mode(self):
         template = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
-        for platforms, mode in (({"windows"}, None), (ALL, "adhoc"), (ALL, "developer-id")):
+        for platforms, mode in (({"windows"}, None), (ALL, "adhoc"), (ALL, "selfsigned"), (ALL, "developer-id")):
             notes, errors = vra.render_notes(CHANGELOG, template, VERSION, platforms, mode)
             self.assertEqual(errors, [])
             self.assertTrue(notes.startswith("### Added"), notes[:80])
@@ -607,8 +915,8 @@ class Repository(unittest.TestCase):
             self.assertEqual("### macOS" in notes, "macos" in platforms)
             self.assertEqual(f"LingoPop-{VERSION}-macos-arm64.dmg" in notes, "macos" in platforms)
             self.assertEqual("shasum -a 256 -c" in notes, "macos" in platforms)
-            self.assertEqual("Open Anyway" in notes, mode == "adhoc")
-            self.assertEqual("com.apple.quarantine" in notes, mode == "adhoc")
+            self.assertEqual("Open Anyway" in notes, mode in ("adhoc", "selfsigned"))
+            self.assertEqual("com.apple.quarantine" in notes, mode in ("adhoc", "selfsigned"))
             self.assertEqual("re-grant" in notes or "add it again" in notes, mode == "adhoc")
 
 

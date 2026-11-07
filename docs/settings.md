@@ -62,7 +62,14 @@ The system prompt of the Magic operation (up to 2000 characters). `{{targetLangu
 
 ## About
 
-The version, **Check for updates** (LingoPop also checks GitHub releases every three hours) with a **Download** link when a new version is out, and the privacy policy.
+The version, **Check for updates** (LingoPop also checks GitHub releases every three hours) and the privacy policy. When a new stable version is out a banner offers it:
+
+- **Update** downloads the new version with a progress bar, checks its signature and installs it. **Cancel** stops a download.
+- **Restart** starts the new version. Without it the new version starts the next time you open LingoPop.
+- On a failure the tab shows the reason and a **Download** link to the Releases page for a manual install.
+- Where the install can't be replaced (development build, folder not writable, app running from the disk image, ad-hoc signed macOS build) only the **Download** link is shown.
+
+Updates are signed; on macOS the new app must carry the same release certificate, so the Accessibility and Screen Recording grants are kept. The first release with this is 0.2.1: install it by hand once, and re-grant the macOS permissions one last time.
 
 ## Tray and menu-bar menu
 

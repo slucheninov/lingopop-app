@@ -8,28 +8,45 @@
 #
 #  1. `scripts/check-version.py` must print exactly VERSION.
 #  2. `scripts/check-macos-production.sh` (the macOS readiness gate) must pass.
-#  3. Signing mode: none of the six Developer ID variables set = ad-hoc; all six set = Developer
-#     ID + notarization; anything in between fails (never a silent downgrade). The variables are
-#     Tauri's standard names: APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
-#     APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID.
-#     Their values are never printed; only names are.
+#  3. Signing mode (`select_signing_mode`; never a silent downgrade, values are never printed,
+#     only variable names):
+#     - MACOS_SIGNING_P12 (base64 .p12) and MACOS_SIGNING_P12_PASSWORD both set = `selfsigned`
+#       (the pinned self-signed release certificate of release-signing.json); they take
+#       precedence over the Developer ID variables, which are then ignored; only one of the two
+#       set fails, naming the missing one.
+#     - RELEASE_TAG_RUN=1 (set by release.yml on tag runs whose release carries the Mac assets)
+#       without both = fail: `tag releases must be signed with the pinned certificate`. A tag run
+#       never selects ad hoc or Developer ID (either would change the designated requirement,
+#       and every installed copy would refuse the update). Any other non-empty value fails.
+#     - Otherwise: none of the six Developer ID variables set = `adhoc`; all six set =
+#       `developer-id` + notarization; anything in between fails. The variables are Tauri's
+#       standard names: APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
+#       APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific password), APPLE_TEAM_ID.
+#     PACKAGE_MACOS_SELECT_ONLY=1 prints the selected mode and exits before anything else (the
+#     unit tests use it, on any OS); PACKAGE_MACOS_PARSE_IDENTITIES=1 prints the lowercase SHA-1s
+#     of `security find-identity` output read from stdin and exits.
 #  4. `tauri build --target TARGET --bundles app` with the embedded frontend (Tauri runs the
 #     `beforeBuildCommand` and enables `custom-protocol`), the Mac override
 #     `app/src-tauri/tauri.macos.conf.json` and MACOSX_DEPLOYMENT_TARGET=13.0. Tauri itself never
-#     signs here: the Apple variables are removed from its environment.
-#  5. Sign `LingoPop.app`: ad-hoc `codesign -s - --options runtime --timestamp=none`, or
-#     Developer ID with the hardened runtime and a secure timestamp from a temporary keychain,
-#     then notarytool + stapler.
+#     signs here: the Apple and MACOS_SIGNING_* variables are removed from its environment.
+#  5. Sign `LingoPop.app`: ad-hoc `codesign -s - --options runtime --timestamp=none`;
+#     self-signed: import the .p12 into a temporary keychain, require exactly one code-signing
+#     identity whose SHA-1 equals release-signing.json, `codesign --sign <sha1> --options runtime
+#     --timestamp=none`; or Developer ID with the hardened runtime and a secure timestamp from a
+#     temporary keychain, then notarytool + stapler.
 #  6. Stage DIRECTORY/LingoPop-VERSION-macos-ARCH.zip (ditto, the app only) and .dmg (hdiutil
 #     UDZO with the app and an /Applications link; Developer ID: signed, notarized, stapled), plus
 #     SHA256SUMS-macos-ARCH.txt.
 #  7. Verify: the portable verifier (`scripts/verify-release-assets.py verify`), then natively the
 #     app extracted from the zip AND the app copied out of the mounted dmg (bundle id, version,
 #     minimum OS, LSUIElement, `lipo` architecture, `otool` deployment target, `codesign
-#     --verify --strict`, ad-hoc or Developer ID signature with the hardened runtime), and
-#     `spctl --assess` on quarantined copies (ad-hoc: rejected; Developer ID: accepted as
-#     Notarized Developer ID).
-#  8. Write DIRECTORY/signing-macos-ARCH.txt (`adhoc` or `developer-id`) for the release notes.
+#     --verify --strict`, ad-hoc, self-signed (designated requirement exactly `identifier
+#     "app.lingopop.tauri.macos" and certificate leaf = H"<pinned sha1>"`) or Developer ID
+#     signature with the hardened runtime), and `spctl --assess` on quarantined copies (ad-hoc
+#     and self-signed: rejected; Developer ID: accepted as Notarized Developer ID). The dmg is
+#     signed only for Developer ID.
+#  8. Write DIRECTORY/signing-macos-ARCH.txt (`adhoc`, `selfsigned` or `developer-id`) for the
+#     release notes.
 #
 # DIRECTORY must be empty or absent. Scratch files live under target/macos-package/ only; the
 # quarantine attribute is set only on copies there. Nothing is installed, launched or opened.
@@ -43,6 +60,69 @@ die() {
   echo "error: $*" >&2
   exit 1
 }
+
+# select_signing_mode: sets `mode` from the environment (see step 3 above). Prints nothing but
+# variable names; never a value.
+select_signing_mode() {
+  local var present=0 missing=()
+  local p12_vars=(MACOS_SIGNING_P12 MACOS_SIGNING_P12_PASSWORD)
+  local apple_vars=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+  case "${RELEASE_TAG_RUN:-}" in
+    "" | 1) ;;
+    *) die "RELEASE_TAG_RUN must be 1 or unset" ;;
+  esac
+  for var in "${p12_vars[@]}"; do
+    if [ -n "${!var:-}" ]; then
+      present=$((present + 1))
+    else
+      missing+=("$var")
+    fi
+  done
+  if [ "$present" -eq "${#p12_vars[@]}" ]; then
+    mode=selfsigned
+    return
+  fi
+  if [ "$present" -ne 0 ]; then
+    die "incomplete self-signed signing configuration: ${missing[*]} not set (set both or neither)"
+  fi
+  if [ "${RELEASE_TAG_RUN:-}" = 1 ]; then
+    die "tag releases must be signed with the pinned certificate (MACOS_SIGNING_P12 and MACOS_SIGNING_P12_PASSWORD not set)"
+  fi
+  present=0
+  missing=()
+  for var in "${apple_vars[@]}"; do
+    if [ -n "${!var:-}" ]; then
+      present=$((present + 1))
+    else
+      missing+=("$var")
+    fi
+  done
+  if [ "$present" -eq 0 ]; then
+    mode=adhoc
+  elif [ "$present" -eq "${#apple_vars[@]}" ]; then
+    mode=developer-id
+  else
+    die "incomplete Developer ID signing configuration: ${missing[*]} not set (set all six or none)"
+  fi
+}
+
+# identity_sha1s: the distinct SHA-1s (lowercase) of `security find-identity -p codesigning`
+# output on stdin. Without `-v` on purpose: the self-signed release certificate is not trusted
+# by the system policy (CSSMERR_TP_NOT_TRUSTED), so `-v` lists no valid identity, while codesign
+# signs with it all the same.
+identity_sha1s() {
+  awk '$1 ~ /^[0-9]+\)$/ && length($2) == 40 && $2 ~ /^[0-9A-Fa-f]+$/ { print tolower($2) }' | LC_ALL=C sort -u
+}
+
+if [ "${PACKAGE_MACOS_SELECT_ONLY:-}" = 1 ]; then
+  select_signing_mode
+  echo "signing mode: $mode"
+  exit 0
+fi
+if [ "${PACKAGE_MACOS_PARSE_IDENTITIES:-}" = 1 ]; then
+  identity_sha1s
+  exit 0
+fi
 
 version="" target="" out=""
 while [ "$#" -gt 0 ]; do
@@ -78,24 +158,27 @@ repo_version=$(python3 scripts/check-version.py) || die "the repository versions
 bash scripts/check-macos-production.sh
 
 # --- 3. signing mode ---------------------------------------------------------------------------
-signing_vars=(APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
-present=0
-missing=()
-for var in "${signing_vars[@]}"; do
-  if [ -n "${!var:-}" ]; then
-    present=$((present + 1))
-  else
-    missing+=("$var")
-  fi
-done
-if [ "$present" -eq 0 ]; then
-  mode=adhoc
-elif [ "$present" -eq "${#signing_vars[@]}" ]; then
-  mode=developer-id
-else
-  die "incomplete Developer ID signing configuration: ${missing[*]} not set (set all six or none)"
-fi
+select_signing_mode
 echo "signing mode: $mode"
+pinned_sha1=""
+pinned_requirement=""
+if [ "$mode" = selfsigned ]; then
+  # release-signing.json is exactly {"macosCertificateSha1": "<40 lowercase hex>"}; the same
+  # value is core `updates::RELEASE_CERT_SHA1`, and the requirement below is the platform's
+  # `pinned_requirement()` that every installed copy checks an update against.
+  pinned_sha1=$(python3 -c 'import json, re, sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+    sys.exit(1)
+if not isinstance(data, dict) or set(data) != {"macosCertificateSha1"}:
+    sys.exit(1)
+value = data["macosCertificateSha1"]
+if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
+    sys.exit(1)
+print(value)' release-signing.json) || die "release-signing.json is missing or invalid"
+  pinned_requirement="identifier \"$bundle_id\" and certificate leaf = H\"$pinned_sha1\""
+fi
 
 # --- output and scratch directories ------------------------------------------------------------
 mkdir -p "$out"
@@ -131,6 +214,7 @@ export MACOSX_DEPLOYMENT_TARGET=$min_os
   cd app
   env -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD -u APPLE_SIGNING_IDENTITY \
     -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID \
+    -u MACOS_SIGNING_P12 -u MACOS_SIGNING_P12_PASSWORD -u RELEASE_TAG_RUN \
     -u APPLE_API_KEY -u APPLE_API_ISSUER -u APPLE_API_KEY_PATH \
     ./node_modules/.bin/tauri build --ci --target "$target" --bundles app \
     --config src-tauri/tauri.macos.conf.json -- --locked
@@ -171,9 +255,9 @@ notarize() { # notarize <file>: submit, wait and require status Accepted
     die "notarization of $(basename "$1") was not accepted (status ${state:-unknown})"
   fi
 }
-if [ "$mode" = adhoc ]; then
-  codesign --force --sign - --options runtime --timestamp=none "$app"
-else
+import_identity() { # import_identity <base64 p12> <p12 password>: a temporary signing keychain
+  # The EXIT trap restores the keychain search list and deletes the keychain and the .p12.
+  local keychain_password line
   keychain="$work/signing.keychain-db"
   keychain_password=$(uuidgen)
   while IFS= read -r line; do
@@ -184,13 +268,32 @@ else
   security create-keychain -p "$keychain_password" "$keychain"
   security set-keychain-settings -lut 3600 "$keychain"
   security unlock-keychain -p "$keychain_password" "$keychain"
-  printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$work/certificate.p12"
-  security import "$work/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
-    -T /usr/bin/codesign >/dev/null
+  ( umask 077 && printf '%s' "$1" | base64 --decode > "$work/certificate.p12" ) \
+    || die "the signing certificate is not valid base64"
+  security import "$work/certificate.p12" -k "$keychain" -P "$2" -T /usr/bin/codesign >/dev/null \
+    || die "the signing certificate could not be imported"
   rm -f "$work/certificate.p12"
   security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" \
     "$keychain" >/dev/null
   security list-keychains -d user -s "$keychain" "${original_keychains[@]}"
+}
+if [ "$mode" = adhoc ]; then
+  codesign --force --sign - --options runtime --timestamp=none "$app"
+elif [ "$mode" = selfsigned ]; then
+  import_identity "$MACOS_SIGNING_P12" "$MACOS_SIGNING_P12_PASSWORD"
+  unset MACOS_SIGNING_P12 MACOS_SIGNING_P12_PASSWORD
+  identities=$(security find-identity -p codesigning "$keychain" | identity_sha1s)
+  [ -n "$identities" ] || die "the self-signed .p12 holds no code-signing identity"
+  [ "$(printf '%s\n' "$identities" | wc -l | tr -d ' ')" = 1 ] \
+    || die "the self-signed .p12 holds more than one code-signing identity"
+  [ "$identities" = "$pinned_sha1" ] \
+    || die "the imported certificate $identities is not the pinned release certificate $pinned_sha1 (release-signing.json)"
+  echo "signing identity: $identities (pinned)"
+  codesign --force --sign "$pinned_sha1" --keychain "$keychain" --options runtime \
+    --timestamp=none "$app"
+else
+  import_identity "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD"
+  unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
   codesign --force --sign "$APPLE_SIGNING_IDENTITY" --keychain "$keychain" --options runtime \
     --timestamp "$app"
   ditto -c -k --keepParent "$app" "$work/notarize-app.zip"
@@ -232,7 +335,7 @@ plist_value() { # plist_value <app> <key>
   plutil -extract "$2" raw -o - "$1/Contents/Info.plist" 2>/dev/null || true
 }
 check_app() { # check_app <app> <where>
-  local candidate=$1 where=$2 exe details
+  local candidate=$1 where=$2 exe details requirement
   [ -d "$candidate" ] || die "$where: $app_name missing"
   [ "$(plist_value "$candidate" CFBundleIdentifier)" = "$bundle_id" ] || die "$where: bundle identifier is not $bundle_id"
   [ "$(plist_value "$candidate" CFBundleShortVersionString)" = "$version" ] || die "$where: bundle version is not $version"
@@ -249,6 +352,15 @@ check_app() { # check_app <app> <where>
     || die "$where: the hardened runtime is not enabled"
   if [ "$mode" = adhoc ]; then
     printf '%s\n' "$details" | grep -q -x 'Signature=adhoc' || die "$where: not ad-hoc signed"
+  elif [ "$mode" = selfsigned ]; then
+    if printf '%s\n' "$details" | grep -q -x 'Signature=adhoc'; then
+      die "$where: signed ad hoc, not with the pinned certificate"
+    fi
+    requirement=$(codesign -d -r- "$candidate" 2>&1 | sed -n 's/^designated => //p')
+    [ "$requirement" = "$pinned_requirement" ] \
+      || die "$where: designated requirement is '$requirement', expected '$pinned_requirement'"
+    codesign --verify --strict --deep -R="$pinned_requirement" "$candidate" \
+      || die "$where: does not satisfy the pinned designated requirement"
   else
     printf '%s\n' "$details" | grep -q '^Authority=Developer ID Application' || die "$where: not signed with a Developer ID"
     printf '%s\n' "$details" | grep -q -x "TeamIdentifier=$APPLE_TEAM_ID" || die "$where: unexpected team identifier"
@@ -265,9 +377,10 @@ assess() { # assess <where> <spctl args...>: the outcome must match the signing 
   if printf '%s\n' "$result" | grep -q 'override=security disabled'; then
     die "$where: Gatekeeper assessments are disabled on this machine (spctl reports override=security disabled), so the signing result cannot be checked; re-enable them with 'sudo spctl --global-enable' or use a machine with Gatekeeper on"
   fi
-  if [ "$mode" = adhoc ]; then
+  if [ "$mode" = adhoc ] || [ "$mode" = selfsigned ]; then
+    # Neither is notarized; the self-signed certificate is not trusted by Gatekeeper either.
     if [ "$status" -eq 0 ] || ! printf '%s\n' "$result" | grep -q 'rejected'; then
-      die "$where: Gatekeeper did not reject the ad-hoc build as expected: $result"
+      die "$where: Gatekeeper did not reject the $mode build as expected: $result"
     fi
   elif [ "$status" -ne 0 ] || ! printf '%s\n' "$result" | grep -q 'source=Notarized Developer ID'; then
     die "$where: Gatekeeper did not accept the notarized build: $result"
@@ -297,8 +410,9 @@ ditto "$work/mnt/$app_name" "$work/installed/$app_name"
 hdiutil detach "$work/mnt" -quiet
 mounted=""
 check_app "$work/installed/$app_name" "installed copy"
-if [ "$mode" = adhoc ]; then
-  # An ad-hoc dmg carries no signature of its own; Gatekeeper rejects opening it.
+if [ "$mode" != developer-id ]; then
+  # An ad-hoc or self-signed release's dmg carries no signature of its own; Gatekeeper rejects
+  # opening it.
   assess dmg --type open --context context:primary-signature "$work/quarantine/$name.dmg"
 else
   xcrun stapler validate -q "$out/$name.dmg" || die "dmg: notarization ticket is not stapled"

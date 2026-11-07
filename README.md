@@ -76,7 +76,7 @@ Good to know:
 - LingoPop needs the Microsoft Edge WebView2 runtime, which is preinstalled on Windows 10 and 11. If the app doesn't start, install the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/) from Microsoft.
 - To start LingoPop with Windows, turn on **Settings → Main → Startup → Launch at login**.
 - Windows does not let a normal app read the selection of an app running as administrator. In such windows LingoPop shows a message instead of a translation.
-- To update, replace the exe with the new one. Your settings stay in `%APPDATA%\LingoPop`.
+- To update, use **Settings → About → Update** (see [Updates](#updates)) or replace the exe with the new one. Your settings stay in `%APPDATA%\LingoPop`.
 
 ## Install on macOS
 
@@ -113,13 +113,34 @@ macOS asks for two permissions. LingoPop asks for each one only when an operatio
 3. **Fully quit LingoPop and open it again**: macOS applies a new Screen Recording permission only after a relaunch. Settings shows a **Relaunch** button for this.
 
 > [!NOTE]
-> **After an update** macOS may treat the new build as a different app: the switch is still on, but the permission doesn't work. Select **LingoPop** in the Accessibility (or Screen Recording) list, remove it with **−**, then add it again with **+** or grant it when asked. The keychain question may also come back once.
+> **After a manual update from a build before 0.2.1** (or from an ad-hoc preview) macOS may treat the new build as a different app: the switch is still on, but the permission doesn't work. From 0.2.1 on, releases are signed with one fixed certificate, so later updates keep your Accessibility and Screen Recording grants.
+>
+> If it happens: Select **LingoPop** in the Accessibility (or Screen Recording) list, remove it with **−**, then add it again with **+** or grant it when asked. The keychain question may also come back once.
 
 Good to know:
 
 - This LingoPop is a separate app from the earlier Swift [LingoPop](https://github.com/slucheninov/lingopop) (a different bundle identifier and data folder). Both are named `LingoPop.app`, so dragging this one into Applications replaces the Swift app there (Finder asks first); quit the Swift app before that. It does not import that app's settings, history or API keys.
 - To start LingoPop at login, turn on **Settings → Main → Startup → Launch at login**.
-- To update, replace the app in **Applications** with the new one (quit LingoPop first). Your settings stay in `~/Library/Application Support/LingoPop-Tauri`.
+- To update, use **Settings → About → Update** (see [Updates](#updates)) or replace the app in **Applications** with the new one (quit LingoPop first). Your settings stay in `~/Library/Application Support/LingoPop-Tauri`.
+
+## Updates
+
+LingoPop checks GitHub releases in the background and shows a banner in **Settings → About** when a new version is out. In that tab:
+
+- **Check for updates** looks for a new version now.
+- **Update** downloads the new version, checks its signature and installs it next to the running app.
+- **Restart** starts the new version. If you don't restart, the new version starts the next time you open LingoPop.
+
+Only stable releases (`X.Y.Z`) are offered. Every update file is signed with the project's update key and LingoPop refuses anything that is not signed or does not match the release. On macOS the new app must also be signed with the same certificate as the installed one, which is why your Accessibility and Screen Recording permissions stay in place.
+
+**One-time manual step.** In-app updates start with 0.2.1. If you run 0.2.0 or a Preview build, install 0.2.1 by hand once (see the install sections above); on macOS grant Accessibility and Screen Recording to LingoPop one last time. After that, updates are made from inside the app.
+
+**Where in-app update is not available.** Settings → About then points to the Releases page instead:
+
+- development builds;
+- a copy in a folder you can't write to (for example Program Files, or an Applications folder owned by another user);
+- the app run straight from the disk image (copy it to Applications first);
+- ad-hoc signed macOS builds that do not use the release certificate.
 
 ## First steps
 
@@ -175,7 +196,10 @@ Make sure some text is selected and the tray / menu-bar icon is there. Another a
 If the original app is no longer in front, LingoPop leaves the result on the clipboard and tells you to paste it yourself (Ctrl+V / ⌘V).
 
 **How do I check for updates?**
-**Settings → About → Check for updates**. LingoPop also checks GitHub releases in the background every three hours and shows a banner when a new version is out.
+**Settings → About → Check for updates**. LingoPop also checks GitHub releases in the background every three hours and shows a banner when a new version is out; press **Update**, then **Restart**. See [Updates](#updates).
+
+**Update is missing or fails.**
+In-app update works from 0.2.1 on and only for an installed copy that can be replaced (see [Updates](#updates)). Otherwise download the release by hand; your settings stay.
 
 **How do I uninstall?**
 Quit LingoPop and delete the exe (Windows) or `LingoPop.app` (macOS). To remove your settings, history and keys too, delete `%APPDATA%\LingoPop` or `~/Library/Application Support/LingoPop-Tauri`. On macOS you can also remove LingoPop from the Accessibility and Screen Recording lists.

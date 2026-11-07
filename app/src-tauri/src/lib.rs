@@ -240,6 +240,16 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     // Before `native()`: the platform logs its own startup failures (e.g. the tracker) through it.
     let log: Arc<LogFn> = Arc::new(|message: &str| log::info!("{message}"));
     lingopop_platform::set_platform_log(log.clone());
+    // Update recovery runs before anything else touches the install, and before the install
+    // site is computed: after a restore the site is the journal's, not the running copy.
+    let running = std::env::current_exe().ok();
+    let relaunch = match &running {
+        Some(exe) => Some(updates::startup_recovery(data_dir, exe).1),
+        None => {
+            log::warn!("update recovery skipped: running executable unknown");
+            None
+        }
+    };
     let platform = lingopop_platform::native();
     #[cfg(target_os = "macos")]
     if platform.monitors.initialize_on_main_thread().is_err() {
@@ -345,7 +355,22 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     }));
     let hooks: Arc<dyn SettingsHooks> = Arc::new(shell_hooks);
     apply_startup_login(hooks.as_ref(), config.settings().launch_at_login);
-    let update_state = Arc::new(updates::UpdateState::new(transport, ui.clone(), clock));
+    let events = app.handle().clone();
+    let update_state = Arc::new(
+        updates::UpdateState::new(transport, ui.clone(), clock).with_updater(
+            updates::UpdaterDeps {
+                data_dir: data_dir.to_owned(),
+                running: running.unwrap_or_default(),
+                target: updates::native_target(),
+                installer: Arc::new(updates::NativeInstaller::new(data_dir.to_owned(), relaunch)),
+                downloader: Arc::new(lingopop_core::http::UpdateDownloader::new()),
+                verify: Arc::new(lingopop_core::update_sig::verify_update),
+                emit: Arc::new(move |view| {
+                    let _ = events.emit(updates::STATE_EVENT, view);
+                }),
+            },
+        ),
+    );
     app.manage(update_state.clone());
     app.manage(ShellState {
         hotkeys: hotkey_registry.clone(),
@@ -422,6 +447,10 @@ pub fn run() {
             usage_cmds::usage_get,
             usage_cmds::usage_reset,
             updates::updates_check,
+            updates::updates_install,
+            updates::updates_cancel,
+            updates::updates_state,
+            updates::updates_restart,
             commands::app_relaunch
         ])
         // lifecycle-marker: setup-registered
@@ -462,3 +491,5 @@ mod task4_tests;
 mod task5_tests;
 #[cfg(test)]
 mod task7_tests;
+#[cfg(test)]
+mod update_install_tests;

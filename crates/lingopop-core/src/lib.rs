@@ -26,6 +26,7 @@ mod store_common;
 pub mod target_language;
 pub mod time;
 pub mod ui_prefs;
+pub mod update_sig;
 pub mod updates;
 pub mod usage_pricing;
 pub mod usage_stats;

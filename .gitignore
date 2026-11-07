@@ -27,6 +27,8 @@ dist/
 *.env
 .env.*
 *.cer
+# Test-only minisign key (password `test`), never a release key
+!crates/lingopop-core/tests/fixtures/updates/test.key
 
 # Editors
 .idea/
