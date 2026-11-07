@@ -110,6 +110,9 @@ enum InstallMode {
     Copy,
     /// A real swap (`site` -> backup, download -> `site`), then the commit fails.
     SwapThenCommitFails,
+    /// The same swap, then the commit reaches the journal file but reports an error (its
+    /// durability barrier failed).
+    SwapThenCommitOnRecordFails,
     /// Panics on the blocking thread.
     Panic,
 }
@@ -232,7 +235,10 @@ impl Installer for FakeInstaller {
         let mut j = read_journal(&self.data_dir).unwrap().unwrap();
         j.new_hash = file_sha256(downloaded);
         write_journal(&self.data_dir, &j).unwrap();
-        if mode == InstallMode::SwapThenCommitFails {
+        if matches!(
+            mode,
+            InstallMode::SwapThenCommitFails | InstallMode::SwapThenCommitOnRecordFails
+        ) {
             // Like `install_exe`: the backup is tracked, then the two renames.
             let old = j.old.clone();
             intend(&self.data_dir, &mut j, &old).unwrap();
@@ -246,8 +252,15 @@ impl Installer for FakeInstaller {
     }
 
     fn commit(&self, data_dir: &Path) -> Result<(), UpdateError> {
-        if *self.mode.lock().unwrap() == InstallMode::SwapThenCommitFails {
-            return Err(UpdateError::Install("scripted commit failure"));
+        match *self.mode.lock().unwrap() {
+            InstallMode::SwapThenCommitFails => {
+                return Err(UpdateError::Install("scripted commit failure"));
+            }
+            InstallMode::SwapThenCommitOnRecordFails => {
+                lingopop_platform::update_install::commit_journal(data_dir).unwrap();
+                return Err(UpdateError::Install("scripted commit failure"));
+            }
+            _ => {}
         }
         lingopop_platform::update_install::commit_journal(data_dir)
     }
@@ -501,14 +514,14 @@ async fn signature_failure_is_failed_and_installer_not_called() {
 /// A journal that recovery leaves open: an unknown item at `site` while the backup exists.
 fn unresolvable_journal(rig: &Rig) -> Vec<u8> {
     std::fs::write(&rig.site, b"foreign").unwrap();
-    let token = "0123456789abcdef0123456789abcdef";
+    let token = "0123456789abcdef".repeat(2);
     let dir = rig.site.parent().unwrap();
     let old = dir.join(format!("LingoPop.old-{token}.exe"));
     std::fs::write(&old, b"backup").unwrap();
     let j = Journal {
         version: NEW.into(),
         kind: SiteKind::WindowsExe,
-        token: token.into(),
+        token: token.clone(),
         site: rig.site.clone(),
         staged: dir
             .join(format!(".LingoPop-update-{token}"))
@@ -684,7 +697,7 @@ async fn relaunch_after_swap_uses_install_path() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
-    let token = "0123456789abcdef0123456789abcdef";
+    let token = "0123456789abcdef".repeat(2);
     let site = dir.path().join("LingoPop.exe");
     let old = dir.path().join(format!("LingoPop.old-{token}.exe"));
     std::fs::write(&old, b"previous").unwrap();
@@ -692,7 +705,7 @@ async fn relaunch_after_swap_uses_install_path() {
     let j = Journal {
         version: NEW.into(),
         kind: SiteKind::WindowsExe,
-        token: token.into(),
+        token: token.clone(),
         site: site.clone(),
         staged: folder.join("LingoPop.exe"),
         old: old.clone(),
@@ -726,14 +739,14 @@ fn startup_by_the_new_binary_restores_and_relaunches_the_install_site() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("data");
     std::fs::create_dir_all(&data).unwrap();
-    let token = "0123456789abcdef0123456789abcdef";
+    let token = "0123456789abcdef".repeat(2);
     let site = dir.path().join("LingoPop.exe");
     let old = dir.path().join(format!("LingoPop.old-{token}.exe"));
     let folder = dir.path().join(format!(".LingoPop-update-{token}"));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         folder.join(lingopop_platform::update_install::OWNER_MARKER),
-        token,
+        &token,
     )
     .unwrap();
     std::fs::write(&site, b"new").unwrap();
@@ -742,7 +755,7 @@ fn startup_by_the_new_binary_restores_and_relaunches_the_install_site() {
     let j = Journal {
         version: NEW.into(),
         kind: SiteKind::WindowsExe,
-        token: token.into(),
+        token: token.clone(),
         site: site.clone(),
         staged: staged.clone(),
         old: old.clone(),
@@ -853,6 +866,21 @@ async fn commit_failure_restores_the_previous_version_at_once() {
         "{:?}",
         rig.site_leftovers()
     );
+}
+
+#[tokio::test]
+async fn commit_error_with_the_commit_on_record_is_ready_and_cleans_nothing() {
+    let rig = rig();
+    rig.available().await;
+    *rig.installer.mode.lock().unwrap() = InstallMode::SwapThenCommitOnRecordFails;
+    let view = rig.install_and_settle().await;
+    assert_eq!(view.state, UpdateStatus::Ready, "{view:?}");
+    // The new version is installed; this process's own image (the backup) is kept and the
+    // committed journal is closed by the next start.
+    assert_ne!(std::fs::read(&rig.site).unwrap(), b"old exe");
+    assert!(rig.journal_path().exists());
+    let journal = read_journal(&rig.data).unwrap().unwrap();
+    assert_eq!(std::fs::read(&journal.old).unwrap(), b"old exe");
 }
 
 #[tokio::test]

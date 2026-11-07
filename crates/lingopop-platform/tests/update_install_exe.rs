@@ -1458,6 +1458,8 @@ enum Ev {
 struct Recorder {
     events: RefCell<Vec<Ev>>,
     fail_sync: RefCell<Vec<PathBuf>>,
+    /// `(path, n)`: the n-th (1-based) sync of exactly this path fails.
+    fail_nth: RefCell<Option<(PathBuf, usize)>>,
 }
 
 impl Recorder {
@@ -1465,6 +1467,7 @@ impl Recorder {
         Recorder {
             events: RefCell::new(Vec::new()),
             fail_sync: RefCell::new(Vec::new()),
+            fail_nth: RefCell::new(None),
         }
     }
 
@@ -1472,6 +1475,17 @@ impl Recorder {
         self.events.borrow_mut().push(Ev::Sync(p.to_owned()));
         if self.fail_sync.borrow().iter().any(|f| f == p) {
             return Err(io::Error::other("scripted sync failure"));
+        }
+        if let Some((path, n)) = self.fail_nth.borrow().as_ref() {
+            let seen = self
+                .events
+                .borrow()
+                .iter()
+                .filter(|e| **e == Ev::Sync(path.clone()))
+                .count();
+            if path == p && seen == *n {
+                return Err(io::Error::other("scripted sync failure"));
+            }
         }
         native_sync(p)
     }
@@ -1495,6 +1509,25 @@ impl Recorder {
     }
 }
 
+/// The barrier calls of one journal write: Unix syncs the journal and the data folder after the
+/// rename; Windows flushes a temp file next to the journal and publishes it with a write-through
+/// replace (no folder sync).
+fn journal_syncs(env: &Env) -> Vec<Ev> {
+    if cfg!(windows) {
+        vec![Ev::Sync(env.data.join(format!("{JOURNAL_FILE}.tmp")))]
+    } else {
+        vec![Ev::Sync(env.journal_path()), Ev::Sync(env.data.clone())]
+    }
+}
+
+/// The last barrier of a journal write (failing it fails the write).
+fn journal_sync_target(env: &Env) -> PathBuf {
+    match journal_syncs(env).pop() {
+        Some(Ev::Sync(p)) => p,
+        _ => unreachable!(),
+    }
+}
+
 #[test]
 fn journal_is_durable_before_the_backup_rename() {
     let env = Env::new();
@@ -1510,15 +1543,15 @@ fn journal_is_durable_before_the_backup_rename() {
     env.install(&ops).unwrap();
     let backup = rec.position(&Ev::Rename(env.site.path.clone(), env.old()));
     let events = rec.events();
-    // the journal write that recorded the backup name, then the data folder, right before
-    assert_eq!(events[backup - 2], Ev::Sync(env.journal_path()));
-    assert_eq!(events[backup - 1], Ev::Sync(env.data.clone()));
+    // the journal write that recorded the backup name is durable right before
+    let js = journal_syncs(&env);
+    assert_eq!(events[backup - js.len()..backup], js[..]);
     // the staged exe and its folder were made durable before any move
     assert!(rec.position(&Ev::Sync(j.staged.clone())) < backup);
     assert!(rec.position(&Ev::Sync(env.folder())) < backup);
     // the backup rename itself is made durable before the next journal state
     assert_eq!(events[backup + 1], Ev::Sync(env.dir.clone()));
-    assert_eq!(events[backup + 2], Ev::Sync(env.journal_path()));
+    assert_eq!(events[backup + 2], js[0]);
 }
 
 #[test]
@@ -1568,10 +1601,102 @@ fn a_barrier_failure_before_the_first_rename_aborts_with_nothing_moved() {
 }
 
 #[test]
+fn a_barrier_failure_after_the_backup_rename_stops_and_puts_the_exe_back() {
+    // The backup rename happened but is not durable: the journal is not advanced and the install
+    // stops. The exe is renamed back so the app stays launchable; nothing is deleted, and the
+    // next start's recovery closes the attempt.
+    let env = Env::new();
+    env.stage();
+    let rec = Recorder::new();
+    rec.fail_sync.borrow_mut().push(env.dir.clone());
+    let sync = |p: &Path| rec.sync(p);
+    let rename = |a: &Path, b: &Path| rec.rename(a, b);
+    let ops = InstallOps {
+        sync: &sync,
+        rename_noreplace: &rename,
+        ..InstallOps::native()
+    };
+    assert!(matches!(env.install(&ops), Err(UpdateError::Install(_))));
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    let j = env.journal().expect("the journal stays");
+    assert_eq!(j.phase, Phase::Pending);
+    assert!(
+        !j.created.contains(&env.old()),
+        "the journal was not advanced"
+    );
+    assert!(env.folder().exists(), "no in-process cleanup");
+    assert!(!rec
+        .events()
+        .contains(&Ev::Rename(j.staged.clone(), env.site.path.clone())));
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    assert!(!env.folder().exists());
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn a_barrier_failure_after_the_final_rename_leaves_the_install_pending() {
+    let env = Env::new();
+    let j = env.stage();
+    let rec = Recorder::new();
+    // the 1st sync of the install folder follows the backup rename, the 2nd the final rename
+    *rec.fail_nth.borrow_mut() = Some((env.dir.clone(), 2));
+    let sync = |p: &Path| rec.sync(p);
+    let ops = InstallOps {
+        sync: &sync,
+        ..InstallOps::native()
+    };
+    assert!(matches!(env.install(&ops), Err(UpdateError::Install(_))));
+    assert_eq!(env.site_bytes().unwrap(), new_bytes());
+    let pending = env.journal().expect("the journal stays");
+    assert_eq!(pending.phase, Phase::Pending);
+    assert!(pending.new_hash.is_some() && !pending.old_restored);
+    assert_eq!(read(&env.old()), old_bytes(), "the backup stays");
+    assert!(env.folder().exists());
+    // never blocked: the next start (the new exe at `site`) swaps back, the one after cleans
+    assert_eq!(env.recover(), Recovery::RestoredKept);
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert!(env.journal().is_none());
+    assert!(!j.staged.exists());
+}
+
+#[test]
+fn a_rollback_that_cannot_be_synced_is_not_recorded() {
+    let env = Env::new();
+    env.stage();
+    let rec = Recorder::new();
+    // the staged rename fails, so the rollback runs; its sync (the 2nd of the folder) fails
+    *rec.fail_nth.borrow_mut() = Some((env.dir.clone(), 2));
+    let sync = |p: &Path| rec.sync(p);
+    let rename = |a: &Path, b: &Path| {
+        if b == env.site.path && a != env.old() {
+            return Err(io::Error::other("scripted rename failure"));
+        }
+        rec.rename(a, b)
+    };
+    let ops = InstallOps {
+        sync: &sync,
+        rename_noreplace: &rename,
+        ..InstallOps::native()
+    };
+    assert!(matches!(env.install(&ops), Err(UpdateError::Install(_))));
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    let j = env.journal().expect("the journal stays");
+    assert!(
+        !j.old_restored,
+        "oldRestored is not written without the barrier"
+    );
+    assert!(env.folder().exists(), "no in-process cleanup");
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert!(env.journal().is_none());
+}
+
+#[test]
 fn a_journal_that_cannot_be_made_durable_is_a_write_failure() {
     let env = Env::new();
     let rec = Recorder::new();
-    rec.fail_sync.borrow_mut().push(env.data.clone());
+    rec.fail_sync.borrow_mut().push(journal_sync_target(&env));
     let sync = |p: &Path| rec.sync(p);
     let ops = InstallOps {
         sync: &sync,
@@ -1585,20 +1710,96 @@ fn a_journal_that_cannot_be_made_durable_is_a_write_failure() {
 }
 
 #[test]
-fn a_barrier_failure_after_a_completed_rename_continues() {
-    // The backup rename happened: a failed barrier after it is logged and the install goes on
-    // (the journal update that follows is itself durable).
+fn recovery_swap_back_that_cannot_be_synced_is_not_recorded() {
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    let rec = Recorder::new();
+    rec.fail_sync.borrow_mut().push(env.dir.clone());
+    let sync = |p: &Path| rec.sync(p);
+    let copies = RunningCopies::new();
+    let ops = RecoverOps {
+        sync: &sync,
+        running_copies: &copies,
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
+    };
+    assert_eq!(recover_with(&env.data, &env.old(), &ops), Recovery::Kept);
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    let kept = env.journal().expect("the journal stays");
+    assert!(
+        !kept.old_restored,
+        "oldRestored is not written without the barrier"
+    );
+    assert!(env.folder().exists());
+    // the next start finds the previous version at `site` and closes the attempt
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn cleanup_keeps_the_journal_when_its_barrier_fails() {
     let env = Env::new();
     env.stage();
     let rec = Recorder::new();
     rec.fail_sync.borrow_mut().push(env.dir.clone());
     let sync = |p: &Path| rec.sync(p);
-    let ops = InstallOps {
+    let copies = RunningCopies::new();
+    let ops = RecoverOps {
         sync: &sync,
-        ..InstallOps::native()
+        running_copies: &copies,
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
     };
-    env.install(&ops).unwrap();
-    assert_eq!(env.site_bytes().unwrap(), new_bytes());
+    assert_eq!(
+        recover_with(&env.data, &env.site.path, &ops),
+        Recovery::Kept
+    );
+    assert!(env.journal().is_some(), "the journal stays");
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn a_commit_on_record_after_an_error_is_success_and_cleans_nothing() {
+    // `commit_journal` wrote `committed` but reported an error (its barrier failed): the
+    // installing process, whose image is at `old`, must not clean anything.
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    commit_journal(&env.data).unwrap();
+    let ops = RecoverOps {
+        running_copies: &RunningCopies::new(),
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
+    };
+    assert_eq!(
+        recover_after_install_with(&env.data, &env.site.path, &ops),
+        Recovery::Installed
+    );
+    assert_eq!(read(&env.old()), old_bytes(), "the running image survives");
+    assert_eq!(env.journal().unwrap().phase, Phase::Committed);
+    // the next start (the new version) closes it
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert!(!env.old().exists());
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn the_installing_process_never_cleans_while_its_image_is_at_old() {
+    // A pending journal whose `site` is not the new version: the installing process keeps
+    // everything (its own image is the backup) and leaves it to the next start.
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    fs::write(&env.site.path, pe(b"someone else")).unwrap();
+    let ops = RecoverOps {
+        running_copies: &RunningCopies::new(),
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
+    };
+    assert_eq!(
+        recover_after_install_with(&env.data, &env.site.path, &ops),
+        Recovery::Kept
+    );
+    assert_eq!(read(&env.old()), old_bytes());
+    assert!(env.journal().is_some());
 }
 
 #[test]
@@ -1624,7 +1825,7 @@ fn recovery_swap_back_is_durable_before_the_journal_records_it() {
     let events = rec.events();
     assert_eq!(events[back + 1], Ev::Sync(env.dir.clone()));
     assert_eq!(events[back + 2], Ev::Sync(env.folder()));
-    assert_eq!(events[back + 3], Ev::Sync(env.journal_path()));
+    assert_eq!(events[back + 3], journal_syncs(&env)[0]);
 }
 
 #[test]

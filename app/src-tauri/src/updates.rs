@@ -565,9 +565,17 @@ impl UpdateState {
             if let Err(error) = installer.commit(&data) {
                 log::warn!("update commit failed, restoring the previous version");
                 // This process's own install moved its image to the backup: the swap back
-                // returns it, so the attempt is closed at once.
-                if !matches!(recover_after_install(&data, &running), Recovery::Restored) {
-                    log::warn!("update restore after a failed commit did not complete");
+                // returns it, so the attempt is closed at once. When the commit reached the
+                // journal anyway (its barrier failed after the replace) the install succeeded:
+                // nothing is cleaned while this process runs from the backup, the next start
+                // (the new version) closes it.
+                match recover_after_install(&data, &running) {
+                    Recovery::Installed => {
+                        log::warn!("update commit is on record, the install succeeded");
+                        return Ok(());
+                    }
+                    Recovery::Restored => {}
+                    _ => log::warn!("update restore after a failed commit did not complete"),
                 }
                 return Err(error);
             }
@@ -814,7 +822,7 @@ pub fn startup_recovery(data_dir: &Path, exe: &Path) -> (Recovery, RelaunchTarge
             Recovery::RestoredKept => {
                 "update recovery: previous version restored, cleanup at the next start"
             }
-            Recovery::Kept => "update recovery: journal kept",
+            Recovery::Kept | Recovery::Installed => "update recovery: journal kept",
         }
     );
     // After a restore the install site is the journal's `site`, never the running copy (which

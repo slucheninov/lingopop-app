@@ -92,6 +92,8 @@ struct Fake {
     events: Mutex<Vec<Ev>>,
     /// A sync of any path at or under this one fails.
     fail_sync_under: Option<PathBuf>,
+    /// A sync of exactly this path fails.
+    fail_sync_at: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +115,7 @@ impl Fake {
             extracts: Mutex::new(0),
             events: Mutex::new(Vec::new()),
             fail_sync_under: None,
+            fail_sync_at: None,
         }
     }
 
@@ -176,6 +179,7 @@ impl BundleTools for Fake {
             .fail_sync_under
             .as_ref()
             .is_some_and(|f| path.starts_with(f))
+            || self.fail_sync_at.as_deref() == Some(path)
         {
             return Err(io::Error::other("scripted sync failure"));
         }
@@ -238,6 +242,19 @@ impl Env {
     }
 
     fn install(&self, tools: &Fake) -> Result<(), UpdateError> {
+        let j = self.journal().unwrap();
+        install_bundle(
+            &self.data,
+            &self.site,
+            &bundle_zip_path(&j),
+            VERSION,
+            CURRENT,
+            ARCH,
+            tools,
+        )
+    }
+
+    fn install_with(&self, tools: &dyn BundleTools) -> Result<(), UpdateError> {
         let j = self.journal().unwrap();
         install_bundle(
             &self.data,
@@ -970,4 +987,177 @@ fn the_installing_process_restores_and_closes_after_a_failed_commit() {
     assert_eq!(tree(&env.site.path), before);
     assert!(!env.folder().exists());
     assert!(env.journal().is_none());
+}
+
+// ---------------------------------------------------------------- round 2: failed barriers
+
+#[test]
+fn a_barrier_failure_after_the_swap_leaves_the_install_pending() {
+    let env = Env::new();
+    let j = env.stage();
+    let tools = Fake {
+        fail_sync_at: Some(env.parent.clone()),
+        ..Fake::new()
+    };
+    assert!(matches!(env.install(&tools), Err(UpdateError::Install(_))));
+    assert_eq!(tools.swap_count(), 1, "no swap back in this process");
+    assert_eq!(env.site_version().as_deref(), Some(VERSION));
+    let pending = env.journal().expect("the journal stays");
+    assert_eq!(pending.phase, Phase::Pending, "not committed");
+    assert!(!pending.old_restored);
+    assert!(
+        j.staged.exists(),
+        "the previous bundle stays in the owned folder"
+    );
+}
+
+#[test]
+fn a_pending_install_after_a_failed_swap_barrier_is_recovered_at_the_next_start() {
+    let env = Env::new();
+    let before = tree(&env.site.path);
+    env.stage();
+    let tools = Fake {
+        fail_sync_at: Some(env.parent.clone()),
+        ..Fake::new()
+    };
+    assert!(env.install(&tools).is_err());
+    // the next start runs the new version from `site`: swapped back and kept, then cleaned
+    assert_eq!(env.recover_with_test_swap(), Recovery::RestoredKept);
+    assert_eq!(tree(&env.site.path), before);
+    assert_eq!(env.recover_with_test_swap(), Recovery::Cleaned);
+    assert!(env.journal().is_none());
+    assert!(!env.folder().exists());
+}
+
+#[test]
+fn a_swap_back_that_cannot_be_synced_is_not_recorded() {
+    let env = Env::new();
+    let before = tree(&env.site.path);
+    env.stage();
+    let tools = Fake::new();
+    tools
+        .reject_verify
+        .lock()
+        .unwrap()
+        .push(env.site.path.clone());
+    // the 1st sync of the parent follows the swap, the 2nd the swap back: only the 2nd fails
+    let tools = FailNth {
+        inner: tools,
+        path: env.parent.clone(),
+        n: 2,
+        seen: Mutex::new(0),
+    };
+    assert!(env.install_with(&tools).is_err());
+    assert_eq!(tree(&env.site.path), before, "the previous version is back");
+    let kept = env.journal().expect("the journal stays");
+    assert!(
+        !kept.old_restored,
+        "oldRestored is not written without the barrier"
+    );
+    assert!(env.folder().exists(), "no in-process cleanup");
+    assert_eq!(env.recover_from_elsewhere(), Recovery::Cleaned);
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn recovery_swap_back_that_cannot_be_synced_is_not_recorded() {
+    let env = Env::new();
+    let before = tree(&env.site.path);
+    env.stage();
+    env.install(&Fake::new()).unwrap();
+    let swap = |a: &Path, b: &Path| test_swap(a, b);
+    let parent = env.parent.clone();
+    let sync = |p: &Path| {
+        if p == parent {
+            return Err(io::Error::other("scripted sync failure"));
+        }
+        lingopop_platform::update_install::native_sync(p)
+    };
+    let copies = RunningCopies::new();
+    let ops = RecoverOps {
+        swap: &swap,
+        sync: &sync,
+        running_copies: &copies,
+        ..RecoverOps::for_kind(SiteKind::MacBundle)
+    };
+    assert_eq!(
+        recover_with(&env.data, &env.running(), &ops),
+        Recovery::Kept
+    );
+    assert_eq!(tree(&env.site.path), before);
+    let kept = env.journal().expect("the journal stays");
+    assert!(!kept.old_restored);
+    assert!(env.folder().exists(), "the moved bundle is not deleted");
+    // the next start (the previous version) closes it
+    assert_eq!(env.recover_with_test_swap(), Recovery::Cleaned);
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn commit_error_with_the_commit_on_record_keeps_the_running_old_bundle() {
+    // The reviewer's regression: the commit reached the journal file but `commit_journal`
+    // reported an error. New version at `site`, the old (running) bundle in the owned folder,
+    // `running` = the original path inside `site`: nothing is deleted.
+    let env = Env::new();
+    let j = env.stage();
+    env.install(&Fake::new()).unwrap();
+    commit_journal(&env.data).unwrap();
+    let swap = |a: &Path, b: &Path| test_swap(a, b);
+    let ops = RecoverOps {
+        swap: &swap,
+        running_copies: &RunningCopies::new(),
+        ..RecoverOps::for_kind(SiteKind::MacBundle)
+    };
+    let outcome = recover_after_install_with(&env.data, &env.running(), &ops);
+    assert_eq!(outcome, Recovery::Installed);
+    assert_ne!(outcome, Recovery::Cleaned);
+    assert_eq!(
+        read_bundle_info(&j.staged).map(|(_, v)| v).as_deref(),
+        Some(CURRENT),
+        "the running old bundle survives"
+    );
+    assert_eq!(env.journal().unwrap().phase, Phase::Committed);
+    assert_eq!(env.site_version().as_deref(), Some(VERSION));
+    // the next start (the new version at `site`) closes it
+    assert_eq!(env.recover_with_test_swap(), Recovery::Cleaned);
+    assert!(!env.folder().exists());
+}
+
+/// A `Fake` whose n-th sync of exactly `path` fails.
+struct FailNth {
+    inner: Fake,
+    path: PathBuf,
+    n: u32,
+    seen: Mutex<u32>,
+}
+
+impl BundleTools for FailNth {
+    fn designated_requirement(&self, app: &Path) -> Option<String> {
+        self.inner.designated_requirement(app)
+    }
+    fn verify(&self, app: &Path, requirement: &str) -> bool {
+        self.inner.verify(app, requirement)
+    }
+    fn extract_zip(&self, zip: &Path, into: &Path) -> Result<(), UpdateError> {
+        self.inner.extract_zip(zip, into)
+    }
+    fn bundle_info(&self, app: &Path) -> Option<(String, String)> {
+        self.inner.bundle_info(app)
+    }
+    fn executable_archs(&self, app: &Path) -> Vec<String> {
+        self.inner.executable_archs(app)
+    }
+    fn swap(&self, a: &Path, b: &Path) -> Result<(), UpdateError> {
+        self.inner.swap(a, b)
+    }
+    fn sync(&self, path: &Path) -> io::Result<()> {
+        if path == self.path {
+            let mut seen = self.seen.lock().unwrap();
+            *seen += 1;
+            if *seen == self.n {
+                return Err(io::Error::other("scripted sync failure"));
+            }
+        }
+        self.inner.sync(path)
+    }
 }

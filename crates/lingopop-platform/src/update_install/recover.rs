@@ -28,6 +28,11 @@ pub enum Recovery {
     /// The journal stays (an unknown state, an error, a protected path): the next start retries
     /// and no new attempt may start.
     Kept,
+    /// Only [`recover_after_install`]: the journal reads `committed` and the new version is at
+    /// `site` (the commit reached the file although `commit_journal` reported an error). The
+    /// install succeeded; nothing was touched, because this process's own image is still in
+    /// the owned folder. The next start (the new version) closes the attempt.
+    Installed,
 }
 
 /// The operations recovery uses, injectable for tests.
@@ -171,6 +176,22 @@ fn run(
 ) -> Result<Recovery, Crashed> {
     let mut restored = false;
 
+    // The installing process (its own image at `old`): it never cleans while that is so. A
+    // commit on record with the new version at `site` is a successful install (the commit's
+    // own barrier failed after the file was replaced); only a pending swap with the new
+    // version at `site` is swapped back here, which returns the image to `site` first.
+    if image == Image::AtOld {
+        let at_site = (ctx.identity)(&j.site);
+        let new_at_site = at_site.is_some() && at_site == j.new_hash;
+        if j.phase == Phase::Committed && new_at_site {
+            log("update recovery: install committed, cleanup at the next start");
+            return Ok(Recovery::Installed);
+        }
+        if j.phase != Phase::Pending || !new_at_site || j.old_restored {
+            return failed();
+        }
+    }
+
     // `site` missing (Windows only, between the two renames): put the backup back.
     match std::fs::symlink_metadata(&j.site) {
         Ok(_) => {}
@@ -186,7 +207,10 @@ fn run(
             if !backup || (ctx.rename)(&j.old, &j.site).is_err() {
                 return failed();
             }
-            settle_parents(ctx, &[&j.site]);
+            if sync_parents(ctx, &[&j.site]).is_err() {
+                // Not recorded over a rename that may not be on disk: the next start retries.
+                return failed();
+            }
             ctx.at(Step::AfterRestore)?;
             j.old_restored = true;
             if ctx.write(&j).is_err() {
@@ -241,7 +265,11 @@ fn run(
         if relocates_running {
             ctx.copies.add(&j.staged);
         }
-        settle_parents(ctx, &[&j.site, &j.staged]);
+        if sync_parents(ctx, &[&j.site, &j.staged]).is_err() {
+            // `oldRestored` is not written over a swap back that may not be on disk, and
+            // nothing is cleaned: the next start finds whichever version reached `site`.
+            return failed();
+        }
         ctx.at(Step::AfterSwapBack)?;
         j.old_restored = true;
         if ctx.write(&j).is_err() {
@@ -322,13 +350,13 @@ fn runs_inside(running: &Path, site: &Path) -> bool {
 }
 
 /// After a completed move: the parent folders of the paths involved are synced.
-fn settle_parents(ctx: &Ctx<'_>, paths: &[&Path]) {
+fn sync_parents(ctx: &Ctx<'_>, paths: &[&Path]) -> io::Result<()> {
     let parents: Vec<&Path> = paths
         .iter()
         .filter_map(|p| p.parent())
         .filter(|p| !p.as_os_str().is_empty())
         .collect();
-    ctx.settle(&parents);
+    ctx.barrier(&parents)
 }
 
 /// True when deleting `path` could delete the running app: `running` equals or lies inside it,
@@ -477,11 +505,17 @@ pub(crate) fn cleanup(ctx: &Ctx<'_>, j: &mut Journal, scope: Scope) -> Result<bo
             }
         }
     }
-    ctx.settle(&dirs);
+    if ctx.barrier(&dirs).is_err() {
+        // The journal is the evidence of what was deleted: it stays, the next start repeats
+        // the (idempotent) cleanup.
+        log("update recovery failed");
+        return Ok(false);
+    }
     if remove_journal_checked(ctx.data_dir).is_err() {
         log("update recovery failed");
         return Ok(false);
     }
-    ctx.settle(&[ctx.data_dir]);
+    // The attempt is closed; a removal that does not reach the disk only repeats the cleanup.
+    let _ = ctx.barrier(&[ctx.data_dir]);
     Ok(true)
 }

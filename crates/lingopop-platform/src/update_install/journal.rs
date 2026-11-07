@@ -67,9 +67,15 @@ fn journal_path(data_dir: &Path) -> PathBuf {
     data_dir.join(JOURNAL_FILE)
 }
 
-/// Writes the journal atomically (`fsio::atomic_write`, owner-only on Unix) and durably: after
-/// the rename the journal file and the data folder are synced ([`super::native_sync`]), so the
-/// state is on disk before the step it announces runs.
+/// Writes the journal atomically and durably, so the state is on disk before the step it
+/// announces runs:
+/// - Unix: `fsio::atomic_write` (owner-only, the temp file synced before the rename), then the
+///   journal file and the data folder are synced ([`super::native_sync`], `F_FULLFSYNC` on
+///   macOS);
+/// - Windows: the bytes go to `update-journal.json.tmp` next to the journal, which is flushed
+///   (`FlushFileBuffers`), then published with
+///   `MoveFileExW(MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)`, which returns only
+///   once the replace is on disk. There is no folder sync on Windows.
 pub fn write_journal(data_dir: &Path, j: &Journal) -> Result<(), UpdateError> {
     write_journal_with(data_dir, j, &super::native_sync)
 }
@@ -84,11 +90,49 @@ pub(crate) fn write_journal_with(
 ) -> Result<(), UpdateError> {
     let failed = || UpdateError::Install("update journal could not be written");
     let bytes = serde_json::to_vec_pretty(j).map_err(|_| failed())?;
-    let path = journal_path(data_dir);
-    fsio::atomic_write(&path, &bytes, true).map_err(|_| failed())?;
-    sync(&path)
-        .and_then(|()| sync(data_dir))
-        .map_err(|_| failed())
+    publish(data_dir, &journal_path(data_dir), &bytes, sync).map_err(|_| failed())
+}
+
+#[cfg(not(windows))]
+fn publish(
+    data_dir: &Path,
+    path: &Path,
+    bytes: &[u8],
+    sync: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    fsio::atomic_write(path, bytes, true)?;
+    sync(path)?;
+    sync(data_dir)
+}
+
+/// The temp file a Windows journal write is published from.
+#[cfg(windows)]
+pub(crate) fn journal_temp_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(format!("{JOURNAL_FILE}.tmp"))
+}
+
+#[cfg(windows)]
+fn publish(
+    data_dir: &Path,
+    path: &Path,
+    bytes: &[u8],
+    sync: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    use std::io::Write;
+    std::fs::create_dir_all(data_dir)?;
+    let tmp = journal_temp_path(data_dir);
+    let result = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        drop(file);
+        // Production: `native_sync`, a write handle and `sync_all` = `FlushFileBuffers`.
+        sync(&tmp)?;
+        crate::windows::fs::replace_write_through(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// `Ok(None)` when there is no journal; `Err` when it exists but cannot be read or parsed (it
@@ -159,4 +203,41 @@ pub fn confirm(data_dir: &Path, j: &mut Journal, path: &Path) -> Result<(), Upda
     write_journal(data_dir, j).inspect_err(|_| {
         j.created.pop();
     })
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    fn journal() -> Journal {
+        Journal {
+            version: "0.2.2".into(),
+            kind: SiteKind::WindowsExe,
+            token: "0123456789abcdef".repeat(2),
+            site: PathBuf::from(r"C:\apps\LingoPop.exe"),
+            staged: PathBuf::from(r"C:\apps\staged.exe"),
+            old: PathBuf::from(r"C:\apps\old.exe"),
+            scratch: Vec::new(),
+            phase: Phase::Pending,
+            old_hash: "a".repeat(64),
+            old_restored: false,
+            new_hash: None,
+            intended: Vec::new(),
+            created: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn windows_journal_publication_uses_the_write_through_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let before = crate::windows::fs::replace_calls();
+        write_journal(dir.path(), &journal()).unwrap();
+        let mut j = journal();
+        j.new_hash = Some("b".repeat(64));
+        // a second write replaces the existing journal through the same call
+        write_journal(dir.path(), &j).unwrap();
+        assert_eq!(crate::windows::fs::replace_calls() - before, 2);
+        assert_eq!(read_journal(dir.path()).unwrap(), Some(j));
+        assert!(!journal_temp_path(dir.path()).exists());
+    }
 }

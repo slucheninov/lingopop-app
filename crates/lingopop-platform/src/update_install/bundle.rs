@@ -370,8 +370,15 @@ fn install(
         log("update install failed");
         return Ok(Err(UpdateError::Install("bundle swap failed")));
     }
-    // The caller commits only after install returns: the swap is durable first.
-    settle_swap(ctx, j);
+    // The caller commits only after install returns: the swap is durable first. Without the
+    // barrier nothing else happens here (no swap back, no cleanup): the journal stays pending
+    // and the next start, the new version at `site`, swaps the previous version back.
+    if sync_swap(ctx, j).is_err() {
+        log("update install failed");
+        return Ok(Err(UpdateError::Install(
+            "update could not be made durable",
+        )));
+    }
     ctx.at(Step::AfterBundleSwap)?;
 
     // Late check: the installed item is the checked bundle and still satisfies the pinned
@@ -385,13 +392,13 @@ fn install(
     Ok(Ok(()))
 }
 
-/// After a completed swap: both parent folders of the exchange are synced (a failure is logged).
-pub(crate) fn settle_swap(ctx: &Ctx<'_>, j: &Journal) {
+/// After a completed swap: both parent folders of the exchange are synced.
+fn sync_swap(ctx: &Ctx<'_>, j: &Journal) -> io::Result<()> {
     let parents: Vec<&Path> = [j.site.parent(), j.staged.parent()]
         .into_iter()
         .flatten()
         .collect();
-    ctx.settle(&parents);
+    ctx.barrier(&parents)
 }
 
 /// The rollback: the same swap again. Only a successful swap back continues with the cleanup;
@@ -408,7 +415,14 @@ fn swap_back(
         log("update rollback failed");
         return Ok(Err(UpdateError::Install("rollback failed")));
     }
-    settle_swap(ctx, j);
+    if sync_swap(ctx, j).is_err() {
+        // `oldRestored` is not written over a swap that may not be on disk; nothing is
+        // cleaned: the next start decides from what reached `site`.
+        log("update rollback failed");
+        return Ok(Err(UpdateError::Install(
+            "rollback could not be made durable",
+        )));
+    }
     ctx.at(Step::AfterSwapBack)?;
     j.old_restored = true;
     if ctx.write(j).is_err() {

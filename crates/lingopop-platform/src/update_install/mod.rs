@@ -11,12 +11,14 @@
 //!   `created` list, folders only with a matching owner marker, the backup only while it is
 //!   still the backup and has the old identity, and never `site` or a path holding `running`.
 //!
-//! Durability: every journal state is made durable (the journal file and the data folder are
-//! synced after the atomic rename) before the step it announces runs, and every install
+//! Durability: every journal state is published durably before the step it announces runs
+//! (Unix: atomic rename, then the journal file and the data folder are synced; Windows: a
+//! flushed temp file replaced onto the journal with `MOVEFILE_WRITE_THROUGH`), and every install
 //! rename, swap, rollback and extraction is synced (the parent folders involved) before the
 //! next journal state is written; see [`native_sync`]. A barrier that fails before a
-//! destructive step aborts the attempt; one that fails after a completed step is logged
-//! (`update sync failed`) and the journal update that follows goes on.
+//! destructive step aborts the attempt; one that fails after a completed move stops the run
+//! (`update sync failed`): the journal is not advanced past it and nothing is cleaned, so the
+//! next start's recovery decides from what reached the disk.
 //!
 //! Log lines are fixed text, never paths.
 
@@ -147,8 +149,8 @@ pub fn native_rename_swap(a: &Path, b: &Path) -> io::Result<()> {
 ///   (checked in the std source of the toolchain, `sys/fs/unix.rs` `os_fsync`), for a folder
 ///   too: the rename / swap entries reach the disk, not only its cache;
 /// - Windows: a file is opened for writing and `sync_all`ed (`FlushFileBuffers`); a folder is
-///   a no-op (NTFS journals its metadata, and every install rename is `MoveFileExW` with
-///   `MOVEFILE_WRITE_THROUGH`);
+///   a no-op, not a flush: every install rename and the journal publication are `MoveFileExW`
+///   with `MOVEFILE_WRITE_THROUGH` instead;
 /// - other Unix: `fsync` of the file or folder.
 ///
 /// A symbolic link is not followed (its folder's barrier covers it).
@@ -321,19 +323,17 @@ impl<'a> Ctx<'a> {
         self
     }
 
-    /// A barrier BEFORE a destructive step: every path is synced, the first failure returned.
+    /// The durability barrier: every path is synced, the first failure returned (and logged).
+    /// Before a destructive step a failure aborts it; after a completed move a failure STOPS
+    /// the run: the journal is not advanced past the move and nothing is cleaned, so the next
+    /// start's recovery decides from what reached the disk.
     pub fn barrier(&self, paths: &[&Path]) -> io::Result<()> {
-        paths.iter().try_for_each(|p| (self.sync)(p))
-    }
-
-    /// A barrier AFTER a completed step: every path is synced; a failure is logged and the
-    /// caller goes on with the journal update.
-    pub fn settle(&self, paths: &[&Path]) {
-        for p in paths {
-            if (self.sync)(p).is_err() {
+        paths
+            .iter()
+            .try_for_each(|p| (self.sync)(p))
+            .inspect_err(|_| {
                 log("update sync failed");
-            }
-        }
+            })
     }
 
     pub fn at(&self, step: Step) -> Result<(), Crashed> {

@@ -363,7 +363,19 @@ fn swap(ctx: &Ctx<'_>, j: &mut Journal) -> Result<Result<(), UpdateError>, Crash
         }
         return Ok(abort(ctx, j, "backup rename failed"));
     }
-    ctx.settle(&[site_dir]);
+    if ctx.barrier(&[site_dir]).is_err() {
+        // The backup rename is visible but not known to be durable: the journal is not
+        // advanced. The exe is renamed back so the app stays launchable (nothing is deleted);
+        // the journal names the backup in `intended`, so the next start's recovery decides
+        // whichever of the two renames reached the disk.
+        log("update install failed");
+        if (ctx.rename)(&old, &site).is_err() {
+            log("update rollback failed");
+        }
+        return Ok(Err(UpdateError::Install(
+            "update could not be made durable",
+        )));
+    }
     j.created.push(old.clone());
     if ctx.write(j).is_err() {
         return rollback(ctx, j);
@@ -384,8 +396,15 @@ fn swap(ctx: &Ctx<'_>, j: &mut Journal) -> Result<Result<(), UpdateError>, Crash
     if (ctx.rename)(&staged, &site).is_err() {
         return rollback(ctx, j);
     }
-    // The caller commits only after this: the final rename is durable first.
-    ctx.settle(&[site_dir, staging]);
+    // The caller commits only after this: the final rename is durable first. Without the
+    // barrier the journal stays pending (nothing cleaned): the next start, the new exe at
+    // `site`, swaps the previous version back.
+    if ctx.barrier(&[site_dir, staging]).is_err() {
+        log("update install failed");
+        return Ok(Err(UpdateError::Install(
+            "update could not be made durable",
+        )));
+    }
     Ok(Ok(()))
 }
 
@@ -399,7 +418,14 @@ fn rollback(ctx: &Ctx<'_>, j: &mut Journal) -> Result<Result<(), UpdateError>, C
         return Ok(Err(UpdateError::Install("rollback failed")));
     }
     if let Some(dir) = j.site.parent() {
-        ctx.settle(&[dir]);
+        if ctx.barrier(&[dir]).is_err() {
+            // `oldRestored` is not written over a rename that may not be on disk: the next
+            // start finds whichever version reached `site` and decides.
+            log("update rollback failed");
+            return Ok(Err(UpdateError::Install(
+                "rollback could not be made durable",
+            )));
+        }
     }
     ctx.at(Step::AfterRollbackMove)?;
     j.old_restored = true;
