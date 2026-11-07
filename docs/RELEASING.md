@@ -33,6 +33,22 @@ The two Mac legs are one matrix job (`build-macos`) with those display names. Th
 
 `{"macosPreview": true}` attaches the macOS assets to the release. With `false` the Mac legs still build and verify, but the release (and its `SHA256SUMS.txt` and notes) has only the Windows exe. A missing or malformed file (any other key, a non-boolean value, invalid JSON) stops the publication.
 
+## Keys, certificate and secrets (custody)
+
+Two long-lived secrets make in-app updates work, and both are pinned in the code, so losing or replacing either one breaks updates for every installed copy.
+
+| Secret | Holds | Used by |
+|---|---|---|
+| `UPDATE_SIGNING_KEY` | the minisign update secret key file | only the publish job's `Sign the update assets` step |
+| `UPDATE_SIGNING_KEY_PASSWORD` | its password | the same step |
+| `MACOS_SIGNING_P12` | base64 of the self-signed certificate and private key | the Mac legs on a tag run |
+| `MACOS_SIGNING_P12_PASSWORD` | its password | the same |
+
+- Keep an offline backup of the key, the `.p12` and both passwords, in a place of the owner's choosing outside the repository and outside CI. Never commit, print, paste into an issue or log any of them; a lost backup with the secrets still in GitHub is recoverable, a lost secret with no backup is not.
+- **Never rotate** the update key or the certificate. The public key (`updates::UPDATE_PUBLIC_KEY`) and the certificate SHA-1 (`release-signing.json`, `updates::RELEASE_CERT_SHA1`) are compiled into every installed app. A new one means no installed copy accepts an update, and every user installs by hand (on macOS also re-granting Accessibility and Screen Recording). A rotation or a switch to Developer ID is a planned breaking change that updates the constants, `release-signing.json` and the spec in one release.
+- **Tag-run rule.** A tag run whose release carries the Mac assets must be signed `selfsigned`; the Mac legs and the publish job both refuse anything else (see "macOS signing"), so a missing certificate secret stops the release instead of shipping a build that can't update. The update signing secrets exist only in the publish job.
+- Releases before 0.2.1 (0.2.0 and the Previews) cannot update themselves. 0.2.1 is the first updater-capable release; users move to it by hand once, and Mac users grant the permissions one last time. 0.2.2 is the end-to-end check of the updater.
+
 ## Update signatures
 
 The in-app updater installs only files signed with the project's minisign (Ed25519) update key: `LingoPop-<version>-windows-x64-portable.exe` and the two `LingoPop-<version>-macos-<arch>.zip` files each get a detached `<asset>.minisig` whose trusted comment is exactly `lingopop-update <asset file name>` (so an old signed asset cannot be served as a new version). The dmgs are not signed. The public key is the core constant `updates::UPDATE_PUBLIC_KEY`; the secret key file and its password are the repository secrets `UPDATE_SIGNING_KEY` and `UPDATE_SIGNING_KEY_PASSWORD`, referenced only by the publish job's `Sign the update assets` step. That step writes the key to a mode-0600 file under `$RUNNER_TEMP`, unsets the variable, signs with `lingopop-release-tools sign --key <file> --password-env UPDATE_SIGNING_KEY_PASSWORD` (the password stays in that one variable) and removes the file; an `if: always()` step removes it again whatever happened. Neither value is ever printed. **Never rotate the update key**: installed copies trust only the committed public key, so a new key means no installed copy can ever accept an update again and every user reinstalls by hand. Keep the secret key and its password in the GitHub secrets and in the owner's offline backup only; never commit, print or log them. A rotation is a deliberate, planned breaking change of the spec.
