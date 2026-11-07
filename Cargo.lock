@@ -2333,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "lingopop-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2356,7 +2356,7 @@ dependencies = [
 
 [[package]]
 name = "lingopop-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "lingopop-orchestrator"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "crossbeam-channel",
@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "lingopop-platform"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "aes-gcm",
  "block2",
@@ -2423,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "lingopop-release-tools"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "lingopop-core",
  "minisign",
