@@ -16,11 +16,13 @@ impl std::fmt::Debug for SecretKey {
     }
 }
 impl SecretKey {
+    /// A fresh random 256-bit key; no random source = `Unavailable`.
     pub fn generate() -> Result<Self, ProtectError> {
         let mut key = Zeroizing::new([0; 32]);
         getrandom::fill(key.as_mut()).map_err(|_| ProtectError::Unavailable)?;
         Ok(Self(key))
     }
+    /// A key from exactly 32 bytes (as stored in the key store); any other length = `Unavailable`.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProtectError> {
         if bytes.len() != 32 {
             return Err(ProtectError::Unavailable);
@@ -34,13 +36,15 @@ impl SecretKey {
         self.0.as_ref()
     }
 }
+/// Seals `plain` into an LPS1 container: `LPS1` magic, a random 12-byte nonce, then the
+/// AES-256-GCM ciphertext and tag, with the magic as associated data.
 pub fn seal(key: &SecretKey, plain: &[u8]) -> Result<Vec<u8>, ProtectError> {
     let mut nonce = [0; 12];
     getrandom::fill(&mut nonce).map_err(|_| ProtectError::Unavailable)?;
     let cipher = Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|_| ProtectError::Invalid)?;
     let encrypted = cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: plain,
                 aad: MAGIC,
@@ -53,14 +57,16 @@ pub fn seal(key: &SecretKey, plain: &[u8]) -> Result<Vec<u8>, ProtectError> {
     nonce.zeroize();
     Ok(out)
 }
+/// Opens an LPS1 container made by [`seal`]; a short, foreign or tampered blob = `Invalid`.
 pub fn open(key: &SecretKey, bytes: &[u8]) -> Result<Vec<u8>, ProtectError> {
     if bytes.len() < 32 || !bytes.starts_with(MAGIC) {
         return Err(ProtectError::Invalid);
     }
     let cipher = Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|_| ProtectError::Invalid)?;
+    let nonce = Nonce::try_from(&bytes[4..16]).map_err(|_| ProtectError::Invalid)?;
     cipher
         .decrypt(
-            Nonce::from_slice(&bytes[4..16]),
+            &nonce,
             Payload {
                 msg: &bytes[16..],
                 aad: MAGIC,
@@ -88,6 +94,7 @@ struct KeyCache {
     used: bool,
 }
 impl KeyStoreProtector {
+    /// A protector over `keys`; the key is loaded or created on first use and then cached.
     pub fn new(keys: std::sync::Arc<dyn KeychainKeyStore>) -> Self {
         Self {
             keys,
@@ -121,6 +128,7 @@ impl KeyStoreProtector {
         cache.key = Some(key.clone());
         Ok(key)
     }
+    /// Deletes the stored key and creates a new one (secrets reset only; old ciphertext is lost).
     pub fn regenerate_key(&self) -> Result<(), ProtectError> {
         let mut cache = self
             .cache
