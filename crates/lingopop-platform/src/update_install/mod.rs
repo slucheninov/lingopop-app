@@ -11,6 +11,13 @@
 //!   `created` list, folders only with a matching owner marker, the backup only while it is
 //!   still the backup and has the old identity, and never `site` or a path holding `running`.
 //!
+//! Durability: every journal state is made durable (the journal file and the data folder are
+//! synced after the atomic rename) before the step it announces runs, and every install
+//! rename, swap, rollback and extraction is synced (the parent folders involved) before the
+//! next journal state is written; see [`native_sync`]. A barrier that fails before a
+//! destructive step aborts the attempt; one that fails after a completed step is logged
+//! (`update sync failed`) and the journal update that follows goes on.
+//!
 //! Log lines are fixed text, never paths.
 
 mod bundle;
@@ -21,7 +28,8 @@ mod recover;
 
 use std::cell::Cell;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub use bundle::{
     bundle_staging_folder, bundle_support, bundle_zip_path, install_bundle, install_bundle_with,
@@ -40,7 +48,11 @@ pub use journal::{
     JOURNAL_FILE, OWNER_MARKER,
 };
 pub use lingopop_core::update_sig::UpdateError;
-pub use recover::{recover, recover_with, RecoverOps, Recovery};
+pub use recover::{
+    recover, recover_after_install, recover_after_install_with, recover_with, RecoverOps, Recovery,
+};
+
+pub(crate) use journal::write_journal_with;
 
 use serde::{Deserialize, Serialize};
 
@@ -129,6 +141,85 @@ pub fn native_rename_swap(a: &Path, b: &Path) -> io::Result<()> {
     }
 }
 
+/// The durability barrier of this OS for one path (a file or a folder), the one every journal
+/// write, install move and extraction goes through:
+/// - macOS: `File::sync_all`, which std implements as `fcntl(F_FULLFSYNC)` on Apple targets
+///   (checked in the std source of the toolchain, `sys/fs/unix.rs` `os_fsync`), for a folder
+///   too: the rename / swap entries reach the disk, not only its cache;
+/// - Windows: a file is opened for writing and `sync_all`ed (`FlushFileBuffers`); a folder is
+///   a no-op (NTFS journals its metadata, and every install rename is `MoveFileExW` with
+///   `MOVEFILE_WRITE_THROUGH`);
+/// - other Unix: `fsync` of the file or folder.
+///
+/// A symbolic link is not followed (its folder's barrier covers it).
+pub fn native_sync(path: &Path) -> io::Result<()> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        if meta.is_dir() {
+            return Ok(());
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)?
+            .sync_all()
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::File::open(path)?.sync_all()
+    }
+}
+
+/// Syncs every file under `root`, then each folder after its contents, then `root` itself
+/// (best effort over a whole extracted bundle; symbolic links are not followed).
+pub(crate) fn sync_tree(sync: &dyn Fn(&Path) -> io::Result<()>, root: &Path) -> io::Result<()> {
+    let meta = std::fs::symlink_metadata(root)?;
+    if meta.is_dir() {
+        let mut entries: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(root)? {
+            entries.push(entry?.path());
+        }
+        entries.sort();
+        for entry in entries {
+            sync_tree(sync, &entry)?;
+        }
+    }
+    sync(root)
+}
+
+/// Process memory of where recovery moved THIS process's own running image (the folder of a
+/// swapped-back install). Recovery and cleanup never delete such a path or a folder holding
+/// it; the next start (a new process, the previous version) cleans it up. Only recovery adds
+/// to it, and only when `running` lay inside `site` before its swap back.
+#[derive(Debug, Default)]
+pub struct RunningCopies(Mutex<Vec<PathBuf>>);
+
+impl RunningCopies {
+    /// An empty memory (tests model a new process with a fresh one).
+    pub const fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    pub(crate) fn add(&self, path: &Path) {
+        let mut paths = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if !paths.iter().any(|p| p == path) {
+            paths.push(path.to_owned());
+        }
+    }
+
+    /// True when deleting `path` could delete a relocated running copy: it is one, or holds one.
+    pub(crate) fn guards(&self, path: &Path) -> bool {
+        let paths = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        paths.iter().any(|p| p.starts_with(path))
+    }
+}
+
+/// The one memory of the running process.
+pub(crate) static PROCESS_RUNNING_COPIES: RunningCopies = RunningCopies::new();
+
 /// Test hook points of the install and the recovery. Production passes a hook that always
 /// returns [`HookAction::Continue`].
 #[doc(hidden)]
@@ -191,6 +282,10 @@ pub(crate) struct Ctx<'a> {
     pub identity: &'a dyn Fn(&Path) -> Option<String>,
     pub rename: &'a dyn Fn(&Path, &Path) -> io::Result<()>,
     pub hook: &'a dyn Fn(Step) -> HookAction,
+    /// The durability barrier ([`native_sync`] in production).
+    pub sync: &'a dyn Fn(&Path) -> io::Result<()>,
+    /// Where recovery moved this process's running image ([`PROCESS_RUNNING_COPIES`]).
+    pub copies: &'a RunningCopies,
     fail_next_write: Cell<bool>,
 }
 
@@ -208,7 +303,36 @@ impl<'a> Ctx<'a> {
             identity,
             rename,
             hook,
+            sync: &native_sync,
+            copies: &PROCESS_RUNNING_COPIES,
             fail_next_write: Cell::new(false),
+        }
+    }
+
+    /// Replaces the durability barrier (tests).
+    pub fn with_sync(mut self, sync: &'a dyn Fn(&Path) -> io::Result<()>) -> Self {
+        self.sync = sync;
+        self
+    }
+
+    /// Replaces the running-copies memory (tests).
+    pub fn with_copies(mut self, copies: &'a RunningCopies) -> Self {
+        self.copies = copies;
+        self
+    }
+
+    /// A barrier BEFORE a destructive step: every path is synced, the first failure returned.
+    pub fn barrier(&self, paths: &[&Path]) -> io::Result<()> {
+        paths.iter().try_for_each(|p| (self.sync)(p))
+    }
+
+    /// A barrier AFTER a completed step: every path is synced; a failure is logged and the
+    /// caller goes on with the journal update.
+    pub fn settle(&self, paths: &[&Path]) {
+        for p in paths {
+            if (self.sync)(p).is_err() {
+                log("update sync failed");
+            }
         }
     }
 
@@ -227,7 +351,7 @@ impl<'a> Ctx<'a> {
         if self.fail_next_write.replace(false) {
             return Err(UpdateError::Install("update journal could not be written"));
         }
-        write_journal(self.data_dir, j)
+        write_journal_with(self.data_dir, j, self.sync)
     }
 }
 

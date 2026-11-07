@@ -1,12 +1,13 @@
 //! The no-replace rename over `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` (same volume:
-//! no `MOVEFILE_COPY_ALLOWED` either, so the move is a rename).
+//! no `MOVEFILE_COPY_ALLOWED` either, so the move is a rename), with `MOVEFILE_WRITE_THROUGH`
+//! so it returns only once the move is on disk (the update journal's durability order).
 
 use std::io;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 
 use ::windows::core::PCWSTR;
-use ::windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
+use ::windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
 
 use super::util::win32_code;
 
@@ -28,12 +29,13 @@ pub(crate) fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
     let from = wide_path(from)?;
     let to = wide_path(to)?;
     // SAFETY: both buffers are NUL-terminated UTF-16 strings without interior NULs that outlive
-    // the call; MoveFileExW only reads them. Flags 0 = no replace, no copy, no reboot delay.
+    // the call; MoveFileExW only reads them. Only MOVEFILE_WRITE_THROUGH: no replace, no copy,
+    // no reboot delay.
     unsafe {
         MoveFileExW(
             PCWSTR(from.as_ptr()),
             PCWSTR(to.as_ptr()),
-            MOVE_FILE_FLAGS(0),
+            MOVEFILE_WRITE_THROUGH,
         )
     }
     .map_err(|e| io::Error::from_raw_os_error(win32_code(&e)))

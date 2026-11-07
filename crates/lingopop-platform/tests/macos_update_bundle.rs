@@ -8,7 +8,9 @@ use std::path::Path;
 use std::process::Command;
 
 use lingopop_platform::update_install::{
-    bundle_support, pinned_requirement, BundleTools, Support, BUNDLE_ID,
+    bundle_identity, bundle_support, pinned_requirement, read_bundle_info, read_journal,
+    recover_with, write_journal, BundleTools, Journal, Phase, RecoverOps, Recovery, RunningCopies,
+    SiteKind, Support, BUNDLE_ID, OWNER_MARKER,
 };
 use lingopop_platform::SystemBundleTools;
 use tempfile::TempDir;
@@ -131,4 +133,83 @@ fn real_ditto_extracts_and_the_bundle_is_read() {
     let into2 = tmp.path().join("extracted2");
     fs::create_dir(&into2).unwrap();
     assert!(SystemBundleTools.extract_zip(&junk, &into2).is_err());
+}
+
+#[test]
+fn real_swap_recovery_by_the_new_binary_keeps_its_running_bundle() {
+    // A pending journal after the swap: the new bundle at `site`, the previous one at the
+    // staged path. The NEW binary (`site/Contents/MacOS/LingoPop`) starts and recovers with the
+    // real `renamex_np(RENAME_SWAP)`.
+    const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+    let tmp = TempDir::new().unwrap();
+    let data = tmp.path().join("data");
+    fs::create_dir_all(&data).unwrap();
+    let parent = tmp.path().join("Applications");
+    let site = parent.join("LingoPop.app");
+    let folder = parent.join(format!(".LingoPop-update-0.2.2-{TOKEN}"));
+    let staged = folder.join("extracted/LingoPop.app");
+    signed_bundle(&site, "0.2.2");
+    signed_bundle(&staged, "0.2.1");
+    fs::write(folder.join(OWNER_MARKER), TOKEN).unwrap();
+    let new_hash = bundle_identity(&site).unwrap();
+    let old_hash = bundle_identity(&staged).unwrap();
+    assert_ne!(new_hash, old_hash);
+    let j = Journal {
+        version: "0.2.2".into(),
+        kind: SiteKind::MacBundle,
+        token: TOKEN.into(),
+        site: site.clone(),
+        staged: staged.clone(),
+        old: staged.clone(),
+        scratch: vec![folder.clone()],
+        phase: Phase::Pending,
+        old_hash,
+        old_restored: false,
+        new_hash: Some(new_hash.clone()),
+        intended: vec![folder.clone()],
+        created: vec![folder.clone()],
+    };
+    write_journal(&data, &j).unwrap();
+    let running = site.join("Contents/MacOS/LingoPop");
+    let image = fs::File::open(&running).unwrap();
+
+    let process = RunningCopies::new();
+    let ops = RecoverOps {
+        running_copies: &process,
+        ..RecoverOps::for_kind(SiteKind::MacBundle)
+    };
+    assert_eq!(recover_with(&data, &running, &ops), Recovery::RestoredKept);
+    assert_eq!(
+        read_bundle_info(&site).map(|(_, v)| v).as_deref(),
+        Some("0.2.1")
+    );
+    assert_eq!(bundle_identity(&staged).as_deref(), Some(new_hash.as_str()));
+    assert!(image.metadata().is_ok(), "the open image is still there");
+    let open = read_journal(&data).unwrap().expect("journal kept");
+    assert!(open.old_restored);
+
+    // the next start: the restored previous version at `site`
+    let next = RunningCopies::new();
+    let ops = RecoverOps {
+        running_copies: &next,
+        ..RecoverOps::for_kind(SiteKind::MacBundle)
+    };
+    assert_eq!(recover_with(&data, &running, &ops), Recovery::Cleaned);
+    assert!(!folder.exists());
+    assert!(read_journal(&data).unwrap().is_none());
+    assert_eq!(
+        read_bundle_info(&site).map(|(_, v)| v).as_deref(),
+        Some("0.2.1")
+    );
+}
+
+#[test]
+fn native_sync_flushes_files_and_folders() {
+    // std's `File::sync_all` is `fcntl(F_FULLFSYNC)` on Apple targets, for a folder too.
+    let tmp = TempDir::new().unwrap();
+    let f = tmp.path().join("f");
+    fs::write(&f, b"x").unwrap();
+    lingopop_platform::update_install::native_sync(&f).unwrap();
+    lingopop_platform::update_install::native_sync(tmp.path()).unwrap();
+    assert!(lingopop_platform::update_install::native_sync(&tmp.path().join("missing")).is_err());
 }

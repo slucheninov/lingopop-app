@@ -718,6 +718,55 @@ async fn relaunch_after_swap_uses_install_path() {
     assert_eq!(rig.installer.relaunches.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn startup_by_the_new_binary_restores_and_relaunches_the_install_site() {
+    // The previous process quit after the swap, before the commit; the NEW exe starts at
+    // `site`. Recovery moves its own image into the staging folder, so the journal and the
+    // folder stay for the next start, and every relaunch targets the install site.
+    let dir = tempfile::tempdir().unwrap();
+    let data = dir.path().join("data");
+    std::fs::create_dir_all(&data).unwrap();
+    let token = "0123456789abcdef0123456789abcdef";
+    let site = dir.path().join("LingoPop.exe");
+    let old = dir.path().join(format!("LingoPop.old-{token}.exe"));
+    let folder = dir.path().join(format!(".LingoPop-update-{token}"));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join(lingopop_platform::update_install::OWNER_MARKER),
+        token,
+    )
+    .unwrap();
+    std::fs::write(&site, b"new").unwrap();
+    std::fs::write(&old, b"previous").unwrap();
+    let staged = folder.join("LingoPop.exe");
+    let j = Journal {
+        version: NEW.into(),
+        kind: SiteKind::WindowsExe,
+        token: token.into(),
+        site: site.clone(),
+        staged: staged.clone(),
+        old: old.clone(),
+        scratch: vec![folder.clone()],
+        phase: Phase::Pending,
+        old_hash: file_sha256(&old).unwrap(),
+        old_restored: false,
+        new_hash: Some(file_sha256(&site).unwrap()),
+        intended: vec![folder.clone(), old.clone(), site.clone()],
+        created: vec![folder.clone(), old.clone()],
+    };
+    write_journal(&data, &j).unwrap();
+    let (recovery, target) = startup_recovery(&data, &site);
+    assert_eq!(recovery, Recovery::RestoredKept);
+    assert_eq!(target, RelaunchTarget::Exe(site.clone()));
+    assert_eq!(std::fs::read(&site).unwrap(), b"previous");
+    assert_eq!(
+        std::fs::read(&staged).unwrap(),
+        b"new",
+        "the running image is kept"
+    );
+    assert!(read_journal(&data).unwrap().is_some());
+}
+
 #[tokio::test]
 async fn state_read_returns_ready_after_settings_reopen() {
     let rig = rig();

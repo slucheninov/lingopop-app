@@ -5,11 +5,11 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use super::journal::{is_absent, read_journal, Journal, Phase, OWNER_MARKER};
+use super::journal::{is_absent, read_journal, remove_journal, Journal, Phase, OWNER_MARKER};
 use super::recover::{cleanup, Scope};
 use super::{
-    file_sha256, is_token, log, native_rename_noreplace, new_token, no_hook, Crashed, Ctx,
-    HookAction, InstallSite, SiteKind, Step, Support, UpdateError,
+    file_sha256, is_token, log, native_rename_noreplace, native_sync, new_token, no_hook, Crashed,
+    Ctx, HookAction, InstallSite, SiteKind, Step, Support, UpdateError,
 };
 
 /// `IMAGE_FILE_MACHINE_AMD64`, the same rule as `scripts/verify-release-assets.py`.
@@ -21,16 +21,19 @@ pub struct InstallOps<'a> {
     pub identity: &'a dyn Fn(&Path) -> Option<String>,
     /// The no-replace rename (fails when the destination exists).
     pub rename_noreplace: &'a dyn Fn(&Path, &Path) -> io::Result<()>,
+    /// The durability barrier of one path (production: [`native_sync`]).
+    pub sync: &'a dyn Fn(&Path) -> io::Result<()>,
     #[doc(hidden)]
     pub hook: &'a dyn Fn(Step) -> HookAction,
 }
 
 impl InstallOps<'static> {
-    /// SHA-256 and the OS no-replace rename, no hook.
+    /// SHA-256, the OS no-replace rename and barrier, no hook.
     pub fn native() -> Self {
         InstallOps {
             identity: &file_sha256,
             rename_noreplace: &native_rename_noreplace,
+            sync: &native_sync,
             hook: &no_hook,
         }
     }
@@ -148,7 +151,8 @@ pub fn stage_exe_with(
         ops.identity,
         ops.rename_noreplace,
         ops.hook,
-    );
+    )
+    .with_sync(ops.sync);
     begin_attempt(&ctx, j, &folder)
 }
 
@@ -164,7 +168,11 @@ pub(crate) fn begin_attempt(
     let folder = folder.to_owned();
     let token = j.token.clone();
     let token = token.as_str();
-    ctx.write(&j)?;
+    if let Err(e) = ctx.write(&j) {
+        // Nothing exists yet; a journal that reached its name but not the disk barrier goes.
+        remove_journal(ctx.data_dir);
+        return Err(e);
+    }
 
     if !is_absent(&folder) {
         return abort(ctx, &mut j, "staging folder exists");
@@ -296,7 +304,8 @@ pub fn install_exe_with(
         ops.identity,
         ops.rename_noreplace,
         ops.hook,
-    );
+    )
+    .with_sync(ops.sync);
     match swap(&ctx, &mut j) {
         Ok(result) => result,
         Err(Crashed) => Err(UpdateError::Install("update interrupted")),
@@ -317,6 +326,13 @@ fn swap(ctx: &Ctx<'_>, j: &mut Journal) -> Result<Result<(), UpdateError>, Crash
     j.new_hash = Some(new_hash);
     if ctx.write(j).is_err() {
         return Ok(abort(ctx, j, "update journal could not be written"));
+    }
+    // Barrier before the first move: the verified download and its folder entry are on disk.
+    let (Some(site_dir), Some(staging)) = (site.parent(), staged.parent()) else {
+        return Ok(abort(ctx, j, "update journal does not match"));
+    };
+    if ctx.barrier(&[&staged, staging]).is_err() {
+        return Ok(abort(ctx, j, "update could not be made durable"));
     }
     // Step 0: the running exe must still be the one recorded at the start.
     if (ctx.identity)(&site).as_deref() != Some(j.old_hash.as_str()) {
@@ -347,6 +363,7 @@ fn swap(ctx: &Ctx<'_>, j: &mut Journal) -> Result<Result<(), UpdateError>, Crash
         }
         return Ok(abort(ctx, j, "backup rename failed"));
     }
+    ctx.settle(&[site_dir]);
     j.created.push(old.clone());
     if ctx.write(j).is_err() {
         return rollback(ctx, j);
@@ -367,6 +384,8 @@ fn swap(ctx: &Ctx<'_>, j: &mut Journal) -> Result<Result<(), UpdateError>, Crash
     if (ctx.rename)(&staged, &site).is_err() {
         return rollback(ctx, j);
     }
+    // The caller commits only after this: the final rename is durable first.
+    ctx.settle(&[site_dir, staging]);
     Ok(Ok(()))
 }
 
@@ -378,6 +397,9 @@ fn rollback(ctx: &Ctx<'_>, j: &mut Journal) -> Result<Result<(), UpdateError>, C
     if (ctx.rename)(&j.old, &j.site).is_err() {
         log("update rollback failed");
         return Ok(Err(UpdateError::Install("rollback failed")));
+    }
+    if let Some(dir) = j.site.parent() {
+        ctx.settle(&[dir]);
     }
     ctx.at(Step::AfterRollbackMove)?;
     j.old_restored = true;

@@ -8,6 +8,7 @@
 //! an update the system would treat as another app is refused before anything moves.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use lingopop_core::updates::{stable_version, RELEASE_CERT_SHA1};
@@ -17,8 +18,8 @@ use super::identity::{info_plist, plist_string};
 use super::journal::{is_absent, read_journal, Journal, Phase};
 use super::recover::{cleanup, Scope};
 use super::{
-    bundle_identity, is_token, log, native_rename_noreplace, new_token, no_hook, Crashed, Ctx,
-    HookAction, InstallSite, SiteKind, Step, Support, UpdateError,
+    bundle_identity, is_token, log, native_rename_noreplace, native_sync, new_token, no_hook,
+    sync_tree, Crashed, Ctx, HookAction, InstallSite, SiteKind, Step, Support, UpdateError,
 };
 use crate::macos_login::is_installed_bundle_path;
 
@@ -52,6 +53,10 @@ pub trait BundleTools: Send + Sync {
     fn executable_archs(&self, app: &Path) -> Vec<String>;
     /// The atomic exchange of two paths on one volume (`renamex_np(RENAME_SWAP)`).
     fn swap(&self, a: &Path, b: &Path) -> Result<(), UpdateError>;
+    /// The durability barrier of one file or folder ([`native_sync`]; tests record it).
+    fn sync(&self, path: &Path) -> io::Result<()> {
+        native_sync(path)
+    }
 }
 
 /// The exact designated requirement every updatable bundle (the running one and the update)
@@ -253,7 +258,8 @@ pub fn install_bundle_with(
     }
     let identity = bundle_identity;
     let rename = native_rename_noreplace;
-    let ctx = Ctx::new(data_dir, &site.path, &identity, &rename, hook);
+    let sync = |p: &Path| tools.sync(p);
+    let ctx = Ctx::new(data_dir, &site.path, &identity, &rename, hook).with_sync(&sync);
     let check = Check {
         zip,
         version,
@@ -318,6 +324,10 @@ fn install(
     if !exactly_one_app(&extracted) {
         return Ok(abort(ctx, j, "update must hold exactly one LingoPop.app"));
     }
+    // Barrier before anything moves: the extracted bundle (files, then folders) is on disk.
+    if sync_tree(ctx.sync, &extracted).is_err() {
+        return Ok(abort(ctx, j, "update could not be made durable"));
+    }
     if !is_info(c.tools.bundle_info(&staged), c.version) {
         return Ok(abort(ctx, j, "update bundle id or version mismatch"));
     }
@@ -360,6 +370,8 @@ fn install(
         log("update install failed");
         return Ok(Err(UpdateError::Install("bundle swap failed")));
     }
+    // The caller commits only after install returns: the swap is durable first.
+    settle_swap(ctx, j);
     ctx.at(Step::AfterBundleSwap)?;
 
     // Late check: the installed item is the checked bundle and still satisfies the pinned
@@ -371,6 +383,15 @@ fn install(
         return swap_back(ctx, j, c.tools);
     }
     Ok(Ok(()))
+}
+
+/// After a completed swap: both parent folders of the exchange are synced (a failure is logged).
+pub(crate) fn settle_swap(ctx: &Ctx<'_>, j: &Journal) {
+    let parents: Vec<&Path> = [j.site.parent(), j.staged.parent()]
+        .into_iter()
+        .flatten()
+        .collect();
+    ctx.settle(&parents);
 }
 
 /// The rollback: the same swap again. Only a successful swap back continues with the cleanup;
@@ -387,6 +408,7 @@ fn swap_back(
         log("update rollback failed");
         return Ok(Err(UpdateError::Install("rollback failed")));
     }
+    settle_swap(ctx, j);
     ctx.at(Step::AfterSwapBack)?;
     j.old_restored = true;
     if ctx.write(j).is_err() {

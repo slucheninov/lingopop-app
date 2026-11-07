@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 use lingopop_core::update_sig::UpdateError;
 use lingopop_platform::update_install::{
     bundle_identity, commit_journal, confirm, exe_support, file_sha256, install_exe,
-    install_exe_with, intend, native_rename_noreplace, new_token, read_journal, recover,
-    recover_with, stage_exe, stage_exe_with, write_journal, HookAction, InstallOps, InstallSite,
-    Journal, Phase, RecoverOps, Recovery, SiteKind, Step, Support, JOURNAL_FILE, OWNER_MARKER,
+    install_exe_with, intend, native_rename_noreplace, native_sync, new_token, read_journal,
+    recover, recover_after_install_with, recover_with, stage_exe, stage_exe_with, write_journal,
+    HookAction, InstallOps, InstallSite, Journal, Phase, RecoverOps, Recovery, RunningCopies,
+    SiteKind, Step, Support, JOURNAL_FILE, OWNER_MARKER,
 };
 use tempfile::TempDir;
 
@@ -110,8 +111,19 @@ impl Env {
         install_exe_with(&self.data, &self.site, &staged, ops)
     }
 
+    /// Recovery as a new start would run it: the running exe is at `site` and the process
+    /// memory of relocated running copies is fresh.
     fn recover(&self) -> Recovery {
-        recover(&self.data, &self.site.path)
+        self.recover_in(&RunningCopies::new())
+    }
+
+    /// Recovery inside the process that owns `copies`.
+    fn recover_in(&self, copies: &RunningCopies) -> Recovery {
+        let ops = RecoverOps {
+            running_copies: copies,
+            ..RecoverOps::for_kind(SiteKind::WindowsExe)
+        };
+        recover_with(&self.data, &self.site.path, &ops)
     }
 
     fn site_bytes(&self) -> Option<Vec<u8>> {
@@ -619,15 +631,37 @@ fn committed_site_missing_restores_old_and_closes() {
 }
 
 #[test]
-fn committed_old_version_at_site_without_a_restore_is_kept() {
+fn committed_old_version_at_site_is_closed_and_site_kept() {
+    // A committed journal whose `site` holds the previous version again (a lost commit order
+    // after a power cut, or the user put the old exe back): `site` is a verified copy of the
+    // previous version, so nothing else is the only copy; the journal must not block updates
+    // forever.
     let env = Env::new();
     let j = env.stage();
     install_exe(&env.data, &env.site, &j.staged).unwrap();
     commit_journal(&env.data).unwrap();
     fs::write(&env.site.path, old_bytes()).unwrap();
-    assert_eq!(env.recover(), Recovery::Kept);
-    assert_eq!(read(&env.old()), old_bytes());
-    assert!(env.journal_path().exists());
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert_eq!(
+        env.site_bytes().unwrap(),
+        old_bytes(),
+        "site is never touched"
+    );
+    assert!(!env.old().exists(), "the duplicate backup is removed");
+    assert!(!env.folder().exists());
+    assert!(!env.journal_path().exists());
+}
+
+#[test]
+fn committed_old_version_at_site_keeps_a_backup_that_is_not_the_old_version() {
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    commit_journal(&env.data).unwrap();
+    fs::write(&env.site.path, old_bytes()).unwrap();
+    fs::write(env.old(), pe(b"something else")).unwrap();
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert_eq!(read(&env.old()), pe(b"something else"), "never deleted");
 }
 
 #[test]
@@ -680,14 +714,73 @@ fn completed_swap_is_cleaned() {
 
 #[test]
 fn uncommitted_swap_is_restored() {
+    // Run by a process whose exe is NOT at `site` (e.g. the previous version at the backup):
+    // the swap back moves nothing that runs, so the journal is closed at once.
     let env = Env::new();
     let j = env.stage();
     install_exe(&env.data, &env.site, &j.staged).unwrap();
-    assert_eq!(env.recover(), Recovery::Restored);
+    let ops = RecoverOps {
+        running_copies: &RunningCopies::new(),
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
+    };
+    assert_eq!(
+        recover_with(&env.data, &env.old(), &ops),
+        Recovery::Restored
+    );
     assert_eq!(env.site_bytes().unwrap(), old_bytes());
     assert!(!env.old().exists());
     assert!(!env.folder().exists());
     assert!(!env.journal_path().exists());
+}
+
+#[test]
+fn new_exe_rolling_back_keeps_its_relocated_image_until_the_next_start() {
+    // The previous process quit after the swap and before the commit; the NEW exe starts at
+    // `site` and runs recovery: the swap back moves its own image into the staging folder.
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    let process = RunningCopies::new();
+    assert_eq!(env.recover_in(&process), Recovery::RestoredKept);
+    assert_eq!(
+        env.site_bytes().unwrap(),
+        old_bytes(),
+        "previous version back"
+    );
+    assert_eq!(read(&j.staged), new_bytes(), "the running image is kept");
+    let open = env.journal().expect("journal kept");
+    assert!(open.old_restored);
+    assert_eq!(open.phase, Phase::Pending);
+    // later recoveries in the same process (an update attempt) never delete it either
+    assert_eq!(env.recover_in(&process), Recovery::Kept);
+    assert!(j.staged.exists());
+    assert!(env.journal_path().exists());
+    // the next start runs the previous version at `site` and closes everything
+    assert_eq!(env.recover(), Recovery::Cleaned);
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    assert!(!env.folder().exists());
+    assert!(!env.journal_path().exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn running_inside_site_is_also_found_through_a_symlinked_path() {
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    let link = env.dir.parent().unwrap().join("apps-link");
+    std::os::unix::fs::symlink(&env.dir, &link).unwrap();
+    let ops = RecoverOps {
+        running_copies: &RunningCopies::new(),
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
+    };
+    let running = link.join("LingoPop.exe");
+    assert_eq!(
+        recover_with(&env.data, &running, &ops),
+        Recovery::RestoredKept
+    );
+    assert!(j.staged.exists());
+    assert!(env.journal_path().exists());
 }
 
 #[test]
@@ -1351,4 +1444,205 @@ fn symlink_at_a_created_path_is_kept() {
     assert_eq!(env.recover(), Recovery::Cleaned);
     assert!(fs::symlink_metadata(&link).is_ok());
     assert_eq!(read(&target), b"mine");
+}
+
+// ---------------------------------------------------------------- durability ordering
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ev {
+    Sync(PathBuf),
+    Rename(PathBuf, PathBuf),
+}
+
+/// Records every sync and rename in order; `fail_sync` names the paths whose sync fails.
+struct Recorder {
+    events: RefCell<Vec<Ev>>,
+    fail_sync: RefCell<Vec<PathBuf>>,
+}
+
+impl Recorder {
+    fn new() -> Self {
+        Recorder {
+            events: RefCell::new(Vec::new()),
+            fail_sync: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn sync(&self, p: &Path) -> io::Result<()> {
+        self.events.borrow_mut().push(Ev::Sync(p.to_owned()));
+        if self.fail_sync.borrow().iter().any(|f| f == p) {
+            return Err(io::Error::other("scripted sync failure"));
+        }
+        native_sync(p)
+    }
+
+    fn rename(&self, a: &Path, b: &Path) -> io::Result<()> {
+        self.events
+            .borrow_mut()
+            .push(Ev::Rename(a.to_owned(), b.to_owned()));
+        native_rename_noreplace(a, b)
+    }
+
+    fn events(&self) -> Vec<Ev> {
+        self.events.borrow().clone()
+    }
+
+    fn position(&self, ev: &Ev) -> usize {
+        self.events()
+            .iter()
+            .position(|e| e == ev)
+            .unwrap_or_else(|| panic!("{ev:?} not found in {:?}", self.events()))
+    }
+}
+
+#[test]
+fn journal_is_durable_before_the_backup_rename() {
+    let env = Env::new();
+    let j = env.stage();
+    let rec = Recorder::new();
+    let sync = |p: &Path| rec.sync(p);
+    let rename = |a: &Path, b: &Path| rec.rename(a, b);
+    let ops = InstallOps {
+        sync: &sync,
+        rename_noreplace: &rename,
+        ..InstallOps::native()
+    };
+    env.install(&ops).unwrap();
+    let backup = rec.position(&Ev::Rename(env.site.path.clone(), env.old()));
+    let events = rec.events();
+    // the journal write that recorded the backup name, then the data folder, right before
+    assert_eq!(events[backup - 2], Ev::Sync(env.journal_path()));
+    assert_eq!(events[backup - 1], Ev::Sync(env.data.clone()));
+    // the staged exe and its folder were made durable before any move
+    assert!(rec.position(&Ev::Sync(j.staged.clone())) < backup);
+    assert!(rec.position(&Ev::Sync(env.folder())) < backup);
+    // the backup rename itself is made durable before the next journal state
+    assert_eq!(events[backup + 1], Ev::Sync(env.dir.clone()));
+    assert_eq!(events[backup + 2], Ev::Sync(env.journal_path()));
+}
+
+#[test]
+fn staged_rename_is_durable_before_the_commit() {
+    let env = Env::new();
+    let j = env.stage();
+    let rec = Recorder::new();
+    let sync = |p: &Path| rec.sync(p);
+    let rename = |a: &Path, b: &Path| rec.rename(a, b);
+    let ops = InstallOps {
+        sync: &sync,
+        rename_noreplace: &rename,
+        ..InstallOps::native()
+    };
+    env.install(&ops).unwrap();
+    let events = rec.events();
+    let last = events.len();
+    // install returns only after the final rename is durable: the caller commits after it
+    assert_eq!(
+        events[last - 3],
+        Ev::Rename(j.staged.clone(), env.site.path.clone())
+    );
+    assert_eq!(events[last - 2], Ev::Sync(env.dir.clone()));
+    assert_eq!(events[last - 1], Ev::Sync(env.folder()));
+    commit_journal(&env.data).unwrap();
+}
+
+#[test]
+fn a_barrier_failure_before_the_first_rename_aborts_with_nothing_moved() {
+    let env = Env::new();
+    let j = env.stage();
+    let rec = Recorder::new();
+    rec.fail_sync.borrow_mut().push(j.staged.clone());
+    let sync = |p: &Path| rec.sync(p);
+    let rename = |a: &Path, b: &Path| rec.rename(a, b);
+    let ops = InstallOps {
+        sync: &sync,
+        rename_noreplace: &rename,
+        ..InstallOps::native()
+    };
+    assert!(matches!(env.install(&ops), Err(UpdateError::Install(_))));
+    assert!(!rec.events().iter().any(|e| matches!(e, Ev::Rename(..))));
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    assert!(!env.old().exists());
+    assert!(!env.folder().exists());
+    assert!(!env.journal_path().exists());
+}
+
+#[test]
+fn a_journal_that_cannot_be_made_durable_is_a_write_failure() {
+    let env = Env::new();
+    let rec = Recorder::new();
+    rec.fail_sync.borrow_mut().push(env.data.clone());
+    let sync = |p: &Path| rec.sync(p);
+    let ops = InstallOps {
+        sync: &sync,
+        ..InstallOps::native()
+    };
+    let r = stage_exe_with(&env.data, &env.site, VERSION, TOKEN, &ops);
+    assert!(matches!(r, Err(UpdateError::Install(_))));
+    assert!(!env.folder().exists(), "nothing was created");
+    assert!(!env.journal_path().exists());
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+}
+
+#[test]
+fn a_barrier_failure_after_a_completed_rename_continues() {
+    // The backup rename happened: a failed barrier after it is logged and the install goes on
+    // (the journal update that follows is itself durable).
+    let env = Env::new();
+    env.stage();
+    let rec = Recorder::new();
+    rec.fail_sync.borrow_mut().push(env.dir.clone());
+    let sync = |p: &Path| rec.sync(p);
+    let ops = InstallOps {
+        sync: &sync,
+        ..InstallOps::native()
+    };
+    env.install(&ops).unwrap();
+    assert_eq!(env.site_bytes().unwrap(), new_bytes());
+}
+
+#[test]
+fn recovery_swap_back_is_durable_before_the_journal_records_it() {
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    let rec = Recorder::new();
+    let sync = |p: &Path| rec.sync(p);
+    let rename = |a: &Path, b: &Path| rec.rename(a, b);
+    let copies = RunningCopies::new();
+    let ops = RecoverOps {
+        sync: &sync,
+        rename_noreplace: &rename,
+        running_copies: &copies,
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
+    };
+    assert_eq!(
+        recover_with(&env.data, &env.old(), &ops),
+        Recovery::Restored
+    );
+    let back = rec.position(&Ev::Rename(env.old(), env.site.path.clone()));
+    let events = rec.events();
+    assert_eq!(events[back + 1], Ev::Sync(env.dir.clone()));
+    assert_eq!(events[back + 2], Ev::Sync(env.folder()));
+    assert_eq!(events[back + 3], Ev::Sync(env.journal_path()));
+}
+
+#[test]
+fn the_installing_process_restores_and_closes_after_a_failed_commit() {
+    // The previous version installed the update (its own image moved to the backup) and the
+    // commit failed: the swap back returns its image to `site`, so everything is closed now.
+    let env = Env::new();
+    let j = env.stage();
+    install_exe(&env.data, &env.site, &j.staged).unwrap();
+    let ops = RecoverOps {
+        running_copies: &RunningCopies::new(),
+        ..RecoverOps::for_kind(SiteKind::WindowsExe)
+    };
+    assert_eq!(
+        recover_after_install_with(&env.data, &env.site.path, &ops),
+        Recovery::Restored
+    );
+    assert_eq!(env.site_bytes().unwrap(), old_bytes());
+    assert!(!env.folder().exists());
+    assert!(!env.journal_path().exists());
 }

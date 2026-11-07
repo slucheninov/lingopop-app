@@ -12,9 +12,9 @@ use lingopop_core::updates::RELEASE_CERT_SHA1;
 use lingopop_platform::update_install::{
     bundle_identity, bundle_staging_folder, bundle_support, bundle_zip_path, commit_journal,
     install_bundle, install_bundle_with, pinned_requirement, read_bundle_info, read_journal,
-    recover, recover_with, stage_bundle, stage_bundle_with, BundleTools, HookAction, InstallSite,
-    Journal, Phase, RecoverOps, Recovery, SiteKind, Step, Support, BUNDLE_ID, JOURNAL_FILE,
-    OWNER_MARKER,
+    recover, recover_after_install_with, recover_with, stage_bundle, stage_bundle_with,
+    BundleTools, HookAction, InstallSite, Journal, Phase, RecoverOps, Recovery, RunningCopies,
+    SiteKind, Step, Support, BUNDLE_ID, JOURNAL_FILE, OWNER_MARKER,
 };
 use tempfile::TempDir;
 
@@ -88,6 +88,16 @@ struct Fake {
     fail_swaps: Vec<u32>,
     swaps: Mutex<Vec<(PathBuf, PathBuf)>>,
     extracts: Mutex<u32>,
+    /// Every sync and swap in order.
+    events: Mutex<Vec<Ev>>,
+    /// A sync of any path at or under this one fails.
+    fail_sync_under: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ev {
+    Sync(PathBuf),
+    Swap(PathBuf, PathBuf),
 }
 
 impl Fake {
@@ -101,7 +111,13 @@ impl Fake {
             fail_swaps: Vec::new(),
             swaps: Mutex::new(Vec::new()),
             extracts: Mutex::new(0),
+            events: Mutex::new(Vec::new()),
+            fail_sync_under: None,
         }
+    }
+
+    fn events(&self) -> Vec<Ev> {
+        self.events.lock().unwrap().clone()
     }
 
     fn swap_count(&self) -> usize {
@@ -141,6 +157,10 @@ impl BundleTools for Fake {
     }
 
     fn swap(&self, a: &Path, b: &Path) -> Result<(), UpdateError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Ev::Swap(a.to_owned(), b.to_owned()));
         let mut swaps = self.swaps.lock().unwrap();
         swaps.push((a.to_owned(), b.to_owned()));
         let n = swaps.len() as u32;
@@ -148,6 +168,18 @@ impl BundleTools for Fake {
             return Err(UpdateError::Install("swap failed"));
         }
         test_swap(a, b).map_err(|_| UpdateError::Install("swap failed"))
+    }
+
+    fn sync(&self, path: &Path) -> io::Result<()> {
+        self.events.lock().unwrap().push(Ev::Sync(path.to_owned()));
+        if self
+            .fail_sync_under
+            .as_ref()
+            .is_some_and(|f| path.starts_with(f))
+        {
+            return Err(io::Error::other("scripted sync failure"));
+        }
+        lingopop_platform::update_install::native_sync(path)
     }
 }
 
@@ -226,13 +258,27 @@ impl Env {
         self.site.path.join("Contents/MacOS/LingoPop")
     }
 
+    /// Recovery as a new start runs it: the running executable inside `site`, a fresh process
+    /// memory of relocated running copies.
     fn recover_with_test_swap(&self) -> Recovery {
+        self.recover_in(&RunningCopies::new(), &self.running())
+    }
+
+    /// Recovery inside the process that owns `copies`, running `running`.
+    fn recover_in(&self, copies: &RunningCopies, running: &Path) -> Recovery {
         let swap = |a: &Path, b: &Path| test_swap(a, b);
         let ops = RecoverOps {
             swap: &swap,
+            running_copies: copies,
             ..RecoverOps::for_kind(SiteKind::MacBundle)
         };
-        recover_with(&self.data, &self.running(), &ops)
+        recover_with(&self.data, running, &ops)
+    }
+
+    /// The previous process (its image outside `site`) runs recovery.
+    fn recover_from_elsewhere(&self) -> Recovery {
+        let elsewhere = self.tmp.path().join("elsewhere/LingoPop");
+        self.recover_in(&RunningCopies::new(), &elsewhere)
     }
 }
 
@@ -665,7 +711,8 @@ fn failed_late_check_and_failed_swap_back_is_restored_by_recover() {
     assert!(open.new_hash.is_some());
     assert!(!open.old_restored);
 
-    assert_eq!(env.recover_with_test_swap(), Recovery::Restored);
+    // the same process (its image now at the staged path) runs recovery
+    assert_eq!(env.recover_from_elsewhere(), Recovery::Restored);
     assert_eq!(tree(&env.site.path), before, "the previous version is back");
     assert!(!env.folder().exists());
     assert!(env.journal().is_none());
@@ -740,8 +787,12 @@ fn crash_after_swap_is_restored_by_recover() {
     let hook = crash_at(Step::AfterBundleSwap);
     assert!(install_with_hook(&env, &tools, &hook).is_err());
     assert_eq!(env.site_version().as_deref(), Some(VERSION));
-    assert_eq!(env.recover_with_test_swap(), Recovery::Restored);
+    // the next start is the NEW binary at site: restored, its own bundle kept
+    assert_eq!(env.recover_with_test_swap(), Recovery::RestoredKept);
     assert_eq!(tree(&env.site.path), before);
+    assert!(env.folder().exists());
+    // the start after that (the previous version) closes it
+    assert_eq!(env.recover_with_test_swap(), Recovery::Cleaned);
     assert!(!env.folder().exists());
     assert!(env.journal().is_none());
 }
@@ -773,9 +824,120 @@ fn an_uncommitted_install_is_swapped_back_at_the_next_start() {
     let before = tree(&env.site.path);
     env.stage();
     env.install(&Fake::new()).unwrap();
-    assert_eq!(env.recover_with_test_swap(), Recovery::Restored);
+    assert_eq!(env.recover_with_test_swap(), Recovery::RestoredKept);
     assert_eq!(tree(&env.site.path), before);
+    assert_eq!(env.recover_with_test_swap(), Recovery::Cleaned);
     assert!(!env.folder().exists());
+}
+
+#[test]
+fn new_binary_rolling_back_keeps_its_relocated_bundle() {
+    // The previous process died after the swap and before the commit. The user starts the app
+    // at its install path: the NEW binary, `running = site/Contents/MacOS/LingoPop`. Recovery
+    // swaps the previous version back, which moves the running bundle into the owned folder.
+    let env = Env::new();
+    let before = tree(&env.site.path);
+    let j = env.stage();
+    env.install(&Fake::new()).unwrap();
+    let new_hash = env.journal().unwrap().new_hash.unwrap();
+    let process = RunningCopies::new();
+    assert_eq!(
+        env.recover_in(&process, &env.running()),
+        Recovery::RestoredKept
+    );
+    assert_eq!(tree(&env.site.path), before, "the previous version is back");
+    assert_eq!(
+        bundle_identity(&j.staged).as_deref(),
+        Some(new_hash.as_str()),
+        "the relocated running bundle survives"
+    );
+    let open = env.journal().expect("journal kept");
+    assert!(open.old_restored);
+    assert_eq!(open.phase, Phase::Pending);
+    // any later recovery of this process (an update attempt) keeps it too
+    assert_eq!(env.recover_in(&process, &env.running()), Recovery::Kept);
+    assert!(j.staged.exists());
+    // the next start runs the restored previous version at site: journal and folder closed
+    assert_eq!(
+        env.recover_in(&RunningCopies::new(), &env.running()),
+        Recovery::Cleaned
+    );
+    assert!(!env.folder().exists());
+    assert!(env.journal().is_none());
+    assert_eq!(tree(&env.site.path), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn running_inside_site_through_a_symlinked_parent_is_protected() {
+    let env = Env::new();
+    let j = env.stage();
+    env.install(&Fake::new()).unwrap();
+    let link = env.tmp.path().join("Apps-link");
+    std::os::unix::fs::symlink(&env.parent, &link).unwrap();
+    let running = link.join("LingoPop.app/Contents/MacOS/LingoPop");
+    assert_eq!(
+        env.recover_in(&RunningCopies::new(), &running),
+        Recovery::RestoredKept
+    );
+    assert!(j.staged.exists());
+    assert!(env.journal().is_some());
+}
+
+#[test]
+fn committed_journal_with_the_previous_bundle_at_site_is_closed() {
+    // A committed journal but `site` holds the previous version (e.g. the swap did not reach
+    // the disk before a power cut): `site` is a full copy of the previous version, so the
+    // folder holds no only copy and the journal must not block updates forever.
+    let env = Env::new();
+    let before = tree(&env.site.path);
+    let j = env.stage();
+    env.install(&Fake::new()).unwrap();
+    commit_journal(&env.data).unwrap();
+    // put the namespace back as if the swap was lost
+    test_swap(&j.staged, &env.site.path).unwrap();
+    assert_eq!(tree(&env.site.path), before);
+    assert_eq!(env.recover_with_test_swap(), Recovery::Cleaned);
+    assert_eq!(tree(&env.site.path), before, "site untouched");
+    assert!(!env.folder().exists());
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn extracted_bundle_and_swap_are_durable_in_order() {
+    let env = Env::new();
+    let j = env.stage();
+    let tools = Fake::new();
+    env.install(&tools).unwrap();
+    let events = tools.events();
+    let swap = events
+        .iter()
+        .position(|e| *e == Ev::Swap(j.staged.clone(), env.site.path.clone()))
+        .expect("the swap");
+    let extracted = j.staged.parent().unwrap().to_owned();
+    let exe = j.staged.join("Contents/MacOS/LingoPop");
+    let pos = |ev: Ev| events.iter().position(|e| *e == ev).unwrap();
+    // files before their folders, all before the swap
+    assert!(pos(Ev::Sync(exe.clone())) < pos(Ev::Sync(j.staged.join("Contents/MacOS"))));
+    assert!(pos(Ev::Sync(j.staged.clone())) < pos(Ev::Sync(extracted.clone())));
+    assert!(pos(Ev::Sync(extracted.clone())) < swap);
+    // the swap is durable (both parents) before install returns and the caller commits
+    assert_eq!(events[swap + 1], Ev::Sync(env.parent.clone()));
+    assert_eq!(events[swap + 2], Ev::Sync(extracted));
+    commit_journal(&env.data).unwrap();
+}
+
+#[test]
+fn a_barrier_failure_before_the_swap_aborts_with_nothing_moved() {
+    let env = Env::new();
+    let before = tree(&env.site.path);
+    let j = env.stage();
+    let tools = Fake {
+        fail_sync_under: Some(j.staged.clone()),
+        ..Fake::new()
+    };
+    assert_refused_untouched(&env, &before, env.install(&tools));
+    assert_eq!(tools.swap_count(), 0);
 }
 
 #[test]
@@ -786,5 +948,26 @@ fn recovery_keeps_a_staging_folder_without_the_marker() {
     // the folder is not provably ours any more: kept, journal closed (nothing was moved)
     assert_eq!(env.recover_with_test_swap(), Recovery::Cleaned);
     assert!(env.folder().exists());
+    assert!(env.journal().is_none());
+}
+
+#[test]
+fn the_installing_process_restores_and_closes_after_a_failed_commit() {
+    let env = Env::new();
+    let before = tree(&env.site.path);
+    env.stage();
+    env.install(&Fake::new()).unwrap();
+    let swap = |a: &Path, b: &Path| test_swap(a, b);
+    let ops = RecoverOps {
+        swap: &swap,
+        running_copies: &RunningCopies::new(),
+        ..RecoverOps::for_kind(SiteKind::MacBundle)
+    };
+    assert_eq!(
+        recover_after_install_with(&env.data, &env.running(), &ops),
+        Recovery::Restored
+    );
+    assert_eq!(tree(&env.site.path), before);
+    assert!(!env.folder().exists());
     assert!(env.journal().is_none());
 }

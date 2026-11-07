@@ -67,12 +67,28 @@ fn journal_path(data_dir: &Path) -> PathBuf {
     data_dir.join(JOURNAL_FILE)
 }
 
-/// Writes the journal atomically (`fsio::atomic_write`, owner-only on Unix).
+/// Writes the journal atomically (`fsio::atomic_write`, owner-only on Unix) and durably: after
+/// the rename the journal file and the data folder are synced ([`super::native_sync`]), so the
+/// state is on disk before the step it announces runs.
 pub fn write_journal(data_dir: &Path, j: &Journal) -> Result<(), UpdateError> {
-    let bytes = serde_json::to_vec_pretty(j)
-        .map_err(|_| UpdateError::Install("update journal could not be written"))?;
-    fsio::atomic_write(&journal_path(data_dir), &bytes, true)
-        .map_err(|_| UpdateError::Install("update journal could not be written"))
+    write_journal_with(data_dir, j, &super::native_sync)
+}
+
+/// [`write_journal`] with an injected barrier. A failed barrier is a failed write: the caller
+/// treats the new state as not written (the file on disk holds the old or the new state, like
+/// after a crash).
+pub(crate) fn write_journal_with(
+    data_dir: &Path,
+    j: &Journal,
+    sync: &dyn Fn(&Path) -> io::Result<()>,
+) -> Result<(), UpdateError> {
+    let failed = || UpdateError::Install("update journal could not be written");
+    let bytes = serde_json::to_vec_pretty(j).map_err(|_| failed())?;
+    let path = journal_path(data_dir);
+    fsio::atomic_write(&path, &bytes, true).map_err(|_| failed())?;
+    sync(&path)
+        .and_then(|()| sync(data_dir))
+        .map_err(|_| failed())
 }
 
 /// `Ok(None)` when there is no journal; `Err` when it exists but cannot be read or parsed (it

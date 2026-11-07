@@ -21,8 +21,8 @@ use lingopop_core::updates::{
 };
 use lingopop_core::VERSION;
 use lingopop_platform::update_install::{
-    bundle_zip_path, commit_journal, confirm, intend, read_journal, recover, stage_bundle,
-    stage_exe, InstallSite, Journal, Recovery, SiteKind, Support,
+    bundle_zip_path, commit_journal, confirm, intend, read_journal, recover, recover_after_install,
+    stage_bundle, stage_exe, InstallSite, Journal, Recovery, SiteKind, Support,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -564,7 +564,9 @@ impl UpdateState {
             installer.install(&plan, &asset)?;
             if let Err(error) = installer.commit(&data) {
                 log::warn!("update commit failed, restoring the previous version");
-                if !matches!(recover(&data, &running), Recovery::Restored) {
+                // This process's own install moved its image to the backup: the swap back
+                // returns it, so the attempt is closed at once.
+                if !matches!(recover_after_install(&data, &running), Recovery::Restored) {
                     log::warn!("update restore after a failed commit did not complete");
                 }
                 return Err(error);
@@ -758,8 +760,9 @@ fn enclosing_app(exe: &Path) -> Option<PathBuf> {
 }
 
 /// The install path every relaunch uses, computed once at startup. After a recovery that
-/// restored the previous version it is the journal's `site` (the running copy may be the
-/// backup); otherwise the running exe, or on macOS its enclosing bundle.
+/// restored the previous version (`Restored` or `RestoredKept`) it is the journal's `site` (the
+/// running copy may be the backup or the moved new version); otherwise the running exe, or on
+/// macOS its enclosing bundle.
 pub fn relaunch_target_for(exe: &Path, restored_site: Option<&Path>, mac: bool) -> RelaunchTarget {
     let path = restored_site.unwrap_or(exe);
     if mac {
@@ -808,10 +811,16 @@ pub fn startup_recovery(data_dir: &Path, exe: &Path) -> (Recovery, RelaunchTarge
             Recovery::Nothing => "update recovery: nothing to do",
             Recovery::Cleaned => "update recovery: cleaned up",
             Recovery::Restored => "update recovery: previous version restored",
+            Recovery::RestoredKept => {
+                "update recovery: previous version restored, cleanup at the next start"
+            }
             Recovery::Kept => "update recovery: journal kept",
         }
     );
-    let restored = journal_site.filter(|_| recovery == Recovery::Restored);
+    // After a restore the install site is the journal's `site`, never the running copy (which
+    // may be the backup, or the moved new version for `RestoredKept`).
+    let restored =
+        journal_site.filter(|_| matches!(recovery, Recovery::Restored | Recovery::RestoredKept));
     let target = relaunch_target_for(exe, restored.as_deref(), cfg!(target_os = "macos"));
     (recovery, target)
 }
