@@ -2340,6 +2340,7 @@ version = "0.2.1"
 dependencies = [
  "lingopop-core",
  "minisign",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

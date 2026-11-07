@@ -111,7 +111,7 @@ select_signing_mode() {
 # by the system policy (CSSMERR_TP_NOT_TRUSTED), so `-v` lists no valid identity, while codesign
 # signs with it all the same.
 identity_sha1s() {
-  awk '$1 ~ /^[0-9]+\)$/ && $2 ~ /^[0-9A-Fa-f]{40}$/ { print tolower($2) }' | LC_ALL=C sort -u
+  awk '$1 ~ /^[0-9]+\)$/ && length($2) == 40 && $2 ~ /^[0-9A-Fa-f]+$/ { print tolower($2) }' | LC_ALL=C sort -u
 }
 
 if [ "${PACKAGE_MACOS_SELECT_ONLY:-}" = 1 ]; then
