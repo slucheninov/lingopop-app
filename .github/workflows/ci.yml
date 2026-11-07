@@ -16,7 +16,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Decides whether the full build runs: a change set made only of Markdown files
+  # (except docs/INSTALL.md, see scripts/ci-changes.py) skips `core`.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Classify the changed files
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A pull request is checked out as its merge commit: parent 1 is the base.
+          if [ "$EVENT" = "pull_request" ]; then
+            base="HEAD^1"
+          else
+            base="$BEFORE"
+          fi
+          # A new branch, a force push or an unknown base: build everything.
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "base unknown, full build"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "$base" HEAD)
+          printf 'changed files:\n%s\n' "$files"
+          printf '%s\n' "$files" | python3 scripts/ci-changes.py | tee -a "$GITHUB_OUTPUT"
+
   core:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -59,6 +96,7 @@ jobs:
           python -m unittest discover -s scripts/tests -p 'test_check_version.py'
           python -m unittest discover -s scripts/tests -p 'test_release_assets.py'
           python -m unittest discover -s scripts/tests -p 'test_package_macos_mode.py'
+          python -m unittest discover -s scripts/tests -p 'test_ci_changes.py'
       - name: Check macOS production readiness
         if: runner.os == 'macOS'
         shell: bash
@@ -99,18 +137,24 @@ jobs:
 
   build-and-test:
     name: build-and-test
-    needs: [core]
+    needs: [changes, core]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every needed job to succeed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+          CODE: ${{ needs.changes.outputs.code }}
+          CORE: ${{ needs.core.result }}
         run: |
-          echo "needs results: $RESULTS"
-          for result in $RESULTS; do
-            if [ "$result" != "success" ]; then
-              echo "a required job did not succeed" >&2
-              exit 1
-            fi
-          done
+          echo "changes: $CHANGES (code=$CODE), core: $CORE"
+          if [ "$CHANGES" != "success" ]; then
+            echo "the change classification did not succeed" >&2
+            exit 1
+          fi
+          # `core` may be skipped only when the change set is documentation only.
+          if [ "$CORE" = "success" ] || { [ "$CODE" = "false" ] && [ "$CORE" = "skipped" ]; }; then
+            exit 0
+          fi
+          echo "a required job did not succeed" >&2
+          exit 1
