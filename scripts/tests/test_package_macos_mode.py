@@ -205,7 +205,7 @@ class TagRunGateStep(unittest.TestCase):
 
     def test_step_runs_on_tag_runs_before_packaging(self):
         step = self.step_text()
-        self.assertIn("if: github.ref_type == 'tag'", step)
+        self.assertIn("if: github.event_name == 'push' && github.ref_type == 'tag'", step)
         self.assertLess(self.workflow.index(self.STEP), self.workflow.index("- name: Build, sign, package and verify"))
         package = self.workflow[self.workflow.index("- name: Build, sign, package and verify"):]
         package = package[: package.index("\n      - ")]

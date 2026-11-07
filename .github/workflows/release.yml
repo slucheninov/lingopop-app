@@ -114,8 +114,8 @@ jobs:
   build-macos:
     name: build-macos-${{ matrix.arch }}
     # The signing secrets live in the `release` environment, which only `v*` tags may use;
-    # a workflow_dispatch run gets no environment, so no secrets, and signs ad hoc.
-    environment: ${{ github.ref_type == 'tag' && 'release' || '' }}
+    # a workflow_dispatch run (also on a tag) gets no environment, so no secrets, and signs ad hoc.
+    environment: ${{ github.event_name == 'push' && github.ref_type == 'tag' && 'release' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -191,7 +191,7 @@ jobs:
       # and Developer ID. An unreadable file fails the leg. With macosPreview false the Mac
       # assets stay off the release and the leg may be ad hoc.
       - name: Require the pinned certificate on tag runs
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         shell: bash
         run: |
           set -euo pipefail
