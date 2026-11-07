@@ -6,6 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.2] - 2026-11-07
+
+### Changed
+
+- CI skips the full build for Markdown-only changes.
+- Dependency updates: `aes-gcm` 0.11, `sha2` 0.11, `log`. Saved API keys written by earlier versions stay readable.
+
 ## [0.2.1] - 2026-11-07
 
 The first release with in-app updates.
