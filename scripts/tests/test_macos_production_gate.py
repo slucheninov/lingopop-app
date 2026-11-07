@@ -96,6 +96,12 @@ class MacosProductionGate(unittest.TestCase):
         path.write_text(path.read_text() + '\nfn stub() -> PlatformError { PlatformError::Unsupported("OCR on macOS") }\n')
         self.assert_fails("OCR on macOS")
 
+    def test_a_dev_stub_marker_in_markdown_next_to_the_mac_adapters_passes(self):
+        path = self.root / "crates/lingopop-platform/src/macos/NOTES.md"
+        path.write_text("The old stub said `OCR on macOS`.\n")
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_a_removed_mac_native_function_does_not_pass_vacuously(self):
         self.edit(
             "crates/lingopop-platform/src/native.rs",
