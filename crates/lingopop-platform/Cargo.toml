@@ -19,6 +19,11 @@ crossbeam-channel = "0.5.17"
 keyboard-types = "0.8.3"
 lingopop-core = { path = "../lingopop-core" }
 png = "0.18.1"
+# The update journal (update_install/journal.rs), same versions as the lockfile.
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+# Item identity for the update journal (update_install/identity.rs); already in the lock.
+sha2 = "=0.10.9"
 thiserror = "2"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
@@ -37,6 +42,7 @@ windows = { version = "0.62.2", features = [
     "Win32_Graphics_Dwm",
     "Win32_Security",
     "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",

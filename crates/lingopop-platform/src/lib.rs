@@ -53,7 +53,7 @@ mod windows;
 pub use crate::macos::{
     MacCapture, MacClipboard, MacDismissWatcher, MacForeground, MacKeys, MacLastForeground,
     MacLoginItem, MacMonitors, MacOcr, MacOverlay, MacPermissions, MacPopupWindow, MacProtector,
-    NsPasteboard, SmMainApp,
+    NsPasteboard, SmMainApp, SystemBundleTools,
 };
 #[cfg(windows)]
 pub use crate::windows::{
@@ -94,6 +94,8 @@ pub use popup_window::NoActivateWindow;
 
 pub mod system;
 pub use system::SystemInfo;
+
+pub mod update_install;
 
 pub mod overlay;
 pub use overlay::RegionOverlay;

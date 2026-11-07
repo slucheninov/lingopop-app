@@ -143,7 +143,7 @@ test('about_shows_version_and_banner_on_update', async () => {
   expect(screen.getByText('LingoPop')).toBeTruthy();
   expect(screen.getByText('Version 0.2.0')).toBeTruthy();
   expect(screen.getByText('Version 9.9.9 available')).toBeTruthy();
-  await fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+  await fireEvent.click(screen.getByRole('button', { name: "What's new" }));
   expect(invoke).toHaveBeenCalledWith('open_url', { url: RELEASES_PAGE_URL });
   await fireEvent.click(screen.getByRole('button', { name: 'Privacy Policy' }));
   expect(invoke).toHaveBeenCalledWith('open_url', { url: PRIVACY_URL });
@@ -156,11 +156,11 @@ test('about_shows_version_and_banner_on_update', async () => {
 test('no_banner_without_an_update', async () => {
   await openAbout();
   expect(screen.queryByText(/available$/)).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Download' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Update' })).toBeNull();
 });
 
-test('check_for_updates_invokes_and_stays_silent_on_null', async () => {
-  await openAbout({ updates_check: null });
+test('check_for_updates_invokes_and_stays_silent_when_idle', async () => {
+  await openAbout({ updates_check: { state: 'idle', revision: 1 } });
   await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('updates_check'));
   await waitFor(() => expect((screen.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled).toBe(false));
@@ -169,7 +169,7 @@ test('check_for_updates_invokes_and_stays_silent_on_null', async () => {
 });
 
 test('check_for_updates_shows_banner_for_a_found_version', async () => {
-  await openAbout({ updates_check: '9.9.9' });
+  await openAbout({ updates_check: { state: 'available', version: '9.9.9', revision: 1 } });
   await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
   expect(await screen.findByText('Version 9.9.9 available')).toBeTruthy();
 });
@@ -288,13 +288,11 @@ test('a_changed_view_updates_an_unedited_draft_only', async () => {
   expect(area.value).toBe('mine');
 });
 
-test('background_update_replaces_an_older_manual_result', async () => {
-  let latest: string | null = null;
-  await openAbout({ settings_get: () => ({ ...baseView, latestVersion: latest }), updates_check: '9.9.9' });
+test('a_newer_shell_state_replaces_an_older_manual_result', async () => {
+  await openAbout({ updates_check: { state: 'available', version: '9.9.9', revision: 1 } });
   await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
   expect(await screen.findByText('Version 9.9.9 available')).toBeTruthy();
-  latest = '9.9.10';
-  listeners.get('settings://changed')!({ payload: null });
+  listeners.get('updates://state')!({ payload: { state: 'available', version: '9.9.10', revision: 2 } });
   expect(await screen.findByText('Version 9.9.10 available')).toBeTruthy();
   expect(screen.queryByText('Version 9.9.9 available')).toBeNull();
 });

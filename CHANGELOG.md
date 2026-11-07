@@ -6,8 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.1] - 2026-11-07
+
+The first release with in-app updates.
+
+### Added
+
+- In-app updates on Windows and macOS: **Settings → About** offers a new stable version with **Update** (download with progress, signature check, install) and **Restart**. Updates are signed with the project's minisign key; the macOS app must also carry the pinned release certificate. Development builds, folders that can't be written, an app run from the disk image and ad-hoc macOS builds can't update themselves and show the **Download** link instead.
+- macOS release builds are signed with one long-lived self-signed certificate, so Accessibility and Screen Recording grants survive updates.
+- The release workflow signs the updatable assets (`.minisig`), checks them against the committed public key and publishes them with `SHA256SUMS.txt`.
+
 ### Changed
 
+- One-time manual step: in-app updates start with this release. Users of 0.2.0 or a Preview build install 0.2.1 by hand once; on macOS, grant Accessibility and Screen Recording to LingoPop one last time.
 - macOS: the app is now called `LingoPop` (was `LingoPop Preview`): `LingoPop.app` in the dmg and zip, in the menu bar and in System Settings. It still has its own bundle identifier and data folder, but it has the same file name as the earlier Swift app, so installing it into Applications replaces that app there. After updating from `LingoPop Preview.app`, delete the old app and grant Accessibility and Screen Recording to `LingoPop` again.
 - The update check offers only stable `X.Y.Z` releases: a release marked pre-release or draft, or a tag with a suffix such as `-alpha.1`, `-preview`, `-rc1` or `+build`, is ignored.
 

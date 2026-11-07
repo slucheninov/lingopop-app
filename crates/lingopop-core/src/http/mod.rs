@@ -3,6 +3,7 @@
 //! (port of `Providers/ProviderHTTP.swift`). No secret ever appears in `Debug` output or in
 //! error text: secret headers are redacted and URLs lose their query.
 
+mod download;
 mod endpoint;
 mod fake;
 mod reqwest_transport;
@@ -14,6 +15,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use url::Url;
 
+pub use download::UpdateDownloader;
 pub use endpoint::endpoint;
 pub use fake::FakeTransport;
 pub use reqwest_transport::{redirect_allowed, HttpTimeouts, ReqwestTransport};

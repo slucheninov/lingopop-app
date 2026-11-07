@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { DraftErrors, ProviderDraft, ProviderFields, ProviderState, SettingsPatch, SettingsView, UiPatch, UsagePeriod, UsageView } from './settingsTypes';
+import type { DraftErrors, ProviderDraft, ProviderFields, ProviderState, SettingsPatch, SettingsView, UiPatch, UpdateView, UsagePeriod, UsageView } from './settingsTypes';
 import type { Provider } from './types';
 // A rejection is a catalog key (rendered through t()), never user text. Never log it.
 export const getSettings = (): Promise<SettingsView> => invoke<SettingsView>('settings_get');
@@ -19,8 +19,15 @@ export const saveProvider = (provider: Provider, draft: ProviderDraft): Promise<
 export const clearProviderKey = (provider: Provider): Promise<ProviderState> => invoke<ProviderState>('provider_clear_key', { provider });
 export const getUsage = (period: UsagePeriod): Promise<UsageView> => invoke<UsageView>('usage_get', { period });
 export const resetUsage = (): Promise<void> => invoke('usage_reset');
-/** Asks GitHub now. Resolves the tag only when it is newer than this build; `null` on every failure. */
-export const checkForUpdates = (): Promise<string | null> => invoke<string | null>('updates_check');
+/** Asks GitHub now; the answer is the resulting update state. */
+export const checkUpdate = (): Promise<UpdateView> => invoke<UpdateView>('updates_check');
+export const installUpdate = (): Promise<UpdateView> => invoke<UpdateView>('updates_install');
+export const cancelUpdate = (): Promise<UpdateView> => invoke<UpdateView>('updates_cancel');
+/** Read only. */
+export const getUpdateState = (): Promise<UpdateView> => invoke<UpdateView>('updates_state');
+/** Starts the installed app and exits; a rejection is a catalog key. */
+export const restartForUpdate = (): Promise<void> => invoke<void>('updates_restart');
+export const UPDATE_EVENT = 'updates://state';
 export const RELEASES_PAGE_URL = 'https://github.com/slucheninov/lingopop-app/releases/latest';
 export const PRIVACY_URL = 'https://github.com/slucheninov/lingopop-app/blob/main/PRIVACY.md';
 

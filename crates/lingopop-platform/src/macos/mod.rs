@@ -5,7 +5,9 @@
 mod ax;
 mod capture;
 mod clipboard;
+mod codesign;
 mod foreground;
+pub(crate) mod fs;
 mod keys;
 mod last_foreground;
 mod monitors;
@@ -14,6 +16,7 @@ mod procinfo;
 
 pub use capture::MacCapture;
 pub use clipboard::{MacClipboard, NsPasteboard};
+pub use codesign::SystemBundleTools;
 pub use foreground::MacForeground;
 pub use keys::MacKeys;
 pub use last_foreground::MacLastForeground;

@@ -190,7 +190,7 @@ Core gets pure functions with tests on fixtures:
   - have an executable that contains the running architecture.
 - **Install path.** `<app>` below is the validated running bundle path recorded at startup (the journal's `site`), wherever it is. It is never a hard-coded `/Applications/LingoPop.app`. The swap, the rollback and the restart all use this same path.
 - **Swap.**
-  1. Write the journal: `site` = `<app>`, `staged` = the extracted `<staging>/LingoPop.app`, `old` = that same staged path after the swap.
+  1. Write the journal: `site` = `<app>`, `staged` = the extracted `<staging>/extracted/LingoPop.app` (one level down, so the owner marker and the download never count as a second app), `old` = that same staged path after the swap.
   2. Exchange `<app>` and the extracted bundle in one atomic call: `renamex_np(staged, app, RENAME_SWAP)` (macOS 10.12+, same volume). There is no moment without an app at `<app>`. Afterwards the old bundle sits in the staging folder.
   3. If the swap fails, nothing has moved. If a later check fails, the same swap is made again to roll back.
   4. The old bundle stays in the staging folder until the next start, because the process still running from it may load resources from it. Startup cleanup then deletes the staging folder named by the journal; errors are logged only.
