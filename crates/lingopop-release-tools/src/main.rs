@@ -201,12 +201,23 @@ fn keygen(args: &[String]) -> Result<(), ToolError> {
         .create_new(true)
         .open(&secret)
         .map_err(io_err(&secret))?;
-    let pk = fs::OpenOptions::new()
+    // Only files this call created are removed on a failure, so a retry with the same paths works.
+    let pk = match fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&public)
-        .map_err(io_err(&public))?;
-    minisign::KeyPair::generate_and_write_encrypted_keypair(pk, sk, None, Some(pw))
-        .map_err(|_| ToolError::Keygen)?;
+    {
+        Ok(pk) => pk,
+        Err(e) => {
+            drop(sk);
+            let _ = fs::remove_file(&secret);
+            return Err(io_err(&public)(e));
+        }
+    };
+    if minisign::KeyPair::generate_and_write_encrypted_keypair(pk, sk, None, Some(pw)).is_err() {
+        let _ = fs::remove_file(&secret);
+        let _ = fs::remove_file(&public);
+        return Err(ToolError::Keygen);
+    }
     Ok(())
 }
