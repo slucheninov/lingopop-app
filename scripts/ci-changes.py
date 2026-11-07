@@ -13,6 +13,7 @@ CODE_MARKDOWN = frozenset({"docs/INSTALL.md"})
 
 
 def needs_build(paths):
+    """True unless every non-blank path is a Markdown file outside CODE_MARKDOWN."""
     paths = [p.strip() for p in paths if p.strip()]
     if not paths:
         return True
@@ -20,6 +21,7 @@ def needs_build(paths):
 
 
 def main():
+    """Read the changed paths from stdin and print the `code=` line for $GITHUB_OUTPUT."""
     print(f"code={'true' if needs_build(sys.stdin.read().splitlines()) else 'false'}")
 
 
