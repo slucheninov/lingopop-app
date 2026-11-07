@@ -55,7 +55,7 @@ class WorkflowDiff(unittest.TestCase):
         with tempfile.TemporaryDirectory() as repo:
             git = lambda *a: subprocess.run(
                 ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "diff.renames=true", *a],
-                cwd=repo, capture_output=True, text=True, check=True,
+                cwd=repo, capture_output=True, text=True, encoding="utf-8", check=True,
             ).stdout
             git("init", "-q")
             (Path(repo) / "docs").mkdir()
