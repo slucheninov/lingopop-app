@@ -827,6 +827,12 @@ class Repository(unittest.TestCase):
         self.assertIn("if: always()", remove_step)
         self.assertIn('rm -f "$RUNNER_TEMP/update-signing.key"', remove_step)
 
+        # The secrets come from the tag-only `release` environment, never on a dispatch run.
+        self.assertIn("\n    environment: release\n", publish_job)
+        macos_job = self._job(workflow, "build-macos")
+        self.assertIn("environment: ${{ github.ref_type == 'tag' && 'release' || '' }}", macos_job)
+        self.assertNotIn("environment:", tools_job)
+
         tool_check = publish_job.index("needs.build-release-tools.outputs.sha256")
         download = publish_job.index("pattern: LingoPop-${{ needs.build.outputs.version }}-*")
         prepare = publish_job.index("scripts/verify-release-assets.py prepare")

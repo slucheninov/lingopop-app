@@ -113,6 +113,9 @@ jobs:
   # (standard runners).
   build-macos:
     name: build-macos-${{ matrix.arch }}
+    # The signing secrets live in the `release` environment, which only `v*` tags may use;
+    # a workflow_dispatch run gets no environment, so no secrets, and signs ad hoc.
+    environment: ${{ github.ref_type == 'tag' && 'release' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -270,6 +273,7 @@ jobs:
   publish:
     name: publish-release
     if: github.event_name == 'push' && github.ref_type == 'tag'
+    environment: release
     needs: [build, build-macos, build-release-tools]
     runs-on: ubuntu-latest
     timeout-minutes: 15
