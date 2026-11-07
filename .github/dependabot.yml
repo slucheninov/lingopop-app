@@ -16,6 +16,9 @@ updates:
         versions: [">=3.0.0-0"]
       - dependency-name: "tauri-plugin-*"
         versions: [">=3.0.0-0"]
+      # A dev-dependency pinned to the version Tauri locks (the tray tests parse
+      # accelerators with it); it moves only with a Tauri upgrade.
+      - dependency-name: "muda"
     groups:
       cargo:
         patterns: ["*"]

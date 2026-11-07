@@ -40,7 +40,7 @@ pub fn seal(key: &SecretKey, plain: &[u8]) -> Result<Vec<u8>, ProtectError> {
     let cipher = Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|_| ProtectError::Invalid)?;
     let encrypted = cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: plain,
                 aad: MAGIC,
@@ -58,9 +58,10 @@ pub fn open(key: &SecretKey, bytes: &[u8]) -> Result<Vec<u8>, ProtectError> {
         return Err(ProtectError::Invalid);
     }
     let cipher = Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|_| ProtectError::Invalid)?;
+    let nonce = Nonce::try_from(&bytes[4..16]).map_err(|_| ProtectError::Invalid)?;
     cipher
         .decrypt(
-            Nonce::from_slice(&bytes[4..16]),
+            &nonce,
             Payload {
                 msg: &bytes[16..],
                 aad: MAGIC,

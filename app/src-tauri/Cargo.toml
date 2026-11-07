@@ -40,6 +40,6 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
 # The version Tauri 2.12.5 locks; tests parse the tray accelerator strings with it.
-muda = { version = "=0.21.2", default-features = false }
+muda = { version = "=0.20.0", default-features = false }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
