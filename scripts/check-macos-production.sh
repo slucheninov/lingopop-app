@@ -42,7 +42,8 @@ else
     fi
   done
   for required in MacProtector MacLoginItem MacCapture MacOcr MacOverlay MacClipboard MacKeys MacForeground MacPermissions MacPopupWindow MacDismissWatcher; do
-    if ! printf '%s\n' "$body" | grep -q -F -e "$required"; then
+    # Read the complete body: grep -q can close early and make printf fail under pipefail.
+    if ! printf '%s\n' "$body" | grep -F -e "$required" >/dev/null; then
       fail "the macOS native() does not wire the production adapter $required"
     fi
   done
