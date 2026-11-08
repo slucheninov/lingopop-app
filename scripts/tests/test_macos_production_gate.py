@@ -57,6 +57,15 @@ class MacosProductionGate(unittest.TestCase):
         result = run(self.root)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_large_native_body_with_required_adapters_passes(self):
+        path = self.root / "crates/lingopop-platform/src/native.rs"
+        text = path.read_text()
+        anchor = "    use crate::macos::{MacCapture, MacClipboard, MacForeground, MacKeys, MacMonitors, MacOcr};"
+        self.assertIn(anchor, text)
+        path.write_text(text.replace(anchor, anchor + "\n" + "    // padding\n" * 50000, 1))
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_plaintext_protector_wiring_fails(self):
         self.edit(
             "crates/lingopop-platform/src/native.rs",

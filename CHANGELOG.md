@@ -6,6 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.3] - 2026-11-08
+
+### Added
+
+- Clipboard history on Windows and macOS: access recent copied text from the tray or menu bar, or open the history window to copy, delete or clear entries. The retention and menu limits are configurable (100 and 10 by default).
+- Clipboard history is stored locally and separately from translation history. Supported sensitive and transient clipboard markers are respected; text without such markers, including copied passwords, may still be saved.
+
 ## [0.2.2] - 2026-11-07
 
 ### Changed
