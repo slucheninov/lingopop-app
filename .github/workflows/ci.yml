@@ -113,7 +113,6 @@ jobs:
           python -m unittest discover -s scripts/tests -p 'test_release_assets.py'
           python -m unittest discover -s scripts/tests -p 'test_package_macos_mode.py'
           python -m unittest discover -s scripts/tests -p 'test_ci_changes.py'
-          python -m unittest discover -s scripts/tests -p 'test_ci_results.py'
       - name: Check macOS production readiness
         if: runner.os == 'macOS'
         shell: bash
@@ -186,6 +185,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Test the required-check policy
+        run: python3 -m unittest discover -s scripts/tests -p 'test_ci_results.py'
       - name: Require every needed job to succeed
         env:
           CHANGES: ${{ needs.changes.result }}
