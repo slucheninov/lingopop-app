@@ -8,12 +8,14 @@ SCRIPT = Path(__file__).resolve().parents[1] / 'check-ci-results.sh'
 
 
 def run(changes='success', code='true', frontend='success', general='success', core='success'):
+    """Run the actual required-check script with selected matrix results."""
     env = dict(os.environ, CHANGES=changes, CODE=code, FRONTEND=frontend, GENERAL=general, CORE=core)
     return subprocess.run(['bash', str(SCRIPT)], env=env, capture_output=True, text=True, check=False)
 
 
 class CiResults(unittest.TestCase):
     def test_code_changes_require_every_matrix_to_succeed(self):
+        """A failed, cancelled or skipped required matrix blocks code changes."""
         self.assertEqual(run().returncode, 0)
         for job in ('frontend', 'general', 'core'):
             for state in ('failure', 'cancelled', 'skipped', ''):
@@ -21,6 +23,7 @@ class CiResults(unittest.TestCase):
                     self.assertNotEqual(run(**{job: state}).returncode, 0)
 
     def test_docs_only_require_every_matrix_to_be_skipped(self):
+        """Docs-only changes pass only when every code matrix is skipped."""
         values = dict(code='false', frontend='skipped', general='skipped', core='skipped')
         self.assertEqual(run(**values).returncode, 0)
         for job in ('frontend', 'general', 'core'):
@@ -29,6 +32,7 @@ class CiResults(unittest.TestCase):
                     self.assertNotEqual(run(**(values | {job: state})).returncode, 0)
 
     def test_invalid_classification_and_failed_changes_never_pass(self):
+        """Missing classifications and unsuccessful classification jobs fail closed."""
         for code in ('', 'True', 'unknown'):
             self.assertNotEqual(run(code=code).returncode, 0)
         for result in ('failure', 'cancelled', 'skipped', ''):
