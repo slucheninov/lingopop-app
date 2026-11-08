@@ -174,7 +174,7 @@ impl ClipboardObservationSource for WindowsObservationSource {
         }
         let mut units = Vec::with_capacity(data.len() / 2);
         let mut terminated = false;
-        for pair in data.chunks_exact(2) {
+        for pair in data.as_chunks::<2>().0 {
             let u = u16::from_le_bytes([pair[0], pair[1]]);
             if u == 0 {
                 terminated = true;
