@@ -17,7 +17,7 @@ env:
 
 jobs:
   # Decides whether the full build runs: a change set made only of Markdown files
-  # (except docs/INSTALL.md, see scripts/ci-changes.py) skips `core`.
+  # (except docs/INSTALL.md, see scripts/ci-changes.py) skips the code matrices.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -53,6 +53,76 @@ jobs:
           printf 'changed files:\n%s\n' "$files"
           printf '%s\n' "$files" | python3 scripts/ci-changes.py | tee -a "$GITHUB_OUTPUT"
 
+  frontend:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: Install frontend dependencies
+        shell: bash
+        run: npm ci --prefix app
+      - name: Build frontend
+        shell: bash
+        run: npm run build --prefix app
+      - name: Test frontend
+        shell: bash
+        run: npm test --prefix app
+      - name: Check frontend
+        shell: bash
+        run: npm run check --prefix app
+
+  general:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Check localization catalogs
+        shell: bash
+        run: |
+          python scripts/gen-localizations.py check
+          python -m unittest discover -s scripts/tests -p 'test_localizations.py'
+      - name: Check versions and release scripts
+        shell: bash
+        run: |
+          python scripts/check-version.py
+          python -m unittest discover -s scripts/tests -p 'test_check_version.py'
+          python -m unittest discover -s scripts/tests -p 'test_release_assets.py'
+          python -m unittest discover -s scripts/tests -p 'test_package_macos_mode.py'
+          python -m unittest discover -s scripts/tests -p 'test_ci_changes.py'
+      - name: Check macOS production readiness
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # The macOS leg only; a missing shellcheck is installed, never skipped silently.
+          command -v shellcheck >/dev/null || brew install shellcheck
+          shellcheck scripts/*.sh
+          bash scripts/check-macos-production.sh
+          python -m unittest discover -s scripts/tests -p 'test_macos_production_gate.py'
+
   core:
     needs: [changes]
     if: needs.changes.outputs.code == 'true'
@@ -83,37 +153,6 @@ jobs:
       - name: Build frontend
         shell: bash
         run: npm run build --prefix app
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-      - name: Check localization catalogs
-        shell: bash
-        run: |
-          python scripts/gen-localizations.py check
-          python -m unittest discover -s scripts/tests -p 'test_localizations.py'
-      - name: Check versions and release scripts
-        shell: bash
-        run: |
-          python scripts/check-version.py
-          python -m unittest discover -s scripts/tests -p 'test_check_version.py'
-          python -m unittest discover -s scripts/tests -p 'test_release_assets.py'
-          python -m unittest discover -s scripts/tests -p 'test_package_macos_mode.py'
-          python -m unittest discover -s scripts/tests -p 'test_ci_changes.py'
-      - name: Check macOS production readiness
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          # The macOS leg only; a missing shellcheck is installed, never skipped silently.
-          command -v shellcheck >/dev/null || brew install shellcheck
-          shellcheck scripts/*.sh
-          bash scripts/check-macos-production.sh
-          python -m unittest discover -s scripts/tests -p 'test_macos_production_gate.py'
-      - name: Test frontend
-        shell: bash
-        run: npm test --prefix app
-      - name: Check frontend
-        shell: bash
-        run: npm run check --prefix app
       - name: Check formatting
         shell: bash
         run: cargo fmt --all --check
@@ -139,24 +178,20 @@ jobs:
 
   build-and-test:
     name: build-and-test
-    needs: [changes, core]
+    needs: [changes, frontend, general, core]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test the required-check policy
+        run: python3 -m unittest discover -s scripts/tests -p 'test_ci_results.py'
       - name: Require every needed job to succeed
         env:
           CHANGES: ${{ needs.changes.result }}
           CODE: ${{ needs.changes.outputs.code }}
+          FRONTEND: ${{ needs.frontend.result }}
+          GENERAL: ${{ needs.general.result }}
           CORE: ${{ needs.core.result }}
-        run: |
-          echo "changes: $CHANGES (code=$CODE), core: $CORE"
-          if [ "$CHANGES" != "success" ]; then
-            echo "the change classification did not succeed" >&2
-            exit 1
-          fi
-          # `core` may be skipped only when the change set is documentation only.
-          if [ "$CORE" = "success" ] || { [ "$CODE" = "false" ] && [ "$CORE" = "skipped" ]; }; then
-            exit 0
-          fi
-          echo "a required job did not succeed" >&2
-          exit 1
+        run: bash scripts/check-ci-results.sh
