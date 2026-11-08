@@ -102,3 +102,39 @@ fn exclusion_markers_fail_closed() {
 fn text_limit_matches_store_limit() {
     assert_eq!(MAX_HISTORY_TEXT_BYTES, 64 * 1024);
 }
+
+#[test]
+fn permanent_content_rejection_is_consumed_but_generation_race_is_retried() {
+    struct Rejected {
+        generation: AtomicU64,
+        reads: AtomicUsize,
+        race: bool,
+    }
+    impl ClipboardObservationSource for Rejected {
+        fn generation(&self) -> u64 {
+            self.generation.load(Ordering::SeqCst)
+        }
+        fn read_generation(&self, _: u64) -> Result<Option<String>, PlatformError> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.race {
+                self.generation.fetch_add(1, Ordering::SeqCst);
+            }
+            Err(PlatformError::Unsupported("clipboard data size"))
+        }
+    }
+    for race in [false, true] {
+        let source = Rejected {
+            generation: AtomicU64::new(1),
+            reads: AtomicUsize::new(0),
+            race,
+        };
+        let mut cursor = ObservationCursor::new(&source);
+        source.generation.store(2, Ordering::SeqCst);
+        assert!(cursor.observe(&source).unwrap().is_none());
+        assert!(cursor.observe(&source).unwrap().is_none());
+        assert_eq!(
+            source.reads.load(Ordering::SeqCst),
+            if race { 2 } else { 1 }
+        );
+    }
+}

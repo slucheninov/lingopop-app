@@ -84,6 +84,9 @@ impl ClipboardHistory {
                 return Ok(true);
             }
             let limit = inner.limit;
+            if limit == 0 {
+                return Ok(true);
+            }
             // A copied history entry is explicitly promoted by the command. A second notification
             // for the same top text needs no disk write or event.
             let store = inner.store.as_mut().ok_or(HistoryWriteError::Unavailable)?;
@@ -135,15 +138,11 @@ impl ClipboardHistory {
                     .map_err(|_| HistoryWriteError::Write)
                 });
             if result.is_ok() && (id.is_none() || fingerprint.is_some()) {
-                if inner
+                if let Some((_, ignored)) = inner
                     .ignored_generation
-                    .as_ref()
-                    .is_some_and(|(previous, _)| *previous == generation)
+                    .as_mut()
+                    .filter(|(previous, _)| *previous == generation)
                 {
-                    let (_, ignored) = inner
-                        .ignored_generation
-                        .as_mut()
-                        .expect("checked generation");
                     if id.is_none() {
                         *ignored = None;
                     } else if let (Some(values), Some(value)) = (ignored, fingerprint) {
@@ -289,9 +288,11 @@ pub(crate) fn accept_observation(
     history: &ClipboardHistory,
     item: lingopop_platform::clipboard_observer::ClipboardObservation,
 ) -> bool {
-    history
-        .observe(item.revision, item.generation, item.text)
-        .unwrap_or(false)
+    match history.observe(item.revision, item.generation, item.text) {
+        Ok(accepted) => accepted,
+        Err(HistoryWriteError::Unavailable) => true,
+        Err(HistoryWriteError::Write) => false,
+    }
 }
 
 pub fn start(app: &tauri::AppHandle) {

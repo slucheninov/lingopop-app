@@ -61,7 +61,9 @@ impl ClipboardHistoryStore {
     /// ignored; zero disables retention and clears existing entries atomically.
     pub fn record(&mut self, text: String, max_count: u32) -> Result<Option<Uuid>, StoreError> {
         if max_count == 0 {
-            self.trim(0)?;
+            if !self.entries().is_empty() {
+                self.trim(0)?;
+            }
             return Ok(None);
         }
         if text.is_empty() || text.len() > MAX_CLIPBOARD_TEXT_BYTES {
@@ -198,6 +200,17 @@ mod tests {
         assert_eq!(store.record("ignored".into(), 0).unwrap(), None);
         store.record("new".into(), 100).unwrap();
         store.clear().unwrap();
+        assert!(store.entries().is_empty());
+    }
+
+    #[test]
+    fn clipboard_history_zero_retention_skips_empty_store_write() {
+        let (dir, mut store) = setup();
+        let path = dir.path().join("clipboard-history.json");
+        assert_eq!(store.record("ignored".into(), 0).unwrap(), None);
+        assert!(!path.exists());
+        store.record("saved".into(), 1).unwrap();
+        assert_eq!(store.record("ignored".into(), 0).unwrap(), None);
         assert!(store.entries().is_empty());
     }
 

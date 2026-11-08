@@ -181,3 +181,36 @@ fn failed_observation_requests_retry_and_recovers() {
     ));
     assert_eq!(history.entries().unwrap()[0].text, "copied");
 }
+
+#[test]
+fn disabled_history_does_not_write_or_emit_and_unavailable_is_consumed() {
+    use lingopop_platform::clipboard_observer::ClipboardObservation;
+    use std::sync::atomic::AtomicUsize;
+    let (dir, history) = rig();
+    history.trim(0).unwrap();
+    let path = dir.path().join("clipboard-history.json");
+    std::fs::remove_file(&path).unwrap();
+    let fired = Arc::new(AtomicUsize::new(0));
+    let count = fired.clone();
+    history.set_on_change(Arc::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+    }));
+    let item = || ClipboardObservation {
+        revision: history.revision.load(Ordering::Acquire),
+        generation: 1,
+        text: "copied".into(),
+    };
+    assert!(crate::clipboard_history::accept_observation(
+        &history,
+        item()
+    ));
+    assert!(!path.exists());
+    assert_eq!(fired.load(Ordering::SeqCst), 0);
+    let unavailable = ClipboardHistory::new(None, 100);
+    let mut unavailable_item = item();
+    unavailable_item.revision = 0;
+    assert!(crate::clipboard_history::accept_observation(
+        &unavailable,
+        unavailable_item
+    ));
+}

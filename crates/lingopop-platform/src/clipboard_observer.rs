@@ -46,7 +46,16 @@ impl ObservationCursor {
         if generation == self.last {
             return Ok(None);
         }
-        let text = source.read_generation(generation)?;
+        let text = match source.read_generation(generation) {
+            Ok(text) => text,
+            Err(PlatformError::Unsupported("clipboard data size" | "clipboard text encoding")) => {
+                if source.generation() == generation {
+                    self.last = generation;
+                }
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
         // A race does not advance the cursor; the next notification/tick tries the current generation.
         if source.generation() != generation {
             return Ok(None);
