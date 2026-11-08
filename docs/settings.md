@@ -23,6 +23,7 @@ Open Settings from the tray icon (Windows) or the menu-bar icon (macOS): **Setti
   - **Max input characters**: longer selections are refused before anything is sent (default 5000, 0 = no limit).
   - **History size**: how many results are kept in History (0 to 100, default 100).
   - **Display**: how many recent results the tray / menu-bar menu shows (0 to 100, default 10).
+- **Clipboard History**: **Clipboard history size** (0–1000, default 100; 0 disables recording and clears stored entries) and **Clipboard entries in tray** (0–50, default 10). Entries up to 64 KiB are kept locally, subject to an 8 MiB total text limit.
 - **Startup**: **Launch at login** and **Auto-copy OCR/translation results to clipboard** (Screen Translate copies the recognized text right away).
 
 ## Providers
@@ -76,6 +77,7 @@ Updates are signed; on macOS the new app must carry the same release certificate
 - The latest results, newest first. A click copies the original text back to the clipboard, so the menu also works as a clipboard history. The first ten have quick keys (Windows `1`…`0`, macOS `⌘1`…`⌘0`).
 - The six operations with their shortcuts. An operation started from the menu works on the text you had selected in the window you used last.
 - **Target**: switch the target language.
+- **Clipboard History** lists recent copied text; click an entry to copy it again. **Clipboard History…** opens all retained entries, with controls to delete an entry or clear the list.
 - **History…**, **Settings…**, **About LingoPop** and **Quit LingoPop**.
 
 The icon animates while an operation runs and turns red for three seconds after an error.
@@ -101,6 +103,7 @@ The popup opens next to the cursor without taking the focus from your app.
 | Folder | `%APPDATA%\LingoPop` | `~/Library/Application Support/LingoPop-Tauri` |
 | Settings | `settings.json`, `ui.json` | `settings.json`, `ui.json` |
 | History | `history.json` | `history.json` |
+| Clipboard history | `clipboard-history.json` | `clipboard-history.json` |
 | Usage statistics | `usage.json` | `usage.json` |
 | API keys and provider settings | `secrets.dat` (Windows DPAPI) | `secrets.dat` (AES-256-GCM, key in the login keychain) |
 | Log (no text, no keys) | `lingopop.log` | `lingopop.log` |

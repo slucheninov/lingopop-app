@@ -44,6 +44,10 @@ pub struct Settings {
     pub max_input_chars: u32,
     pub max_history_count: u32,
     pub menu_history_count: u32,
+    /// Independent local clipboard retention; zero disables recording.
+    pub max_clipboard_history_count: u32,
+    /// Number of clipboard entries in the tray; zero hides them.
+    pub menu_clipboard_history_count: u32,
     pub use_auto_detect: bool,
     pub language_pairs: BTreeMap<String, String>,
     pub auto_copy_ocr: bool,
@@ -62,10 +66,11 @@ impl Default for Settings {
             hotkeys: BTreeMap::from([(AIOperation::Translate, Hotkey::default_translate())]),
             launch_at_login: false,
             max_input_chars: 5000,
-            // Deviation from the mac default (10): the history doubles as a clipboard history
-            // to return to, so a fresh install keeps the maximum the settings allow.
+            // Keep the existing translation-history default independent of clipboard retention.
             max_history_count: 100,
             menu_history_count: 10,
+            max_clipboard_history_count: 100,
+            menu_clipboard_history_count: 10,
             use_auto_detect: false,
             language_pairs: [
                 ("Russian", "Ukrainian"),
@@ -93,6 +98,8 @@ struct Wire<'a> {
     max_input_chars: u32,
     max_history_count: u32,
     menu_history_count: u32,
+    max_clipboard_history_count: u32,
+    menu_clipboard_history_count: u32,
     use_auto_detect: bool,
     language_pairs: &'a BTreeMap<String, String>,
     #[serde(rename = "autoCopyOCR")]
@@ -171,6 +178,12 @@ impl Settings {
                 .unwrap_or(defaults.max_history_count),
             menu_history_count: field(&object, "menuHistoryCount")
                 .unwrap_or(defaults.menu_history_count),
+            max_clipboard_history_count: field::<u32>(&object, "maxClipboardHistoryCount")
+                .unwrap_or(defaults.max_clipboard_history_count)
+                .min(crate::clipboard_history::MAX_CLIPBOARD_HISTORY_COUNT),
+            menu_clipboard_history_count: field::<u32>(&object, "menuClipboardHistoryCount")
+                .unwrap_or(defaults.menu_clipboard_history_count)
+                .min(crate::clipboard_history::MAX_CLIPBOARD_MENU_COUNT),
             use_auto_detect: field(&object, "useAutoDetect").unwrap_or(defaults.use_auto_detect),
             language_pairs: field(&object, "languagePairs").unwrap_or(defaults.language_pairs),
             auto_copy_ocr: field(&object, "autoCopyOCR").unwrap_or(defaults.auto_copy_ocr),
@@ -190,6 +203,12 @@ impl Settings {
             max_input_chars: self.max_input_chars,
             max_history_count: self.max_history_count,
             menu_history_count: self.menu_history_count,
+            max_clipboard_history_count: self
+                .max_clipboard_history_count
+                .min(crate::clipboard_history::MAX_CLIPBOARD_HISTORY_COUNT),
+            menu_clipboard_history_count: self
+                .menu_clipboard_history_count
+                .min(crate::clipboard_history::MAX_CLIPBOARD_MENU_COUNT),
             use_auto_detect: self.use_auto_detect,
             language_pairs: &self.language_pairs,
             auto_copy_ocr: self.auto_copy_ocr,
@@ -287,6 +306,29 @@ mod tests {
     }
 
     #[test]
+    fn clipboard_history_settings_default_independent_bounded_and_roundtrip() {
+        let old = decode(r#"{"maxHistoryCount":7,"menuHistoryCount":3}"#);
+        assert_eq!(old.max_clipboard_history_count, 100);
+        assert_eq!(old.menu_clipboard_history_count, 10);
+        let new = decode(r#"{"maxClipboardHistoryCount":10000,"menuClipboardHistoryCount":999}"#);
+        assert_eq!(new.max_clipboard_history_count, 1000);
+        assert_eq!(new.menu_clipboard_history_count, 50);
+        let zero = decode(r#"{"maxClipboardHistoryCount":0,"menuClipboardHistoryCount":0}"#);
+        assert_eq!(zero.max_clipboard_history_count, 0);
+        assert_eq!(zero.menu_clipboard_history_count, 0);
+        assert_eq!(
+            Settings::from_json_bytes(&zero.to_json_bytes().unwrap()).unwrap(),
+            zero
+        );
+        let invalid =
+            decode(r#"{"maxClipboardHistoryCount":-1,"menuClipboardHistoryCount":"bad"}"#);
+        assert_eq!(invalid.max_clipboard_history_count, 100);
+        assert_eq!(invalid.menu_clipboard_history_count, 10);
+        assert_eq!(old.max_history_count, 7);
+        assert_eq!(old.menu_history_count, 3);
+    }
+
+    #[test]
     fn defaults_match_the_values_above() {
         let s = Settings::default();
         assert_eq!(s.active_provider, ProviderType::GoogleFree);
@@ -319,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn serialized_keys_are_exactly_the_persisted_swift_names() {
+    fn serialized_keys_are_the_persisted_names_with_clipboard_extensions() {
         let mut expected = vec![
             "activeProvider",
             "fallbacks",
@@ -327,7 +369,9 @@ mod tests {
             "hotkeys",
             "launchAtLogin",
             "maxInputChars",
+            "maxClipboardHistoryCount",
             "maxHistoryCount",
+            "menuClipboardHistoryCount",
             "menuHistoryCount",
             "useAutoDetect",
             "languagePairs",

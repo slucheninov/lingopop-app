@@ -13,6 +13,7 @@ In that folder:
 
 - **API keys and provider settings** (base URL, model, referer, region) are stored in `secrets.dat`, encrypted. On Windows the file is protected with Windows DPAPI (current user scope), so normally only the same Windows user on the same machine can decrypt it (a roaming profile or a domain DPAPI backup key can also decrypt it). On macOS it is encrypted with AES-256-GCM; the 256-bit key is a random key kept in your login keychain as a non-synchronizable item that stays on this Mac. Both protect the keys at rest; neither is a security boundary against other processes running as your user.
 - **Settings** (active provider, target language, hotkeys, history size limit, etc.) are stored in `settings.json` and `ui.json`. They never contain API keys.
+- **Clipboard history** is recorded automatically while LingoPop runs and stored locally in `clipboard-history.json` as plain text, separate from translation history. You can change its size, delete entries or clear it; setting its size to zero disables recording and clears it.
 - **Translation history** (last N entries) is stored in `history.json`. It includes the original text, the result, and metadata (timestamp, operation, provider, target language).
 - **Usage statistics** (token counts per provider and day, never any text) are stored in `usage.json`.
 - **A log file** `lingopop.log` with fixed technical messages (errors, permission states). It never contains your text, clipboard contents or API keys.
@@ -44,6 +45,8 @@ LingoPop does **not** send any data to the maintainer or to any server other tha
 
 ## Clipboard data
 
+LingoPop watches clipboard changes while running and saves eligible copied text locally. It skips entries carrying supported confidential or transient clipboard markers, but cannot identify unmarked passwords or secrets. Text copied by another application on LingoPop’s behalf when capturing a selection can also be saved. Clipboard history is not sent to an AI provider merely because it was copied.
+
 When you trigger an operation, LingoPop briefly uses the system clipboard to capture your selected text:
 
 1. The current clipboard contents are saved in memory.
@@ -63,7 +66,7 @@ Some results are put on the clipboard as **ordinary entries** that clipboard his
 - **Copy** in the popup and in History, and a click on a history row in the menu.
 - **Replace** when the original window is no longer in front: the result is left on the clipboard for you to paste by hand.
 
-**The clipboard snapshot is never written to disk and is never sent anywhere.** The provider receives only the text needed for the operation: no clipboard metadata, no surrounding context, no other clipboard entries.
+**The full clipboard snapshot used for restoration is never written to disk or sent anywhere.** Eligible copied text may separately be saved in clipboard history. The provider receives only the text needed for the operation: no clipboard metadata, no surrounding context, no other clipboard entries.
 
 If translation history is enabled, the source text and result are saved to `history.json` (local only). You can limit or clear history in Settings.
 

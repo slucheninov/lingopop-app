@@ -47,6 +47,7 @@ settings-main.png, settings-providers.png, settings-shortcuts.png, settings-magi
 - 🤖 Eight providers: **Claude**, **OpenAI**, **Gemini**, **Grok** (all operations, plus image recognition for Screen Translate), **Google (Free)**, **Google Translate**, **DeepL** and **Microsoft Translator** (translation).
 - 🆓 Works out of the box: the default provider, Google (Free), needs no API key.
 - 🔁 Per-provider fallback: on a rate limit, a server error or a network error, LingoPop retries once with the fallback you chose.
+- 📋 Local clipboard history with a tray menu and a separate window; retention and the number shown in the menu are configurable.
 - 📜 History of up to 100 results with search. The latest ones are in the tray / menu-bar menu, one click copies them back (the first ten have quick keys).
 - 📊 Usage statistics: tokens and estimated cost per provider for 1, 7 and 30 days.
 - 🌍 Interface in English, Polish, Ukrainian and German.
@@ -180,7 +181,7 @@ Fix grammar, Rewrite, Explain and Magic need Claude, OpenAI, Gemini or Grok.
 - **Your text goes only to the provider you chose**, and only when you start an operation. No telemetry, no analytics, no accounts, no sync.
 - **Screen Translate recognizes text on your computer.** A screenshot is sent to a provider only when you press **Retry** with one of the AI providers.
 - **Your clipboard is restored.** LingoPop copies the selection through the clipboard and puts your previous contents back right after. On Windows, clipboard formats that can't be read at once (rare, delayed-rendering ones) are not restored; on macOS, if the clipboard holds something that can't be restored exactly, LingoPop stops and changes nothing. The temporary entry used by **Replace** is marked so clipboard history tools skip it; the selection itself is copied by your app, so a clipboard history tool may keep it. Screen Translate copies the recognized text to the clipboard by default, replacing what was there (turn off **Settings → Main → Auto-copy OCR/translation results to clipboard**). Details on what else lands on the clipboard: [PRIVACY.md](PRIVACY.md#clipboard-data).
-- History and usage statistics are plain local files that you can clear in the app.
+- Translation history, clipboard history and usage statistics are local files that you can clear in the app.
 
 Details: [PRIVACY.md](PRIVACY.md). Found a vulnerability? Please report it privately as described in [SECURITY.md](SECURITY.md).
 

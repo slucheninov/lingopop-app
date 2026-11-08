@@ -35,7 +35,7 @@
   }
 
   /** A whole number in `min..=max`; garbage is ignored and the field shows the saved value again. */
-  function onNumber(event: Event, field: 'maxInputChars' | 'maxHistoryCount' | 'menuHistoryCount', max: number) {
+  function onNumber(event: Event, field: 'maxInputChars' | 'maxHistoryCount' | 'menuHistoryCount' | 'maxClipboardHistoryCount' | 'menuClipboardHistoryCount', max: number) {
     const input = event.currentTarget as HTMLInputElement;
     const parsed = Number(input.value);
     if (input.value.trim() === '' || !Number.isFinite(parsed)) {
@@ -84,6 +84,13 @@
       <input type="number" min="0" max="100" step="1" value={view.maxHistoryCount} onchange={event => onNumber(event, 'maxHistoryCount', 100)} /></label>
     <label class="row"><span>{t('Display')}</span>
       <input type="number" min="0" max="100" step="1" value={view.menuHistoryCount} onchange={event => onNumber(event, 'menuHistoryCount', 100)} /></label>
+  </section>
+  <section>
+    <h3>{t('Clipboard History')}</h3>
+    <label class="row"><span>{t('Clipboard history size')}</span>
+      <input type="number" min="0" max="1000" step="1" value={view.maxClipboardHistoryCount} onchange={event => onNumber(event, 'maxClipboardHistoryCount', 1000)} /></label>
+    <label class="row"><span>{t('Clipboard entries in tray')}</span>
+      <input type="number" min="0" max="50" step="1" value={view.menuClipboardHistoryCount} onchange={event => onNumber(event, 'menuClipboardHistoryCount', 50)} /></label>
   </section>
   <section>
     <h3>{t('Startup')}</h3>

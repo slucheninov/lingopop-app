@@ -5,6 +5,7 @@
 mod ax;
 mod capture;
 mod clipboard;
+pub(crate) mod clipboard_observer;
 mod codesign;
 mod foreground;
 pub(crate) mod fs;

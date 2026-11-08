@@ -119,6 +119,8 @@ pub struct SettingsView {
     pub max_input_chars: u32,
     pub max_history_count: u32,
     pub menu_history_count: u32,
+    pub max_clipboard_history_count: u32,
+    pub menu_clipboard_history_count: u32,
     pub use_auto_detect: bool,
     pub language_pairs: BTreeMap<String, String>,
     #[serde(rename = "autoCopyOCR")]
@@ -196,6 +198,8 @@ pub fn settings_view_parts(
         max_input_chars: s.max_input_chars,
         max_history_count: s.max_history_count,
         menu_history_count: s.menu_history_count,
+        max_clipboard_history_count: s.max_clipboard_history_count,
+        menu_clipboard_history_count: s.menu_clipboard_history_count,
         use_auto_detect: s.use_auto_detect,
         language_pairs: s.language_pairs,
         auto_copy_ocr: s.auto_copy_ocr,
@@ -229,6 +233,8 @@ pub enum SettingsPatch {
     MaxInputChars(u32),
     MaxHistoryCount(u32),
     MenuHistoryCount(u32),
+    MaxClipboardHistoryCount(u32),
+    MenuClipboardHistoryCount(u32),
     LaunchAtLogin(bool),
     #[serde(rename = "autoCopyOCR")]
     AutoCopyOcr(bool),
@@ -254,6 +260,8 @@ impl std::fmt::Debug for SettingsPatch {
                 Self::MaxInputChars(_) => "MaxInputChars",
                 Self::MaxHistoryCount(_) => "MaxHistoryCount",
                 Self::MenuHistoryCount(_) => "MenuHistoryCount",
+                Self::MaxClipboardHistoryCount(_) => "MaxClipboardHistoryCount",
+                Self::MenuClipboardHistoryCount(_) => "MenuClipboardHistoryCount",
                 Self::LaunchAtLogin(_) => "LaunchAtLogin",
                 Self::AutoCopyOcr(_) => "AutoCopyOcr",
                 Self::ActiveProvider(_) => "ActiveProvider",
@@ -305,6 +313,8 @@ pub fn apply_patch(s: &mut Settings, patch: SettingsPatch) {
         SettingsPatch::MaxInputChars(v) => s.max_input_chars = v,
         SettingsPatch::MaxHistoryCount(v) => s.max_history_count = v,
         SettingsPatch::MenuHistoryCount(v) => s.menu_history_count = v,
+        SettingsPatch::MaxClipboardHistoryCount(v) => s.max_clipboard_history_count = v.min(1000),
+        SettingsPatch::MenuClipboardHistoryCount(v) => s.menu_clipboard_history_count = v.min(50),
         SettingsPatch::LaunchAtLogin(v) => s.launch_at_login = v,
         SettingsPatch::AutoCopyOcr(v) => s.auto_copy_ocr = v,
         SettingsPatch::MagicPrompt(v) => s.magic_prompt = sanitize_magic_prompt(&v),
@@ -390,6 +400,7 @@ pub async fn settings_update(
 ) -> Result<SettingsView, String> {
     let _write = state.settings_write.lock().await;
     let trim = matches!(patch, SettingsPatch::MaxHistoryCount(_));
+    let clipboard_trim = matches!(patch, SettingsPatch::MaxClipboardHistoryCount(_));
     let launch = matches!(patch, SettingsPatch::LaunchAtLogin(_));
     let hotkeys = matches!(patch, SettingsPatch::Hotkey { .. });
     save_patch(&state.config, patch, state.ui.language())?;
@@ -401,8 +412,23 @@ pub async fn settings_update(
         launch,
         hotkeys,
     );
+    let clipboard_result = if clipboard_trim {
+        state
+            .stores
+            .clipboard
+            .trim(state.config.settings().max_clipboard_history_count)
+    } else {
+        Ok(())
+    };
     let view = settings_view(&state);
     let _ = app.emit("settings://changed", &view);
+    clipboard_result.map_err(|_| {
+        i18n::t(
+            state.ui.language(),
+            "Clipboard history couldn't be updated.",
+            &[],
+        )
+    })?;
     Ok(view)
 }
 #[derive(Clone, Serialize)]
