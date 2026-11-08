@@ -59,3 +59,5 @@ mod secrets;
 pub use secrets::MacProtector;
 
 pub use system::activate_app;
+
+pub(crate) mod clipboard_helper;

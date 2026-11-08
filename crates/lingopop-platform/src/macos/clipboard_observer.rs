@@ -15,14 +15,14 @@ impl ClipboardObservationSource for MacObservationSource {
         })
     }
     fn read_generation(&self, expected: u64) -> Result<Option<String>, PlatformError> {
-        autoreleasepool(|_| {
-            let pb = NSPasteboard::generalPasteboard();
-            read_pasteboard(&pb, expected)
-        })
+        super::clipboard_helper::read(expected, None)
     }
 }
 
-fn read_pasteboard(pb: &NSPasteboard, expected: u64) -> Result<Option<String>, PlatformError> {
+pub(super) fn read_pasteboard(
+    pb: &NSPasteboard,
+    expected: u64,
+) -> Result<Option<String>, PlatformError> {
     if pb.changeCount() as u64 != expected {
         return Ok(None);
     }

@@ -1,5 +1,6 @@
 //! Passive text observation. Reads never modify the clipboard. Native reads may invoke a delayed
-//! provider: byte limits bound our allocations, not time spent inside another application's API.
+//! provider. macOS materializes metadata/text in an exec helper with a bounded response and
+//! timeout; the helper/AppKit/pasteboard server have no hard global memory bound.
 use crate::PlatformError;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::{fmt, sync::Arc, thread::JoinHandle, time::Duration};
@@ -82,7 +83,8 @@ pub type FencedObservationCallback = dyn Fn(ClipboardObservation) -> bool + Send
 /// Owned observer lifecycle. `stop` signals both threads and joins them: after it returns no
 /// callback is running (except when called from the callback itself: that worker exits after the
 /// callback returns, without attempting to join itself). Native delayed providers
-/// can stall a read, and hence shutdown; no time-bounded native read guarantee is made.
+/// can stall Windows reads and hence shutdown. macOS observation helpers are killed and reaped
+/// after their two-second response deadline; generation queries remain native calls.
 pub struct ClipboardObserver {
     stop: Sender<()>,
     worker: Option<JoinHandle<()>>,
@@ -268,6 +270,22 @@ pub fn native_clipboard_observer_fenced(
             Some(crate::windows::clipboard_observer::NotificationListener::start(send)?);
         Ok(observer)
     }
+}
+
+/// Reserved executable mode for macOS passive observation. Call before application setup.
+#[cfg(target_os = "macos")]
+pub fn dispatch_macos_clipboard_helper() -> bool {
+    crate::macos::clipboard_helper::dispatch()
+}
+/// Native test support: the caller executable must dispatch the helper mode at entry.
+/// Uses only a private named pasteboard; never forwards text in process arguments.
+#[cfg(target_os = "macos")]
+#[doc(hidden)]
+pub fn read_isolated_macos_pasteboard(
+    name: &str,
+    expected: u64,
+) -> Result<Option<String>, PlatformError> {
+    crate::macos::clipboard_helper::read(expected, Some(name))
 }
 
 #[cfg(test)]

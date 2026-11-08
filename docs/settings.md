@@ -23,7 +23,7 @@ Open Settings from the tray icon (Windows) or the menu-bar icon (macOS): **Setti
   - **Max input characters**: longer selections are refused before anything is sent (default 5000, 0 = no limit).
   - **History size**: how many results are kept in History (0 to 100, default 100).
   - **Display**: how many recent results the tray / menu-bar menu shows (0 to 100, default 10).
-- **Clipboard History**: **Clipboard history size** (0–1000, default 100; 0 disables recording and clears stored entries) and **Clipboard entries in tray** (0–50, default 10). Entries up to 64 KiB are kept locally, subject to an 8 MiB total text limit.
+- **Clipboard History**: **Clipboard history size** (0–1000, default 100; 0 disables recording and clears stored entries) and **Clipboard entries in tray** (0–50, default 10). Entries up to 64 KiB are kept locally, subject to an 8 MiB total text limit. On macOS, clipboard reads run in a separate process; protected, oversized, invalid or timed-out reads are skipped. The 64 KiB limit applies to accepted text; AppKit may materialize larger data inside that process.
 - **Startup**: **Launch at login** and **Auto-copy OCR/translation results to clipboard** (Screen Translate copies the recognized text right away).
 
 ## Providers
