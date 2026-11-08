@@ -215,5 +215,13 @@
   "last 30 days": "ostatnie 30 dni",
   "last 7 days": "ostatnie 7 dni",
   "no activity": "brak aktywności",
-  "today": "dziś"
+  "today": "dziś",
+  "Clipboard History": "Historia schowka",
+  "Clipboard History…": "Historia schowka…",
+  "No clipboard entries yet.": "Brak wpisów w schowku.",
+  "Clipboard history size": "Rozmiar historii schowka",
+  "Clipboard entries in tray": "Wpisy schowka w zasobniku",
+  "Search clipboard history": "Szukaj w historii schowka",
+  "Clipboard history couldn't be updated.": "Nie udało się zaktualizować historii schowka.",
+  "Clipboard history couldn't be read.": "Nie udało się odczytać historii schowka."
 }

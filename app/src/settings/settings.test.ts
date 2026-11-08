@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { invoke } from '@tauri-apps/api/core';
 import Settings from './Settings.svelte';
 import History from '../history/History.svelte';
@@ -81,4 +81,16 @@ test('settings_reads_again_once_the_change_listener_is_registered', async () => 
   register();
   await waitFor(() => expect(reads()).toBe(2));
   expect(await screen.findByDisplayValue('77')).toBeTruthy();
+});
+
+test('clipboard limits have independent defaults and patch fields', async () => {
+  render(Settings);
+  const retention = await screen.findByRole('spinbutton', { name: 'Clipboard history size' });
+  const tray = screen.getByRole('spinbutton', { name: 'Clipboard entries in tray' });
+  expect((retention as HTMLInputElement).value).toBe('100');
+  expect((tray as HTMLInputElement).value).toBe('10');
+  await fireEvent.change(retention, { target: { value: '250' } });
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'maxClipboardHistoryCount', value: 250 } }));
+  await fireEvent.change(tray, { target: { value: '17' } });
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'menuClipboardHistoryCount', value: 17 } }));
 });

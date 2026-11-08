@@ -25,7 +25,44 @@ impl<T: Mergeable + Serialize + DeserializeOwned + Clone> EnvelopeFile<T> {
         path: PathBuf,
         clock: Arc<dyn Clock>,
     ) -> Result<(Self, LoadOutcome), StoreError> {
-        let (envelope, outcome) = match read_optional(&path)? {
+        Self::load_bytes(path, clock, None)
+    }
+
+    pub(crate) fn load_bounded(
+        path: PathBuf,
+        clock: Arc<dyn Clock>,
+        max_bytes: u64,
+    ) -> Result<(Self, LoadOutcome), StoreError> {
+        Self::load_bytes(path, clock, Some(max_bytes))
+    }
+
+    fn load_bytes(
+        path: PathBuf,
+        clock: Arc<dyn Clock>,
+        max_bytes: Option<u64>,
+    ) -> Result<(Self, LoadOutcome), StoreError> {
+        let bytes = if let Some(limit) = max_bytes {
+            use std::io::Read;
+            match std::fs::File::open(&path) {
+                Ok(file) => {
+                    let mut bytes = Vec::new();
+                    file.take(limit + 1).read_to_end(&mut bytes)?;
+                    if bytes.len() as u64 > limit {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "store file exceeds size limit",
+                        )
+                        .into());
+                    }
+                    Some(bytes)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            read_optional(&path)?
+        };
+        let (envelope, outcome) = match bytes {
             None => (MergeableEnvelope::new(), LoadOutcome::Missing),
             Some(bytes) if is_blank(&bytes) => (MergeableEnvelope::new(), LoadOutcome::Missing),
             Some(bytes) => match MergeableEnvelope::<T>::decode(&bytes) {

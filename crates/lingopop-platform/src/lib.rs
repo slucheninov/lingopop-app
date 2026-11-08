@@ -7,6 +7,7 @@
 
 pub mod capture;
 pub mod clipboard;
+pub mod clipboard_observer;
 #[cfg(any(test, feature = "dev-plaintext"))]
 pub mod dev_protector;
 pub mod dismiss;

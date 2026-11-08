@@ -5,7 +5,7 @@ import type { SettingsView, UiBootstrap } from '../lib/settingsTypes';
 
 export const baseView: SettingsView = {
   activeProvider: 'Google (Free)', fallbacks: {}, targetLanguage: 'English', hotkeys: {}, swiftRunning: false, hotkeyStatus: {},
-  launchAtLogin: false, maxInputChars: 0, maxHistoryCount: 20, menuHistoryCount: 5, useAutoDetect: false,
+  launchAtLogin: false, maxInputChars: 0, maxHistoryCount: 20, menuHistoryCount: 5, maxClipboardHistoryCount: 100, menuClipboardHistoryCount: 10, useAutoDetect: false,
   languagePairs: {}, autoCopyOCR: false, magicPrompt: '', defaultMagicPrompt: 'Default prompt {{targetLanguage}}', quickLanguages: ['English', 'Russian', 'Ukrainian', 'Polish'],
   popupFontSize: 13, appLanguage: 'system', launchedLanguage: 'en', needsRelaunch: false, version: '0.2.0', latestVersion: null, providers: [], platform: 'windows',
 };

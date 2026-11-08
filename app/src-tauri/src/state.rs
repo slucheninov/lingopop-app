@@ -217,6 +217,7 @@ pub enum StoreKind {
 }
 type ChangeHook = Arc<dyn Fn(StoreKind) + Send + Sync>;
 pub struct ShellStores {
+    pub clipboard: Arc<crate::clipboard_history::ClipboardHistory>,
     on_change: Mutex<Option<ChangeHook>>,
     history: Mutex<Option<HistoryStore>>,
     usage: Mutex<Option<UsageStore>>,
@@ -413,6 +414,27 @@ pub fn load(
             None
         }
     };
+    let clipboard = match lingopop_core::clipboard_history::ClipboardHistoryStore::open(
+        paths.clipboard_history_json(),
+        clock.clone(),
+    ) {
+        Ok((mut store, _)) => {
+            if store.entries().len() > settings.max_clipboard_history_count as usize
+                && store.trim(settings.max_clipboard_history_count).is_err()
+            {
+                log::warn!("clipboard history trim failed");
+            }
+            Some(store)
+        }
+        Err(_) => {
+            log::warn!("clipboard history could not be opened");
+            None
+        }
+    };
+    let clipboard = Arc::new(crate::clipboard_history::ClipboardHistory::new(
+        clipboard,
+        settings.max_clipboard_history_count,
+    ));
     let usage = match UsageStore::open(paths.usage_json(), clock) {
         Ok((store, outcome)) => {
             log::info!("usage: {}", describe(&outcome));
@@ -432,6 +454,7 @@ pub fn load(
             secrets: secrets.map(Mutex::new),
         }),
         Arc::new(ShellStores {
+            clipboard,
             history: Mutex::new(history),
             on_change: Mutex::new(None),
             usage: Mutex::new(usage),

@@ -17,6 +17,11 @@ if (label === 'settings') {
   await bootstrap();
   const { default: History } = await import('./history/History.svelte');
   mount(History, { target });
+} else if (label === 'clipboard-history') {
+  const { bootstrap } = await import('./lib/bootstrap');
+  await bootstrap();
+  const { default: ClipboardHistory } = await import('./clipboard-history/ClipboardHistory.svelte');
+  mount(ClipboardHistory, { target });
 } else {
   mount(Popup, { target });
 }

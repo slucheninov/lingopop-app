@@ -184,3 +184,8 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Same-executable helper dispatch, owner-run native private pasteboard checks.
+[[test]]
+name = "macos_clipboard_isolated"
+harness = false

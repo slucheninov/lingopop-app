@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod action_row;
+pub mod clipboard_history;
 pub mod detector;
 pub mod envelope;
 pub mod errors;
@@ -32,6 +33,7 @@ pub mod usage_pricing;
 pub mod usage_stats;
 pub mod usage_store;
 
+pub use clipboard_history::{ClipboardHistoryEntry, ClipboardHistoryStore};
 pub use fsio::{LoadOutcome, StoreError};
 pub use history_store::HistoryStore;
 pub use hotkey::{Hotkey, Modifier};

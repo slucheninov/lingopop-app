@@ -3,6 +3,7 @@
 
 mod capture;
 mod clipboard;
+pub(crate) mod clipboard_observer;
 mod dpapi;
 mod foreground;
 pub(crate) mod fs;

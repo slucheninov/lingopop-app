@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "The popup, settings and history windows may listen to events and call the app's own commands.",
-  "windows": ["popup", "settings", "history"],
+  "windows": ["popup", "settings", "history", "clipboard-history"],
   "permissions": ["core:event:default"]
 }
