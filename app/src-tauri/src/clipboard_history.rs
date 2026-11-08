@@ -31,6 +31,7 @@ pub(crate) struct Inner {
     ignored_generation: Option<(u64, Option<std::collections::HashSet<u64>>)>,
 }
 impl ClipboardHistory {
+    /// Creates the shell coordinator for the local store and retention limit.
     pub fn new(store: Option<ClipboardHistoryStore>, limit: u32) -> Self {
         Self {
             inner: Mutex::new(Inner {
@@ -44,6 +45,7 @@ impl ClipboardHistory {
             on_change: Mutex::new(None),
         }
     }
+    /// Registers a callback invoked after committed history changes.
     pub fn set_on_change(&self, callback: Arc<dyn Fn() + Send + Sync>) {
         *lock(&self.on_change) = Some(callback);
     }
@@ -53,6 +55,7 @@ impl ClipboardHistory {
             callback();
         }
     }
+    /// Returns the current entries or an unavailable-store error.
     pub fn entries(&self) -> Result<Vec<ClipboardHistoryEntry>, HistoryWriteError> {
         lock(&self.inner)
             .store
@@ -60,6 +63,7 @@ impl ClipboardHistory {
             .map(|s| s.entries().to_vec())
             .ok_or(HistoryWriteError::Unavailable)
     }
+    /// Records a fenced observation; false requests another attempt.
     pub fn observe(
         &self,
         revision: u64,
@@ -164,6 +168,7 @@ impl ClipboardHistory {
         }
         result
     }
+    /// Updates the retention limit and removes excess entries.
     pub fn trim(&self, limit: u32) -> Result<(), HistoryWriteError> {
         {
             let mut inner = lock(&self.inner);
@@ -205,6 +210,7 @@ pub struct Row {
     timestamp_unix: f64,
 }
 #[tauri::command]
+/// Lists history entries for the clipboard history window.
 pub async fn clipboard_history_list(state: State<'_, ShellState>) -> Result<Vec<Row>, String> {
     state
         .stores
@@ -228,6 +234,7 @@ pub async fn clipboard_history_list(state: State<'_, ShellState>) -> Result<Vec<
             )
         })
 }
+/// Copies and promotes an entry identified by its stable ID.
 pub async fn copy(state: &ShellState, id: Uuid) -> Result<(), String> {
     let history = &state.stores.clipboard;
     let _action = history.actions.lock().await;
@@ -256,6 +263,7 @@ pub async fn copy(state: &ShellState, id: Uuid) -> Result<(), String> {
     Ok(())
 }
 #[tauri::command]
+/// Copies a requested history entry to the system clipboard.
 pub async fn clipboard_history_copy(
     state: State<'_, ShellState>,
     id: String,
@@ -263,6 +271,7 @@ pub async fn clipboard_history_copy(
     copy(&state, parse_id(&state, &id)?).await
 }
 #[tauri::command]
+/// Removes a requested history entry.
 pub async fn clipboard_history_remove(
     state: State<'_, ShellState>,
     id: String,
@@ -276,6 +285,7 @@ pub async fn clipboard_history_remove(
         .map_err(|_| error(&state))
 }
 #[tauri::command]
+/// Removes all clipboard history entries.
 pub async fn clipboard_history_clear(state: State<'_, ShellState>) -> Result<(), String> {
     let _action = state.stores.clipboard.actions.lock().await;
     state
@@ -295,6 +305,7 @@ pub(crate) fn accept_observation(
     }
 }
 
+/// Starts clipboard observation for the application lifetime.
 pub fn start(app: &tauri::AppHandle) {
     use tauri::Manager;
     let state = app.state::<ShellState>();

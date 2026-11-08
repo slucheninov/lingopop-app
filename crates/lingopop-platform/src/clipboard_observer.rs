@@ -33,11 +33,13 @@ pub struct ObservationCursor {
     last: u64,
 }
 impl ObservationCursor {
+    /// Starts a cursor at the current generation without reading existing contents.
     pub fn new(source: &dyn ClipboardObservationSource) -> Self {
         Self {
             last: source.generation(),
         }
     }
+    /// Reads one changed generation and rejects a concurrent clipboard change.
     pub fn observe(
         &mut self,
         source: &dyn ClipboardObservationSource,
@@ -151,6 +153,7 @@ impl ClipboardObserver {
             listener: None,
         })
     }
+    /// Signals the observer and waits for its workers to stop.
     pub fn stop(&mut self) {
         let _ = self.stop.try_send(());
         #[cfg(windows)]
@@ -171,6 +174,7 @@ impl Drop for ClipboardObserver {
 }
 
 #[cfg(target_os = "macos")]
+/// Starts observation using the current platform clipboard.
 pub fn native_clipboard_observer(
     callback: Arc<ObservationCallback>,
 ) -> Result<ClipboardObserver, PlatformError> {
@@ -180,6 +184,7 @@ pub fn native_clipboard_observer(
     )
 }
 #[cfg(windows)]
+/// Starts observation using the current platform clipboard.
 pub fn native_clipboard_observer(
     callback: Arc<ObservationCallback>,
 ) -> Result<ClipboardObserver, PlatformError> {

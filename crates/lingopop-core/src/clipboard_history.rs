@@ -54,6 +54,7 @@ impl ClipboardHistoryStore {
         file.adjust_in_memory(|next| Self::normalize(next, MAX_CLIPBOARD_HISTORY_COUNT));
         Ok((Self { file }, outcome))
     }
+    /// Returns retained entries in newest-first order.
     pub fn entries(&self) -> &[ClipboardHistoryEntry] {
         &self.file.envelope().items
     }
@@ -98,11 +99,13 @@ impl ClipboardHistoryStore {
         self.record(text, max_count)?;
         Ok(true)
     }
+    /// Persists the newest entries up to the configured limit.
     pub fn trim(&mut self, max_count: u32) -> Result<(), StoreError> {
         let mut next = self.file.envelope().clone();
         Self::normalize(&mut next, max_count);
         self.file.persist(next)
     }
+    /// Removes an entry by its stable identifier.
     pub fn remove(&mut self, id: Uuid) -> Result<(), StoreError> {
         let mut next = self.file.envelope().clone();
         next.items.retain(|entry| entry.id != id);
@@ -110,6 +113,7 @@ impl ClipboardHistoryStore {
         // unbounded tombstone list for clipboard observations.
         self.file.persist(next)
     }
+    /// Removes all retained entries from memory and disk.
     pub fn clear(&mut self) -> Result<(), StoreError> {
         self.file.persist(MergeableEnvelope::new())
     }
