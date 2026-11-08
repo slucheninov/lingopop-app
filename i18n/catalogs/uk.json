@@ -215,5 +215,13 @@
   "last 30 days": "останні 30 днів",
   "last 7 days": "останні 7 днів",
   "no activity": "немає активності",
-  "today": "сьогодні"
+  "today": "сьогодні",
+  "Clipboard History": "Історія буфера обміну",
+  "Clipboard History…": "Історія буфера обміну…",
+  "No clipboard entries yet.": "Історія буфера обміну порожня.",
+  "Clipboard history size": "Розмір історії буфера обміну",
+  "Clipboard entries in tray": "Записи буфера обміну в меню",
+  "Search clipboard history": "Пошук в історії буфера обміну",
+  "Clipboard history couldn't be updated.": "Не вдалося оновити історію буфера обміну.",
+  "Clipboard history couldn't be read.": "Не вдалося прочитати історію буфера обміну."
 }

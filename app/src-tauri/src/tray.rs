@@ -185,6 +185,11 @@ impl StatusSink for TrayController {
 pub fn menu_history_count(settings: &Settings) -> usize {
     settings.menu_history_count.min(settings.max_history_count) as usize
 }
+pub fn menu_clipboard_history_count(settings: &Settings) -> usize {
+    settings
+        .menu_clipboard_history_count
+        .min(settings.max_clipboard_history_count) as usize
+}
 pub fn menu_label(text: &str) -> String {
     text.replace('&', "&&")
 }
@@ -301,6 +306,12 @@ impl TrayController {
                                 log::warn!("tray copy failed");
                             }
                         }
+                    } else if let Some(raw) = id.strip_prefix("clip:") {
+                        if let Ok(id) = uuid::Uuid::parse_str(raw) {
+                            if crate::clipboard_history::copy(&state, id).await.is_err() {
+                                log::warn!("clipboard history copy failed");
+                            }
+                        }
                     } else if let Some(lang) = id.strip_prefix("lang:") {
                         let _ = settings_cmds::settings_update(
                             app.clone(),
@@ -311,6 +322,7 @@ impl TrayController {
                     } else {
                         match id.as_str() {
                             "history" => windows::open_history(&app),
+                            "clipboard-history" => windows::open_clipboard_history(&app),
                             "settings" => windows::open_settings(&app, None),
                             "about" => windows::open_settings(&app, Some("about")),
                             "quit" => app.exit(0),
@@ -365,6 +377,22 @@ impl TrayController {
                 history_accelerator(i, host).as_deref(),
             )?;
         }
+        menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
+        add("clipboard-header", &t("Clipboard History"), false)?;
+        let clips = state.stores.clipboard.entries().unwrap_or_default();
+        let count = menu_clipboard_history_count(&settings);
+        if clips.is_empty() || count == 0 {
+            add("clipboard-empty", &t("No clipboard entries yet."), false)?;
+        }
+        for entry in clips.iter().take(count) {
+            // Clipboard rows intentionally have no new accelerators or mnemonics.
+            add(
+                &format!("clip:{}", entry.id),
+                &menu_row_text(10, &entry.text, host),
+                true,
+            )?;
+        }
+        add("clipboard-history", &t("Clipboard History…"), true)?;
         menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
         for op in AIOperation::ALL {
             let mut label = t(op.english_name());
@@ -536,6 +564,24 @@ mod tests {
         let frames = sink.0.lock().unwrap();
         assert!(!frames.contains(&Frame::Idle));
         assert_eq!(frames.len(), 14);
+    }
+    #[test]
+    fn clipboard_menu_limit_is_independent_and_has_no_new_shortcuts() {
+        let settings = Settings {
+            max_clipboard_history_count: 3,
+            menu_clipboard_history_count: 10,
+            max_history_count: 1,
+            menu_history_count: 1,
+            ..Settings::default()
+        };
+        assert_eq!(menu_clipboard_history_count(&settings), 3);
+        assert_eq!(menu_history_count(&settings), 1);
+        for host in [HostKind::Windows, HostKind::Unix] {
+            assert_eq!(
+                menu_row_text(10, "one\ntwo & three", host),
+                "one two && three"
+            );
+        }
     }
     #[test]
     fn menu_history_count_is_min() {

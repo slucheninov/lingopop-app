@@ -51,6 +51,8 @@ export interface SettingsView {
   maxInputChars: number;
   maxHistoryCount: number;
   menuHistoryCount: number;
+  maxClipboardHistoryCount: number;
+  menuClipboardHistoryCount: number;
   useAutoDetect: boolean;
   languagePairs: Record<string, string>;
   autoCopyOCR: boolean;
@@ -84,7 +86,7 @@ export type SettingsPatch =
   | { field: 'targetLanguage'; value: string }
   | { field: 'useAutoDetect'; value: boolean }
   | { field: 'languagePairs'; value: Record<string, string> }
-  | { field: 'maxInputChars' | 'maxHistoryCount' | 'menuHistoryCount'; value: number }
+  | { field: 'maxInputChars' | 'maxHistoryCount' | 'menuHistoryCount' | 'maxClipboardHistoryCount' | 'menuClipboardHistoryCount'; value: number }
   | { field: 'launchAtLogin' | 'autoCopyOCR'; value: boolean }
   | { field: 'magicPrompt'; value: string }
   | { field: 'activeProvider'; value: Provider }

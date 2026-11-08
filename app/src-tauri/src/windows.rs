@@ -3,6 +3,13 @@ use crate::commands::ShellState;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 pub const SETTINGS_LABEL: &str = "settings";
 pub const HISTORY_LABEL: &str = "history";
+pub const CLIPBOARD_HISTORY_LABEL: &str = "clipboard-history";
+pub fn open_clipboard_history(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        open_window(app, CLIPBOARD_HISTORY_LABEL).await;
+    });
+}
 pub fn open_settings(app: &AppHandle, tab: Option<&str>) {
     app.state::<ShellState>()
         .ui
@@ -47,7 +54,15 @@ async fn open_window(app: AppHandle, label: &'static str) {
             .center()
     } else {
         builder
-            .title(lingopop_core::i18n::t(lang, "Translation History", &[]))
+            .title(lingopop_core::i18n::t(
+                lang,
+                if label == CLIPBOARD_HISTORY_LABEL {
+                    "Clipboard History"
+                } else {
+                    "Translation History"
+                },
+                &[],
+            ))
             .inner_size(540.0, 480.0)
             .min_inner_size(480.0, 360.0)
             .resizable(true)

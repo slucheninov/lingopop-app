@@ -28,6 +28,10 @@ impl DataPaths {
         self.dir.join("history.json")
     }
 
+    pub fn clipboard_history_json(&self) -> PathBuf {
+        self.dir.join("clipboard-history.json")
+    }
+
     pub fn usage_json(&self) -> PathBuf {
         self.dir.join("usage.json")
     }

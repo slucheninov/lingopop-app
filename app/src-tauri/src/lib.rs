@@ -1,6 +1,7 @@
 //! LingoPop tray app: a thin Tauri shell. All flow logic lives in `lingopop-orchestrator`;
 //! this crate only wires the real platform, stores, popup window, hotkeys and tray into it.
 
+pub mod clipboard_history;
 pub mod commands;
 pub mod dismiss;
 mod history_cmds;
@@ -310,6 +311,12 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
     let tray_sink = Arc::new(tray::TraySink::default());
     let (tray_changes, tray_rx) = tokio::sync::watch::channel(());
     let history_changes = tray_changes.clone();
+    let clipboard_changes = tray_changes.clone();
+    let events = app.handle().clone();
+    stores.clipboard.set_on_change(Arc::new(move || {
+        let _ = events.emit("clipboard-history://changed", ());
+        let _ = clipboard_changes.send(());
+    }));
     let orchestrator = Orchestrator::new(Deps {
         status: Some(tray_sink.clone()),
         platform: platform.clone(),
@@ -383,12 +390,17 @@ fn setup(app: &mut App, data_dir: &std::path::Path) -> Result<(), Box<dyn Error>
         hooks,
         settings_write: tokio::sync::Mutex::new(()),
         permission_hints: Arc::new(permissions_cmds::PermissionHints::default()),
-        window_locks: [windows::SETTINGS_LABEL, windows::HISTORY_LABEL]
-            .into_iter()
-            .map(|label| (label, tokio::sync::Mutex::new(())))
-            .collect(),
+        window_locks: [
+            windows::SETTINGS_LABEL,
+            windows::HISTORY_LABEL,
+            windows::CLIPBOARD_HISTORY_LABEL,
+        ]
+        .into_iter()
+        .map(|label| (label, tokio::sync::Mutex::new(())))
+        .collect(),
     });
 
+    clipboard_history::start(app.handle());
     dismiss::spawn_forwarder(dismiss.as_ref(), orchestrator.clone());
     hotkeys::install(&hotkey_registry, orchestrator, &hotkeys);
     let tray = tray::TrayController::build(app.handle(), app.state::<ShellState>().ui.language())?;
@@ -440,6 +452,10 @@ pub fn run() {
             permissions_cmds::permissions_refresh,
             permissions_cmds::permissions_request,
             permissions_cmds::permissions_open_settings,
+            clipboard_history::clipboard_history_list,
+            clipboard_history::clipboard_history_copy,
+            clipboard_history::clipboard_history_remove,
+            clipboard_history::clipboard_history_clear,
             history_cmds::history_list,
             history_cmds::history_remove,
             history_cmds::history_clear,
@@ -474,6 +490,15 @@ pub fn run() {
         // Last main-thread turn: remove the dismiss monitors inline (we are on main) and
         // stop the presentation worker without waiting for it.
         RunEvent::Exit => {
+            if let Some(observer) = app.try_state::<clipboard_history::ObserverHandle>() {
+                // A delayed native clipboard provider may stall its reader. Teardown joins on
+                // a separate thread so the final main-thread turn remains available.
+                if let Some(observer) = state::lock(&observer.0).take() {
+                    let _ = std::thread::Builder::new()
+                        .name("clipboard-shutdown".into())
+                        .spawn(move || drop(observer));
+                }
+            }
             if let Some(state) = app.try_state::<ShellState>() {
                 state.platform.dismiss.shutdown();
                 drop(state.popup.shutdown());
@@ -493,3 +518,6 @@ mod task5_tests;
 mod task7_tests;
 #[cfg(test)]
 mod update_install_tests;
+
+#[cfg(test)]
+mod clipboard_history_tests;

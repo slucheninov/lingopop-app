@@ -215,5 +215,13 @@
   "last 30 days": "letzte 30 Tage",
   "last 7 days": "letzte 7 Tage",
   "no activity": "keine Aktivität",
-  "today": "heute"
+  "today": "heute",
+  "Clipboard History": "Zwischenablageverlauf",
+  "Clipboard History…": "Zwischenablageverlauf…",
+  "No clipboard entries yet.": "Noch keine Einträge in der Zwischenablage.",
+  "Clipboard history size": "Größe des Zwischenablageverlaufs",
+  "Clipboard entries in tray": "Zwischenablageeinträge im Menü",
+  "Search clipboard history": "Zwischenablageverlauf durchsuchen",
+  "Clipboard history couldn't be updated.": "Der Zwischenablageverlauf konnte nicht aktualisiert werden.",
+  "Clipboard history couldn't be read.": "Der Zwischenablageverlauf konnte nicht gelesen werden."
 }

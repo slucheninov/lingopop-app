@@ -1479,3 +1479,46 @@ fn overlay_window_origin_is_virtual_screen_origin() {
     pick.cancel.send(()).unwrap();
     assert_eq!(pick.finish(), None);
 }
+
+#[test]
+#[ignore = "needs interactive desktop"]
+fn clipboard_history_observation_checks_exclusions_without_changing_clipboard() {
+    use lingopop_platform::clipboard_observer::read_native_clipboard_generation;
+    let _lock = clip_lock();
+    let clip = clipboard();
+    let saved = clip.snapshot().expect("snapshot");
+    struct Restore<'a> {
+        clip: &'a WindowsClipboard,
+        saved: ClipboardSnapshot,
+        expected: u64,
+    }
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) {
+            let _ = self.clip.restore_if(&self.saved, self.expected);
+        }
+    }
+    let mut restore = Restore {
+        clip: &clip,
+        expected: saved.sequence,
+        saved,
+    };
+    clip.write_text_transient("history smoke fixture")
+        .expect("protected write");
+    restore.expected = clip.sequence_number();
+    assert!(read_native_clipboard_generation(restore.expected)
+        .expect("read")
+        .is_none());
+    assert_eq!(clip.sequence_number(), restore.expected);
+    clip.write_text("history smoke fixture")
+        .expect("ordinary write");
+    restore.expected = clip.sequence_number();
+    assert!(read_native_clipboard_generation(restore.expected)
+        .expect("read")
+        .is_some());
+    assert_eq!(clip.sequence_number(), restore.expected);
+    assert!(
+        read_native_clipboard_generation(restore.expected.wrapping_sub(1))
+            .expect("stale read")
+            .is_none()
+    );
+}
