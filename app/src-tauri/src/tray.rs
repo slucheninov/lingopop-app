@@ -629,6 +629,9 @@ mod tests {
         assert_eq!(history_accelerator(10, HostKind::Unix), None);
         assert_eq!(history_accelerator(0, HostKind::Windows), None);
     }
+    /// Operation accelerators exist only on macOS, and every accelerator string the menu uses
+    /// (history digits, `Cmd+H`, `Cmd+Shift+H`, `Cmd+Comma`, `Cmd+Q`) parses with `muda`, since
+    /// Tauri silently drops one it cannot parse.
     #[test]
     fn hotkey_accelerators_are_mac_only_and_parse() {
         let h = Hotkey::new("KeyT", vec![Modifier::Alt]);
