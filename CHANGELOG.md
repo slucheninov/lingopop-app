@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Changed
+
+- The tray / menu-bar **Clipboard History…** item now sits in its own group between separators, so it no longer reads as one more clip, and has a quick key while the menu is open (`C` on Windows, `⌘⇧H` on macOS).
+
 ## [0.2.3] - 2026-11-08
 
 ### Added

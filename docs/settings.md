@@ -77,7 +77,7 @@ Updates are signed; on macOS the new app must carry the same release certificate
 - The latest results, newest first. A click copies the original text back to the clipboard, so the menu also works as a clipboard history. The first ten have quick keys (Windows `1`…`0`, macOS `⌘1`…`⌘0`).
 - The six operations with their shortcuts. An operation started from the menu works on the text you had selected in the window you used last.
 - **Target**: switch the target language.
-- **Clipboard History** lists recent copied text; click an entry to copy it again. **Clipboard History…** opens all retained entries, with controls to delete an entry or clear the list.
+- **Clipboard History** lists recent copied text; click an entry to copy it again. **Clipboard History…**, set apart by separators below the list, opens all retained entries, with controls to delete an entry or clear the list. Its quick key is `C` on Windows and `⌘⇧H` on macOS while the menu is open.
 - **History…**, **Settings…**, **About LingoPop** and **Quit LingoPop**.
 
 The icon animates while an operation runs and turns red for three seconds after an error.

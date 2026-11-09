@@ -220,11 +220,11 @@ pub fn menu_row_text(index: usize, original: &str, host: HostKind) -> String {
     }
 }
 
-/// Label of an app item (History, Settings, Quit). On Windows the key the item answers to in
+/// Label of an app item (Clipboard History…, History…, Settings…, Quit). On Windows the key the item answers to in
 /// the open menu sits at the right edge, after a tab, as the item's mnemonic (`\t&H`), like the
 /// quick-pick digits: a Win32 tray menu runs its own modal loop, so a `Ctrl` chord shown there
 /// would do nothing, and the text after the tab cannot be drawn grey. macOS keeps the plain
-/// label and shows the native key equivalent (`⌘H`, `⌘,`, `⌘Q`).
+/// label and shows the native key equivalent (`⌘H`, `⌘⇧H`, `⌘,`, `⌘Q`).
 pub fn app_item_label(label: &str, key: char, host: HostKind) -> String {
     let text = menu_label(label);
     match host {
@@ -347,6 +347,10 @@ impl TrayController {
     pub fn set_status(&self, status: TrayStatus) {
         self.icons.set(status);
     }
+    /// Rebuilds the whole tray / menu-bar menu from the current settings, history and clipboard
+    /// history and installs it. Groups are divided by separators: translation history, clipboard
+    /// history (clips, then the `Clipboard History…` window item on its own), operations, then
+    /// target language and the app items.
     pub fn rebuild(&self) -> tauri::Result<()> {
         let state = self.app.state::<ShellState>();
         let settings = state.config.settings();
@@ -392,7 +396,14 @@ impl TrayController {
                 true,
             )?;
         }
-        add("clipboard-history", &t("Clipboard History…"), true)?;
+        // Its own group: the item reads like one more clip when it sits right under the rows.
+        menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
+        add_with(
+            "clipboard-history",
+            &app_item_label(&t("Clipboard History…"), 'C', host),
+            true,
+            (host == HostKind::Unix).then_some("Cmd+Shift+H"),
+        )?;
         menu.append(&PredefinedMenuItem::separator(&self.app)?)?;
         for op in AIOperation::ALL {
             let mut label = t(op.english_name());
@@ -618,6 +629,9 @@ mod tests {
         assert_eq!(history_accelerator(10, HostKind::Unix), None);
         assert_eq!(history_accelerator(0, HostKind::Windows), None);
     }
+    /// Operation accelerators exist only on macOS, and every accelerator string the menu uses
+    /// (history digits, `Cmd+H`, `Cmd+Shift+H`, `Cmd+Comma`, `Cmd+Q`) parses with `muda`, since
+    /// Tauri silently drops one it cannot parse.
     #[test]
     fn hotkey_accelerators_are_mac_only_and_parse() {
         let h = Hotkey::new("KeyT", vec![Modifier::Alt]);
@@ -642,6 +656,7 @@ mod tests {
             "Cmd+1",
             "Cmd+0",
             "Cmd+H",
+            "Cmd+Shift+H",
             "Cmd+Comma",
             "Cmd+Q",
         ] {
