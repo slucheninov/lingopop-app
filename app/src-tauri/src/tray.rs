@@ -347,6 +347,10 @@ impl TrayController {
     pub fn set_status(&self, status: TrayStatus) {
         self.icons.set(status);
     }
+    /// Rebuilds the whole tray / menu-bar menu from the current settings, history and clipboard
+    /// history and installs it. Groups are divided by separators: translation history, clipboard
+    /// history (clips, then the `Clipboard History…` window item on its own), operations, then
+    /// target language and the app items.
     pub fn rebuild(&self) -> tauri::Result<()> {
         let state = self.app.state::<ShellState>();
         let settings = state.config.settings();
