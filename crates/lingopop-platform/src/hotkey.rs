@@ -87,9 +87,7 @@ mod real {
             Error::OsError(e) if e.raw_os_error() == Some(ERROR_HOTKEY_ALREADY_REGISTERED) => {
                 PlatformError::HotkeyConflict
             }
-            Error::UnrecognizedHotKeyCode(_) | Error::FailedToRegister(_) => {
-                PlatformError::InvalidHotkey
-            }
+            Error::FailedToRegister(_) => PlatformError::InvalidHotkey,
             Error::OsError(e) => PlatformError::Os {
                 api: "RegisterHotKey",
                 code: e.raw_os_error().unwrap_or(0),

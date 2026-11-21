@@ -166,10 +166,6 @@ mod error_mapping {
     #[test]
     fn map_error_unknown_key_is_invalid() {
         assert_eq!(
-            map_error(Error::UnrecognizedHotKeyCode("x".into())),
-            PlatformError::InvalidHotkey
-        );
-        assert_eq!(
             map_error(Error::FailedToRegister("x".into())),
             PlatformError::InvalidHotkey
         );

@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Fixed
+
+- macOS: a shortcut that another app already holds is now reported as a conflict in Settings instead of being accepted and never firing (`global-hotkey` 0.10).
+
 ## [0.2.4] - 2026-11-09
 
 ### Changed
