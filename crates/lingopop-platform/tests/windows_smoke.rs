@@ -1177,14 +1177,28 @@ struct Helper {
     hwnd: u64,
 }
 
+/// The newest `foreground_helper-*.exe` built for this package. Cargo used to
+/// put every test executable into one `deps` folder; since the build-dir
+/// layout of Rust 1.100 each one has its own `build/<package>/<hash>/out`
+/// folder, so the folders next to ours are searched too.
 fn helper_exe() -> std::path::PathBuf {
     let dir = std::env::current_exe()
         .expect("current_exe")
         .parent()
         .expect("exe dir")
         .to_path_buf();
+    let mut dirs = vec![dir.clone()];
+    if let Some(package_dir) = dir.parent().and_then(|hash_dir| hash_dir.parent()) {
+        if let Ok(entries) = std::fs::read_dir(package_dir) {
+            dirs.extend(entries.flatten().map(|entry| entry.path().join("out")));
+        }
+    }
     let mut best: Option<(std::time::SystemTime, std::path::PathBuf)> = None;
-    for entry in std::fs::read_dir(&dir).expect("read exe dir").flatten() {
+    for entry in dirs
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.flatten())
+    {
         let path = entry.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if !(name.starts_with("foreground_helper-") && name.ends_with(".exe")) {
@@ -1200,7 +1214,7 @@ fn helper_exe() -> std::path::PathBuf {
     }
     best.map(|(_, p)| p).unwrap_or_else(|| {
         panic!(
-            "foreground_helper-*.exe not found in {}: run the test with `--test foreground_helper` too",
+            "foreground_helper-*.exe not found in or next to {}: run the test with `--test foreground_helper` too",
             dir.display()
         )
     })

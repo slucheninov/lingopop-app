@@ -101,14 +101,8 @@ const RENAME_BACKOFF_UNIT: Duration = Duration::from_millis(10);
 /// everywhere, and on Windows also `ERROR_SHARING_VIOLATION` (32) and
 /// `ERROR_LOCK_VIOLATION` (33).
 fn is_transient_rename_error(error: &io::Error) -> bool {
-    if error.kind() == io::ErrorKind::PermissionDenied {
-        return true;
-    }
-    #[cfg(windows)]
-    if matches!(error.raw_os_error(), Some(32 | 33)) {
-        return true;
-    }
-    false
+    let sharing_or_lock = cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33));
+    error.kind() == io::ErrorKind::PermissionDenied || sharing_or_lock
 }
 
 /// Runs `rename` up to `attempts` times, sleeping `unit * n` after the `n`-th
