@@ -10,7 +10,7 @@ or an agent without losing meaning. It is a separate operation next to Translate
 
 ## Goals
 
-- New operation, hotkey Option+A on macOS, from the tray menu too.
+- New operation, hotkey Option+P on macOS, from the tray menu too.
 - Input up to 5000 characters; output is a minimal, unambiguous prompt.
 - The result is written in the target language from Settings (like Explain; no auto-detect, no
   language pairs).
@@ -50,7 +50,7 @@ or an agent without losing meaning. It is a separate operation next to Translate
   keep `TRANSLATE_OPERATIONS`, so the runner's existing unsupported-operation path applies.
 - Target language: `target_language_for` already returns plain `target_language` for any
   non-Translate operation; nothing to change.
-- Hotkey: default Option+A (`KeyA` + Alt) on macOS (`HostKind::Unix`) for fresh settings; no
+- Hotkey: default Option+P (`KeyP` + Alt) on macOS (`HostKind::Unix`) for fresh settings; no
   default on Windows (Ctrl+Alt+A is AltGr+A = Polish "ą", and defaults avoid AltGr letters).
 - Shell / UI: tray `op:condensePrompt` item, Shortcuts row, loading label, operation names in
   `types.ts` / `settingsTypes.ts`, History label, Usage needs nothing new. New strings go into the
@@ -62,9 +62,12 @@ or an agent without losing meaning. It is a separate operation next to Translate
 
 - Names: raw `condensePrompt`, UI `Condense prompt`, History `Prompt`, Shortcuts icon `⇲`.
 - Existing installs: a saved `settings.json` without the new hotkey stays without it (absence
-  cannot be told apart from "cleared"); the user sets Option+A once in Shortcuts. Fresh installs
+  cannot be told apart from "cleared"); the user sets Option+P once in Shortcuts. Fresh installs
   get it by default.
-- Option+A takes the "å" character on macOS while LingoPop runs (same trade-off as Option+T).
+- Option+P takes the "π" character on macOS while LingoPop runs (same trade-off as Option+T).
+- Option+P instead of the first idea Option+A: Option+A types "ą" on the Polish Pro layout.
+  No default chord with Option / AltGr may use A C E L N O S X Z (test
+  `every_default_hotkey_avoids_polish_option_letters`).
 
 ## Left to the builder
 

@@ -8,7 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ### Added
 
-- Condense prompt: a seventh operation that rewrites selected text as a compact prompt for another AI (shortcut row in Settings, tray / menu-bar entry, **⌥A** by default on macOS for new settings; an existing install assigns it once in Settings > Shortcuts).
+- Condense prompt: a seventh operation that rewrites selected text as a compact prompt for another AI (shortcut row in Settings, tray / menu-bar entry, **⌥P** by default on macOS for new settings; an existing install assigns it once in Settings > Shortcuts).
 
 ### Fixed
 

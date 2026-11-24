@@ -43,7 +43,7 @@ settings-main.png, settings-providers.png, settings-shortcuts.png, settings-magi
 - 🖼️ **Screen Translate**: press the hotkey, drag a frame over any part of the screen and get the recognized text at once (on-device OCR: Windows OCR or Apple Vision). Press **Translate** in the popup to translate it, or just copy the text. Works across several monitors.
 - 🪄 **Magic**: one hotkey that fixes grammar, improves style and translates in a single AI call. Write your own prompt in **Settings → Magic**; `{{targetLanguage}}` is replaced with your target language.
 - ✂️ **Condense prompt**: turns the selected text (a task draft, notes, a chat fragment) into the shortest clear prompt for another AI, in your target language, keeping every requirement, name, number and piece of code. Less context to send, same meaning.
-- ⌨️ A global hotkey for each of the seven operations. **Translate** ships with **Ctrl+Alt+T** on Windows and **⌥T** on macOS, **Condense prompt** with **⌥A** on macOS; the others are yours to assign.
+- ⌨️ A global hotkey for each of the seven operations. **Translate** ships with **Ctrl+Alt+T** on Windows and **⌥T** on macOS, **Condense prompt** with **⌥P** on macOS; the others are yours to assign.
 - 📋 Popup actions: **Copy**, **Replace** (pastes the result back into the app you came from), **Rewrite**, **Explain**, **Retry with another provider** and re-translate into another language.
 - 🤖 Eight providers: **Claude**, **OpenAI**, **Gemini**, **Grok** (all operations, plus image recognition for Screen Translate), **Google (Free)**, **Google Translate**, **DeepL** and **Microsoft Translator** (translation).
 - 🆓 Works out of the box: the default provider, Google (Free), needs no API key.

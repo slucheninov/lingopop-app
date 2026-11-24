@@ -369,11 +369,11 @@ mod tests {
     }
 
     #[test]
-    fn unix_default_settings_bind_option_a_to_condense_prompt() {
+    fn unix_default_settings_bind_option_p_to_condense_prompt() {
         let op = AIOperation::CondensePrompt;
         assert_eq!(
             Settings::default_for(HostKind::Unix).hotkey(op),
-            Some(&Hotkey::new("KeyA", [Modifier::Alt]))
+            Some(&Hotkey::new("KeyP", [Modifier::Alt]))
         );
         assert_eq!(Settings::default_for(HostKind::Windows).hotkey(op), None);
     }
