@@ -152,11 +152,7 @@ mod tests {
             crate::ui_prefs::Language::Uk,
             crate::ui_prefs::Language::De,
         ] {
-            // The shared translations for Condense Prompt arrive with the UI in Task 2.
-            for op in AIOperation::ALL
-                .into_iter()
-                .filter(|op| *op != AIOperation::CondensePrompt)
-            {
+            for op in AIOperation::ALL {
                 assert!(crate::i18n::catalog(language).contains_key(op.short_name()));
             }
         }

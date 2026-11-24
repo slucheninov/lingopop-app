@@ -47,7 +47,7 @@ If the encrypted key file cannot be decrypted (for example after it was copied f
 
 ## Shortcuts
 
-One global shortcut per operation: **Translate**, **Fix grammar**, **Rewrite**, **Explain**, **Screen Translate**, **Magic** and **Condense prompt**. Translate has a default on both systems: **Ctrl+Alt+T** on Windows, **⌥T** (Option+T) on macOS; Condense prompt has one only on macOS, **⌥A** (Option+A).
+One global shortcut per operation: **Translate**, **Fix grammar**, **Rewrite**, **Explain**, **Screen Translate**, **Magic** and **Condense prompt**. Translate has a default on both systems: **Ctrl+Alt+T** on Windows, **⌥T** (Option+T) on macOS; Condense prompt has one only on macOS, **⌥A** (Option+A), for new settings; after an update from an earlier version assign it once on this tab.
 
 Click a field and press the combination: at least one modifier (Windows: Ctrl, Alt, Shift, Win; macOS: ⌃ ⌥ ⇧ ⌘) plus a key. **Esc** cancels, the clear button removes the shortcut. LingoPop tells you when a combination is invalid, already used by another operation, or taken by another app.
 
