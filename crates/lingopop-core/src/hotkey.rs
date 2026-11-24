@@ -135,6 +135,8 @@ impl Hotkey {
         Self::new("KeyT", [Modifier::Ctrl, Modifier::Alt])
     }
 
+    /// Option+A on macOS (fresh settings only); no default on Windows, where Ctrl+Alt+A
+    /// is AltGr+A (Polish "ą").
     pub fn default_condense_prompt_for(host: HostKind) -> Option<Self> {
         (host == HostKind::Unix).then(|| Self::new("KeyA", [Modifier::Alt]))
     }

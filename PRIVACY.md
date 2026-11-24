@@ -22,7 +22,7 @@ LingoPop syncs nothing itself: there is no iCloud, no cloud folder and no accoun
 
 ## Data sent to third parties
 
-When you trigger a text operation (translate, fix grammar, rewrite, explain, magic), LingoPop sends the selected text and a system prompt to the provider you have configured as active. The endpoint depends on the provider:
+When you trigger a text operation (translate, fix grammar, rewrite, explain, magic, condense prompt), LingoPop sends the selected text and a system prompt to the provider you have configured as active. The endpoint depends on the provider:
 
 - Claude → `api.anthropic.com` (or a custom base URL you configure)
 - OpenAI → `api.openai.com` (or a custom base URL, useful with LiteLLM proxies)

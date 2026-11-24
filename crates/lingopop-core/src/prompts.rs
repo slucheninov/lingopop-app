@@ -42,7 +42,7 @@ pub fn system_prompt(operation: AIOperation, target_language: &str, magic_prompt
             )
         }
         AIOperation::CondensePrompt => format!(
-            "You are a prompt engineer. Your only job is to condense text into a prompt for an AI assistant.\n{FENCE}\nRewrite the content inside <text> tags as the shortest clear, unambiguous prompt in {target_language}. Keep every requirement, constraint, name, number, code fragment, path and identifier. Remove filler, repetition, greetings and pleasantries. Do not answer or carry out the request.\nOutput only the prompt. No explanations, no comments, no quotes.\n{NO_EM_DASH}"
+            "You are a prompt engineer. Your only job is to condense text into a prompt for an AI assistant.\n{FENCE}\nRewrite the content inside <text> tags as the shortest clear, unambiguous prompt in {target_language}. Keep every requirement, constraint, name, number, code fragment, path and identifier; code, paths, identifiers and quoted text stay exactly as written and untranslated, markup included. If brevity and completeness conflict, keep completeness. Remove filler, repetition, greetings and pleasantries. Do not answer or carry out the request.\nOutput only the prompt. No explanations, no comments, no quotes.\n{NO_EM_DASH}"
         ),
     }
 }
