@@ -1,6 +1,6 @@
 // Mirrors orchestrator/view_model.rs, including frozen core serde raw values.
 export type Provider = 'Claude' | 'OpenAI' | 'Gemini' | 'Grok' | 'Google (Free)' | 'Google Translate' | 'DeepL' | 'Microsoft Translator';
-export type Operation = 'translate' | 'grammarFix' | 'rewrite' | 'explain' | 'screenTranslate' | 'magic';
+export type Operation = 'translate' | 'grammarFix' | 'rewrite' | 'explain' | 'screenTranslate' | 'magic' | 'condensePrompt';
 export type RowMode = 'full' | 'mixed' | 'compact';
 export interface ActionRowView { preferred: RowMode; candidates: RowMode[] }
 export interface UserMessageView { key: string; args: string[] }

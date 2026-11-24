@@ -21,6 +21,7 @@
     explain: icons.explain,
     screenTranslate: icons.translate,
     magic: icons.sparkles,
+    condensePrompt: icons.rewrite,
   };
 
   function dismiss(event: KeyboardEvent) {

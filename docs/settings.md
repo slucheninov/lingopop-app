@@ -41,13 +41,13 @@ For the selected provider:
 - **Fallback**: another provider that is tried once when this one fails with a rate limit (429), a server error (5xx) or a network error.
 - **How to get an API key** opens the matching section of [api-keys.md](api-keys.md).
 
-Fix grammar, Rewrite, Explain and Magic need an AI provider: Claude, OpenAI, Gemini or Grok. Google (Free), Google Translate, DeepL and Microsoft Translator translate only.
+Fix grammar, Rewrite, Explain, Magic and Condense prompt need an AI provider: Claude, OpenAI, Gemini or Grok. Google (Free), Google Translate, DeepL and Microsoft Translator translate only.
 
 If the encrypted key file cannot be decrypted (for example after it was copied from another computer), LingoPop moves it aside as `secrets.dat.bak-<time>` and starts with no keys: enter them again. On macOS, when the keychain item that holds the encryption key is missing or cannot be read, the file is kept locked instead and the form offers **Reset stored secrets**: it clears all stored keys and provider settings so you can enter them again.
 
 ## Shortcuts
 
-One global shortcut per operation: **Translate**, **Fix grammar**, **Rewrite**, **Explain**, **Screen Translate** and **Magic**. Only Translate has a default: **Ctrl+Alt+T** on Windows, **⌥T** (Option+T) on macOS.
+One global shortcut per operation: **Translate**, **Fix grammar**, **Rewrite**, **Explain**, **Screen Translate**, **Magic** and **Condense prompt**. Translate has a default on both systems: **Ctrl+Alt+T** on Windows, **⌥T** (Option+T) on macOS; Condense prompt has one only on macOS, **⌥A** (Option+A).
 
 Click a field and press the combination: at least one modifier (Windows: Ctrl, Alt, Shift, Win; macOS: ⌃ ⌥ ⇧ ⌘) plus a key. **Esc** cancels, the clear button removes the shortcut. LingoPop tells you when a combination is invalid, already used by another operation, or taken by another app.
 
@@ -75,7 +75,7 @@ Updates are signed; on macOS the new app must carry the same release certificate
 ## Tray and menu-bar menu
 
 - The latest results, newest first. A click copies the original text back to the clipboard, so the menu also works as a clipboard history. The first ten have quick keys (Windows `1`…`0`, macOS `⌘1`…`⌘0`).
-- The six operations with their shortcuts. An operation started from the menu works on the text you had selected in the window you used last.
+- The seven operations with their shortcuts. An operation started from the menu works on the text you had selected in the window you used last.
 - **Target**: switch the target language.
 - **Clipboard History** lists recent copied text; click an entry to copy it again. **Clipboard History…**, set apart by separators below the list, opens all retained entries, with controls to delete an entry or clear the list. Its quick key is `C` on Windows and `⌘⇧H` on macOS while the menu is open.
 - **History…**, **Settings…**, **About LingoPop** and **Quit LingoPop**.

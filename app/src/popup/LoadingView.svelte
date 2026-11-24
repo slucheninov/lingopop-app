@@ -2,7 +2,7 @@
   import { t } from '../lib/i18n';
   import type { LoadingModel } from '../lib/types';
   let {model}: {model:LoadingModel} = $props();
-  const labels = $derived({translate:t('Translating…'),grammarFix:t('Fixing grammar…'),rewrite:t('Rewriting…'),explain:t('Explaining…'),screenTranslate:t('Recognizing text…'),magic:t('Working…')});
+  const labels = $derived({translate:t('Translating…'),grammarFix:t('Fixing grammar…'),rewrite:t('Rewriting…'),explain:t('Explaining…'),screenTranslate:t('Recognizing text…'),magic:t('Working…'),condensePrompt:t('Condensing…')});
 </script>
 <header role="status"><span class="spinner" aria-hidden="true"></span><strong>{labels[model.operation]}</strong></header>
 <p class="preview">{model.preview}</p>

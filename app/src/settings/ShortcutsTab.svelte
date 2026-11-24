@@ -20,6 +20,7 @@
     { operation: 'explain', name: () => t('Explain'), icon: '?' },
     { operation: 'screenTranslate', name: () => t('Screen Translate'), icon: '▣' },
     { operation: 'magic', name: () => t('Magic'), icon: '✦' },
+    { operation: 'condensePrompt', name: () => t('Condense prompt'), icon: '⇲' },
   ];
 </script>
 <section>

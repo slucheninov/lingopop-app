@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+### Added
+
+- Condense prompt: a seventh operation that rewrites selected text as a compact prompt for another AI (shortcut row in Settings, tray / menu-bar entry, **⌥A** by default on macOS).
+
 ### Fixed
 
 - macOS: a shortcut that another app already holds is now reported as a conflict in Settings instead of being accepted and never firing (`global-hotkey` 0.10).
