@@ -6,9 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.5] - 2026-11-24
+
 ### Added
 
 - Condense prompt: a seventh operation that rewrites selected text as a compact prompt for another AI (shortcut row in Settings, tray / menu-bar entry, **⌥P** by default on macOS for new settings; an existing install assigns it once in Settings > Shortcuts).
+
+### Changed
+
+- Dependency updates: `global-hotkey` 0.10, `uuid` 1.29.2 and the frontend build and test tooling.
 
 ### Fixed
 
