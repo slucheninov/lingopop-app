@@ -134,6 +134,10 @@ impl Hotkey {
     pub fn default_translate() -> Self {
         Self::new("KeyT", [Modifier::Ctrl, Modifier::Alt])
     }
+
+    pub fn default_condense_prompt_for(host: HostKind) -> Option<Self> {
+        (host == HostKind::Unix).then(|| Self::new("KeyA", [Modifier::Alt]))
+    }
 }
 
 /// Finds another operation using the same normalized chord.

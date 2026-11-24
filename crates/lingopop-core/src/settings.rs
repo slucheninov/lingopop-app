@@ -144,13 +144,18 @@ pub fn sanitize_magic_prompt(input: &str) -> String {
 
 impl Settings {
     pub fn default_for(host: HostKind) -> Self {
-        Self {
+        let mut settings = Self {
             hotkeys: BTreeMap::from([(
                 AIOperation::Translate,
                 Hotkey::default_translate_for(host),
             )]),
             ..Self::default()
-        }
+        };
+        settings.set_hotkey(
+            AIOperation::CondensePrompt,
+            Hotkey::default_condense_prompt_for(host),
+        );
+        settings
     }
     /// Lenient decode (a UTF-8 BOM is tolerated): the root must be an object, every
     /// field is decoded on its own and a bad one gets its default.
@@ -171,7 +176,10 @@ impl Settings {
             hotkeys: object
                 .get("hotkeys")
                 .and_then(decode_hotkeys)
-                .unwrap_or(defaults.hotkeys),
+                // Only fresh settings receive new default bindings.
+                .unwrap_or_else(|| {
+                    BTreeMap::from([(AIOperation::Translate, Hotkey::default_translate_for(host))])
+                }),
             launch_at_login: field(&object, "launchAtLogin").unwrap_or(defaults.launch_at_login),
             max_input_chars: field(&object, "maxInputChars").unwrap_or(defaults.max_input_chars),
             max_history_count: field(&object, "maxHistoryCount")
@@ -358,6 +366,31 @@ mod tests {
         );
         assert!(s.auto_copy_ocr);
         assert_eq!(s.magic_prompt, crate::prompts::DEFAULT_MAGIC_PROMPT);
+    }
+
+    #[test]
+    fn unix_default_settings_bind_option_a_to_condense_prompt() {
+        let op = AIOperation::CondensePrompt;
+        assert_eq!(
+            Settings::default_for(HostKind::Unix).hotkey(op),
+            Some(&Hotkey::new("KeyA", [Modifier::Alt]))
+        );
+        assert_eq!(Settings::default_for(HostKind::Windows).hotkey(op), None);
+    }
+
+    #[test]
+    fn existing_unix_settings_without_condense_prompt_hotkey_keep_it_unbound() {
+        for json in [
+            r#"{"hotkeys":{"translate":{"key":"KeyT","modifiers":["alt"]}}}"#,
+            r#"{}"#,
+        ] {
+            let settings = Settings::from_json_bytes_for(json.as_bytes(), HostKind::Unix).unwrap();
+            assert_eq!(settings.hotkey(AIOperation::CondensePrompt), None);
+            assert_eq!(
+                settings.hotkey(AIOperation::Translate),
+                Some(&Hotkey::default_translate_for(HostKind::Unix))
+            );
+        }
     }
 
     #[test]

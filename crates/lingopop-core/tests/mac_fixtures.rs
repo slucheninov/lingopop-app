@@ -411,9 +411,12 @@ fn prompts_match_swift_golden() {
         );
     }
     assert_eq!(
-        seen.len(),
-        AIOperation::ALL.len(),
-        "golden covers every operation"
+        seen,
+        AIOperation::ALL
+            .into_iter()
+            .filter(|op| *op != AIOperation::CondensePrompt)
+            .collect(),
+        "golden covers the operations in the frozen Swift app"
     );
 
     let user_rows = golden["userContent"].as_array().expect("userContent rows");
