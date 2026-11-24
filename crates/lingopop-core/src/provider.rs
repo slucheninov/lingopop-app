@@ -328,7 +328,7 @@ mod tests {
     use AIOperation::*;
     use ProviderField::*;
 
-    const ALL_OPS: [AIOperation; 6] = AIOperation::ALL;
+    const ALL_OPS: [AIOperation; 7] = AIOperation::ALL;
     const TRANSLATE_ONLY: [AIOperation; 2] = [Translate, ScreenTranslate];
 
     #[test]
@@ -564,6 +564,23 @@ mod tests {
         assert!(ProviderType::DeepL.supports(ScreenTranslate));
         assert!(!ProviderType::DeepL.supports(Rewrite));
         assert!(!ProviderType::GoogleFree.supports(Magic));
+    }
+
+    #[test]
+    fn only_chat_providers_support_condense_prompt() {
+        for provider in ProviderType::ALL {
+            assert_eq!(
+                provider.supports(CondensePrompt),
+                matches!(
+                    provider,
+                    ProviderType::Claude
+                        | ProviderType::OpenAI
+                        | ProviderType::Gemini
+                        | ProviderType::Grok
+                ),
+                "{provider:?}"
+            );
+        }
     }
 
     #[test]

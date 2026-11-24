@@ -95,6 +95,7 @@ mod tests {
             AIOperation::Rewrite,
             AIOperation::Explain,
             AIOperation::Magic,
+            AIOperation::CondensePrompt,
         ] {
             assert!(!operation_uses_auto_detect(op), "{op:?}");
         }
@@ -115,6 +116,7 @@ mod tests {
             AIOperation::Rewrite,
             AIOperation::Explain,
             AIOperation::Magic,
+            AIOperation::CondensePrompt,
         ] {
             assert_eq!(target_language_for(&s, op, russian), "German", "{op:?}");
         }

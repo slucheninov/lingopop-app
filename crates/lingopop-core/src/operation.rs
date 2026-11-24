@@ -11,17 +11,19 @@ pub enum AIOperation {
     Explain,
     ScreenTranslate,
     Magic,
+    CondensePrompt,
 }
 
 impl AIOperation {
     /// Every operation, in declaration (UI) order.
-    pub const ALL: [AIOperation; 6] = [
+    pub const ALL: [AIOperation; 7] = [
         AIOperation::Translate,
         AIOperation::GrammarFix,
         AIOperation::Rewrite,
         AIOperation::Explain,
         AIOperation::ScreenTranslate,
         AIOperation::Magic,
+        AIOperation::CondensePrompt,
     ];
 
     /// The frozen persisted identifier.
@@ -33,6 +35,7 @@ impl AIOperation {
             AIOperation::Explain => "explain",
             AIOperation::ScreenTranslate => "screenTranslate",
             AIOperation::Magic => "magic",
+            AIOperation::CondensePrompt => "condensePrompt",
         }
     }
 
@@ -50,6 +53,7 @@ impl AIOperation {
             Self::Explain => "Explanation",
             Self::ScreenTranslate => "Screen Translation",
             Self::Magic => "Magic",
+            Self::CondensePrompt => "Prompt",
         }
     }
 
@@ -62,6 +66,7 @@ impl AIOperation {
             AIOperation::Explain => "Explain",
             AIOperation::ScreenTranslate => "Screen Translate",
             AIOperation::Magic => "Magic",
+            AIOperation::CondensePrompt => "Condense prompt",
         }
     }
 }
@@ -80,9 +85,18 @@ mod tests {
                 "rewrite",
                 "explain",
                 "screenTranslate",
-                "magic"
+                "magic",
+                "condensePrompt"
             ]
         );
+    }
+
+    #[test]
+    fn condense_prompt_names() {
+        let op = AIOperation::CondensePrompt;
+        assert_eq!(op.english_name(), "Condense prompt");
+        assert_eq!(op.short_name(), "Prompt");
+        assert_eq!(AIOperation::from_raw_value("condensePrompt"), Some(op));
     }
 
     #[test]
@@ -113,7 +127,8 @@ mod tests {
                 "Rewrite",
                 "Explain",
                 "Screen Translate",
-                "Magic"
+                "Magic",
+                "Condense prompt"
             ]
         );
     }
@@ -128,7 +143,8 @@ mod tests {
                 "Rewrite",
                 "Explanation",
                 "Screen Translation",
-                "Magic"
+                "Magic",
+                "Prompt"
             ]
         );
         for language in [

@@ -134,6 +134,13 @@ impl Hotkey {
     pub fn default_translate() -> Self {
         Self::new("KeyT", [Modifier::Ctrl, Modifier::Alt])
     }
+
+    /// Option+P on macOS (fresh settings only); no default on Windows. P is not one of the
+    /// letters Polish types with Option / AltGr (A C E L N O S X Z), so the chord never
+    /// takes a diacritic such as "ą".
+    pub fn default_condense_prompt_for(host: HostKind) -> Option<Self> {
+        (host == HostKind::Unix).then(|| Self::new("KeyP", [Modifier::Alt]))
+    }
 }
 
 /// Finds another operation using the same normalized chord.
@@ -344,6 +351,30 @@ mod tests {
                 assert!(
                     !ALTGR_LETTERS.contains(&hotkey.key.as_str()),
                     "{} collides with AltGr",
+                    hotkey.display_string()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_default_hotkey_avoids_polish_option_letters() {
+        // Polish (and Polish Pro) types a diacritic for these letters with Option on
+        // macOS and AltGr (Ctrl+Alt) on Windows, so no default chord may use them.
+        const POLISH_LETTERS: [&str; 9] = [
+            "KeyA", "KeyC", "KeyE", "KeyL", "KeyN", "KeyO", "KeyS", "KeyX", "KeyZ",
+        ];
+        for host in [HostKind::Unix, HostKind::Windows] {
+            let mut defaults: Vec<Hotkey> =
+                Settings::default_for(host).hotkeys.into_values().collect();
+            defaults.push(Hotkey::default_translate_for(host));
+            defaults.extend(Hotkey::default_condense_prompt_for(host));
+            for hotkey in defaults {
+                let uses_option = hotkey.modifiers.contains(&Modifier::Alt);
+                assert!(
+                    !uses_option || !POLISH_LETTERS.contains(&hotkey.key.as_str()),
+                    "{:?} default {} types a Polish letter",
+                    host,
                     hotkey.display_string()
                 );
             }

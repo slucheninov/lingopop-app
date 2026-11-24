@@ -137,3 +137,7 @@ test('UiBootstrap host selects the Mac recorder prompt and instructions', async 
   await fireEvent.keyDown(field, { code: 'KeyT', key: 'Dead', altKey: true, metaKey: true });
   expect(invoke).toHaveBeenCalledWith('settings_update', { patch: { field: 'hotkey', value: { operation: 'explain', hotkey: { key: 'KeyT', modifiers: ['alt', 'win'] } } } });
 });
+test('condense_prompt_row_renders', async () => {
+  await open();
+  expect(screen.getByRole('button', { name: 'Condense prompt' })).toBeTruthy();
+});

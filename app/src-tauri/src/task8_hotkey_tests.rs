@@ -36,7 +36,7 @@ fn wanted() -> BTreeMap<AIOperation, Hotkey> {
 fn register_all_includes_screen_translate() {
     let (registry, _) = rig();
     registry.apply(wanted());
-    assert_eq!(registry.status().len(), 6);
+    assert_eq!(registry.status().len(), 7);
     assert_eq!(
         registry.status()[&AIOperation::ScreenTranslate],
         HotkeyStatus::Registered
