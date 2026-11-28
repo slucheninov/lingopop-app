@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/) a
 
 ## Unreleased
 
+## [0.2.6] - 2026-11-28
+
+### Changed
+
+- Dependency updates: Tauri CLI / API and `tauri-build` patch releases, `svelte`, `vitest`, `url`, `uuid` and `zeroize`.
+
 ## [0.2.5] - 2026-11-24
 
 ### Added
