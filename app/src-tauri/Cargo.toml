@@ -15,7 +15,7 @@ name = "lingopop"
 path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "=2.7.4", features = [] }
+tauri-build = { version = "=2.7.6", features = [] }
 
 [dependencies]
 crossbeam-channel = "0.5.17"
